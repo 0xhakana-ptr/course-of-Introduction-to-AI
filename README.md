@@ -81,11 +81,17 @@ Electron 启动后会自动打开一个名为“Live2D 控制台”的窗口。
 
 - `status`：查看当前模型是否已加载、模型 URL
 - `meta [reload]`：读取并打印 `model3.json` 里的 Motions/Expressions 元数据
-- `list motions` / `list expressions`
+- `list motions` / `list expressions`：列出可用动作/表情（输出的是“Action ID”，后端可直接拿去调用）
 - `motion <group> [index]`：播放动作（index 省略=随机）
+- `motion <file.motion3.json>`：按文件播放动作（不依赖 model3.json 声明）
 - `expr <name|index>`：仅显示该表情（等价于：清空后 add）
+- `expr <file.exp3.json>`：按文件设置表情（不依赖 model3.json 声明）
+- `expr tag:<通用标签>`：通过“表情标签映射”播放（给 AI agent 用）
 - `expr add <name|index>`：叠加一个表情（Cubism4/model3 优先）
+- `expr add <file.exp3.json>`：按文件叠加表情
+- `expr add tag:<通用标签>`：通过映射叠加表情
 - `expr remove <name|index>`：移除一个表情
+- `expr remove <file.exp3.json>`：移除按文件叠加的表情
 - `expr clear`：清空所有叠加表情
 - `expr active`：查看当前已叠加表情
 - `startup expr <a,b,c>`：设置启动默认表情（逗号分隔）
@@ -100,19 +106,129 @@ Electron 启动后会自动打开一个名为“Live2D 控制台”的窗口。
 补充说明：
 
 - “多表情叠加”优先走 Cubism4（`*.model3.json`）。Cubism2（`*.model.json`）会回落为单表情（库自身行为）。
-- 启动默认表情也可以通过 URL 直接传：`/?startupExpr=水印,生气`（优先级高于本地保存）。
+- 启动默认表情会被当作“底层 pinned 表情”：后续执行 `expr <...>` / WS `mode:set` 只会覆盖非 pinned 的表情，不会把它覆盖掉（适合用来做“去水印”底座）。
+- 启动默认表情也可以通过 URL 直接传：`/?startupExpr=水印,生气`（优先级高于本地保存）。也支持：`/?startupExpr=tag:开心,tag:害羞`。
+
+## WebSocket 控制接口（给后端用）
+
+为了便于“多模型兼容 + 给后端提供统一接口”，项目在 Electron 主进程内置了一个本地 WebSocket 服务：
+
+- 默认监听：`ws://127.0.0.1:23333`
+- 可配置环境变量：
+	- `LIVE2D_WS_PORT`：端口（默认 23333）
+	- `LIVE2D_WS_HOST`：绑定地址（默认 127.0.0.1，不建议改为 0.0.0.0）
+
+### 消息协议（JSON）
+
+所有请求都建议带一个 `reqId` 便于后端做并发匹配。
+
+1) 查询状态：
+
+```json
+{ "op": "status", "reqId": "1" }
+```
+
+2) 列出可用动作/表情（统一 Action ID）：
+
+```json
+{ "op": "list", "reqId": "2" }
+```
+
+也支持按类型过滤（减少返回体积，兼容旧用法）：
+
+```json
+{ "op": "list", "reqId": "2e", "type": "expression" }
+```
+
+```json
+{ "op": "list", "reqId": "2m", "type": "motion" }
+```
+
+返回的 `data.expressions` / `data.motions` 内每一项都有一个 `id`（推荐后端直接保存并回传这个 id）。
+
+3) 播放：
+
+```json
+{ "op": "play", "reqId": "3", "type": "expression", "id": "expr/关闭水印.exp3.json", "mode": "set" }
+```
+
+也支持“通用表情标签”（推荐给 AI agent 用）：
+
+```json
+{ "op": "play", "reqId": "3b", "type": "expression", "id": "tag:开心", "mode": "set" }
+```
+
+```json
+{ "op": "play", "reqId": "4", "type": "motion", "id": "motion/idle_01.motion3.json" }
+```
+
+说明：
+
+- `type`：`expression` / `motion`
+- `id`：必须来自 `list` 返回的 action id
+- `mode`（仅 expression）：`set`（默认）/ `add`
+
+4) 停止：
+
+```json
+{ "op": "stop", "reqId": "5" }
+```
+
+### 设计要点
+
+- action id **尽量 file-first**：即使 `model3.json` 未声明，也可通过目录扫描的 sidecar 文件（`.exp3.json/.motion3.json`）生成并播放。
+- WS 服务只负责转发，真正执行仍在渲染进程（持有 Live2D 实例）。
+
+## 表情标签映射（给 AI agent 用）
+
+AI agent 通常不知道当前模型有哪些真实表情文件/名称，所以项目支持把“通用标签”映射到真实表情：
+
+- 映射文件格式：JSONC（支持 `//` 注释）
+- 位置优先级：
+	1) 与当前 `*.model3.json` 同目录：`expression-map.jsonc`（推荐：每模型一份）
+	2) 全局兜底：`public/live2d/expression-map.jsonc`
+
+### 映射文件怎么写
+
+文件示例见：`public/live2d/expression-map.jsonc`。
+
+核心字段：
+
+- `map`：键是通用标签（例如：开心/生气/难过/疑惑…）
+- value 支持三种形态：
+	- 字符串：直接指定目标表情（推荐写 action id：`expr/xxx.exp3.json` 或 `expr/@name/Happy`）
+	- 字符串数组：从多个候选里随机选一个（适合“开心”有多种表情）
+	- `null`：禁用该 tag（收到也不播放）
+
+value 也支持简写：
+
+- 写 `xxx.exp3.json` 会被当作 `expr/xxx.exp3.json`
+- 写 `Happy` 会被当作 `expr/@name/Happy`
+
+### 怎么调用（WS / CLI / startup）
+
+- WebSocket：`{"op":"play","type":"expression","id":"tag:开心"}`
+- CLI：`expr tag:开心`
+- 启动预设：`startup expr tag:开心,tag:害羞` 或 URL：`/?startupExpr=tag:开心,tag:害羞`
 
 ## 桌宠交互（透明/点穿透/淡出）
 
 主窗口默认是“桌宠模式”：
 
 - 鼠标移入窗口：会逐渐淡出并切换为点穿透（不挡鼠标）
-- 按住 Ctrl 并悬停：保持可交互（可拖拽/缩放等）
+- 按住 Ctrl 并悬停：保持可交互（可拖拽/缩放/退出等）
+
+交互细节（Windows 无边框透明窗）：
+
+- 为避免出现系统的“可见虚化边框”（`thickFrame`），主窗口不再依赖原生边框缩放。
+- 拖拽：按住 Ctrl 时，仅窗口**中间 75% 区域**可拖动（避免拖拽区域覆盖到右上角按钮/缩放角）。
+- 缩放：按住 Ctrl 时，窗口四边/四角提供较大的透明缩放热区（更容易点中）。
+- 退出：右上角为红色“×”按钮（仅在 Ctrl 可交互时可点击）。
 
 这套交互依赖 Electron 主进程的 `setIgnoreMouseEvents(true, { forward: true })`：
 
 - `forward: true` 允许仍然收到 mousemove，用于做“悬停/离开”的状态机
-- 需要额外兜底：因为点穿透后可能收不到 `pointerleave`，项目会在淡出时轮询“光标是否仍在窗口内”来恢复状态
+- 需要额外兜底：透明/点穿透窗口在极端情况下可能漏掉 `pointerenter/pointerleave`，项目会通过主进程轮询“光标是否仍在窗口 bounds 内”作为可靠兜底（也能改善“鼠标快速进入窗口但没触发淡化”的情况）
 
 ## 常见问题（Troubleshooting）
 
@@ -126,14 +242,17 @@ Electron 启动后会自动打开一个名为“Live2D 控制台”的窗口。
 
 ### 2) 我明明有表情/动作文件，但 `list expressions` / `list motions` 为空
 
-控制台的 `list/meta` 是通过解析 `*.model3.json` 的：
+控制台的 `list/meta` 主要通过解析 `*.model3.json` 的：
 
 - `FileReferences.Expressions`
 - `FileReferences.Motions`
 
-如果你的模型只“放了文件”但没有在 `model3.json` 里声明引用，库和控制台都无法“发现”它们。
+如果你的模型只“放了文件”但没有在 `model3.json` 里声明引用：
 
-解决方法：补齐 `model3.json` 的 `FileReferences`（`Name` + `File`）。
+- `meta` 仍会为空（因为它遵循 settings）
+- `list` 会尝试回落为“扫描目录下的 sidecar 文件”（`.exp3.json/.motion3.json`）
+
+更推荐的解决方法依然是：补齐 `model3.json` 的 `FileReferences`（`Name` + `File`），这样库的标准 definitions 也会完整。
 
 ### 3) 偶发模型缩放/偏移不稳定
 

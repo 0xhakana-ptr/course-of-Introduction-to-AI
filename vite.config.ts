@@ -8,6 +8,13 @@ export default defineConfig({
     electron([
       {
         entry: 'electron/main.ts',
+        vite: {
+          build: {
+            rollupOptions: {
+              external: ['ws'],
+            },
+          },
+        },
         onstart(options) {
           options.startup()
         },

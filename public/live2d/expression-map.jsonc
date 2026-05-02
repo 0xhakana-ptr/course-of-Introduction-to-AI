@@ -1,0 +1,32 @@
+{
+    // Live2D 表情映射（给后端 AI agent 用）
+    //
+    // 用法（WebSocket / CLI 统一）：把 id 写成："tag:开心" / "tag:生气" ...
+    // 前端会把 tag 映射为真实可播放的 action id（expr/xxx.exp3.json 或 expr/@name/xxx）
+    //
+    // 放置位置优先级：
+    // 1) 与当前 model3.json 同目录：expression-map.jsonc（每个模型一份，推荐）
+    // 2) 本文件：public/live2d/expression-map.jsonc（全局兜底）
+    //
+    // value 写法：
+    // - 字符串：直接播放该 action id
+    // - 数组：随机选择一个播放（适合“开心”有多个备选表情）
+    // - null：表示这个 tag 不播放（禁用）
+    "version": 1,
+    "map": {
+        // 这些就是后端 AI agent 只需要知道的“通用标签”
+        "开心": [
+            "expr/@name/Happy",
+            "expr/开心.exp3.json"
+        ],
+        "生气": "expr/@name/生气",
+        "难过": "expr/@name/Sad",
+        "疑惑": "expr/@name/Question",
+        "看傻了": "expr/@name/Blank",
+        "害羞": "expr/@name/Shy",
+        "黑脸": "expr/@name/Dark",
+        "眩晕": "expr/@name/Dizzy"
+        // 你也可以添加自定义 tag：
+        // "打招呼": "expr/hello.exp3.json"
+    }
+}

@@ -25,6 +25,21 @@
 - 如果你的模型是 **Cubism 2**（文件名通常是 `*.model.json`）
 	- 需要：`public/live2d/live2d.min.js`
 
+## Cubism 5（moc3 v5）模型说明
+
+有些新模型是用 **Cubism 5** 导出的（其 `.moc3` 版本是 **v5**）。
+
+如果你在控制台看到类似报错：
+
+- `The Core unsupport later than moc3 ver:[4]. This moc3 ver is [5].`
+
+就表示当前加载的 Cubism Core 版本过低（4.x 只能到 moc3 v4），需要换成 **Cubism Core 5.x**。
+
+本项目默认会在 `pnpm dev/build` 时从依赖里同步 `live2dcubismcore.min.js`（目前是 4.x）。若你要使用 Core 5.x：
+
+- 设置 `LIVE2D_CUBISM_CORE_SRC` 指向你的 `live2dcubismcore.min.js`（相对项目根目录或绝对路径都行）
+- 或设置 `LIVE2D_CUBISM_CORE_NO_SYNC=1`，关闭 core 同步，自己管理 `public/live2d/live2dcubismcore.min.js`
+
 本项目会根据模型文件名自动选择 `cubism4` / `cubism2` 入口，并在缺少运行库时在窗口底部提示缺哪个文件。
 
 你只需要确保该路径存在（以及它引用的纹理/动作/物理等文件也在同一目录结构中），即可在：

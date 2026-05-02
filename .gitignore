@@ -23,6 +23,8 @@ dist-ssr
 *.sln
 *.sw?
 # 打包产物禁止提交
+public/live2d/bak/
+public/live2d/pajamas_catcat
 dist/
 dist-electron/
 release/
