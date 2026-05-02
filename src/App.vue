@@ -8,7 +8,8 @@ import { installLive2DFocusMouseTracking } from './mouseTracking'
 
 (window as any).PIXI = PIXI
 
-const DEFAULT_MODEL_JSON_PATH = 'live2d/pajamas_catcat/pajamas_catcat.model3.json'
+//const DEFAULT_MODEL_JSON_PATH = 'live2d/pajamas_catcat/pajamas_catcat.model3.json'
+const DEFAULT_MODEL_JSON_PATH = 'live2d/strawberry_catcat/strawberry_catcat.model3.json'
 //const DEFAULT_MODEL_JSON_PATH = 'live2d/mianfeimox/llny.model3.json'
 const CUBISM2_RUNTIME_PATH = 'live2d/live2d.min.js'
 const CUBISM4_CORE_PATH = 'live2d/live2dcubismcore.min.js'
