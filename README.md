@@ -16,6 +16,8 @@
 - Node.js（建议 18+）
 - pnpm
 - Windows / macOS / Linux（Electron）
+- uv（用于管理 Python 环境和后端依赖）
+- Python（建议 3.11+，用于后端 AI agent）
 
 ## 快速开始
 
@@ -296,10 +298,31 @@ value 也支持简写：
 
 默认情况下项目内置了一个“占位 agent”，确保 UI 可用。
 
-要接入真实后台：在启动 Electron 前设置环境变量 `AI_AGENT_ENDPOINT` 指向你的 HTTP 服务：
+本项目使用 `uv` 管理 Python 后端环境。最小启动流程如下：
+
+```powershell
+# 版本可自选，推荐 3.11+
+uv python install 3.11
+uv venv --python 3.11 .venv
+uv pip install -r backend/requirements.txt
+uv run uvicorn backend.app.main:app --reload --port 8000
+```
+
+然后在启动 Electron 前设置环境变量 `AI_AGENT_ENDPOINT` 指向你的 HTTP 服务：
+
+```bash
+$env:AI_AGENT_ENDPOINT="http://127.0.0.1:8000/chat"
+pnpm dev
+
+# 或者直接用 npm:
+set AI_AGENT_ENDPOINT=http://127.0.0.1:8000/chat
+pnpm dev
+```
 
 - 请求：`POST` JSON `{ prompt, context }`
 - 响应：可以返回纯文本；或返回 JSON `{ output: string }` / `{ text: string }`
+
+完整后端说明见：`backend/README.md`。
 
 ## 目录结构（概览）
 

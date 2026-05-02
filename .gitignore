@@ -28,3 +28,8 @@ public/live2d/pajamas_catcat
 dist/
 dist-electron/
 release/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
