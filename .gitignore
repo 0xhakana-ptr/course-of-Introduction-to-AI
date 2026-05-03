@@ -33,3 +33,10 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# API keys and environment variables
+backend/.env*
+!backend/.env.example
+
+# runtime files
+backend/workspace/

@@ -12,6 +12,10 @@ BLOCKED_TOKENS = (
     "shutdown",
     "taskkill",
     "remove-item",
+    "&&",
+    "||",
+    ";",
+    "|",
 )
 
 

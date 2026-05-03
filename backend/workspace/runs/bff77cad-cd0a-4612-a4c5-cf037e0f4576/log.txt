@@ -1,0 +1,22 @@
+[2026-05-03T14:49:22.389363+00:00] Run queued.
+[2026-05-03T14:49:22.403630+00:00] Background execution started.
+[2026-05-03T14:49:22.405940+00:00] Status updated to running.
+[2026-05-03T14:49:22.406409+00:00] Using LLM-generated Python script.
+[2026-05-03T14:49:22.406835+00:00] LLM raw response preview: RAW GENERATION
+[2026-05-03T14:49:22.423644+00:00] Starting attempt 1 with generator=llm.
+[2026-05-03T14:49:22.440922+00:00] Generated file for attempt 1: runs/bff77cad-cd0a-4612-a4c5-cf037e0f4576/generated/attempt_1_broken.py
+[2026-05-03T14:49:22.441793+00:00] Executing attempt 1: D:\Code\classroom\ai_introduction\course-of-Introduction-to-AI\.venv\Scripts\python.exe attempt_1_broken.py
+[2026-05-03T14:49:22.675323+00:00] Attempt 1 stdout: start
+[2026-05-03T14:49:22.677623+00:00] Attempt 1 stderr: Traceback (most recent call last):
+  File "D:\Code\classroom\ai_introduction\course-of-Introduction-to-AI\backend\workspace\runs\bff77cad-cd0a-4612-a4c5-cf037e0f4576\generated\attempt_1_broken.py", line 2, in <module>
+    raise RuntimeError("boom")
+RuntimeError: boom
+[2026-05-03T14:49:22.697030+00:00] Attempt 1 failed. Requesting LLM repair 1/1.
+[2026-05-03T14:49:22.698123+00:00] Using LLM-repaired Python script for the next attempt.
+[2026-05-03T14:49:22.698932+00:00] LLM repair response preview: RAW REPAIR
+[2026-05-03T14:49:22.721215+00:00] Starting attempt 2 with generator=llm_repair.
+[2026-05-03T14:49:22.737727+00:00] Generated file for attempt 2: runs/bff77cad-cd0a-4612-a4c5-cf037e0f4576/generated/attempt_2_fixed.py
+[2026-05-03T14:49:22.738432+00:00] Executing attempt 2: D:\Code\classroom\ai_introduction\course-of-Introduction-to-AI\.venv\Scripts\python.exe attempt_2_fixed.py
+[2026-05-03T14:49:22.879170+00:00] Attempt 2 stdout: repair ok
+prompt fixed
+[2026-05-03T14:49:22.879986+00:00] Run finished successfully.
