@@ -148,11 +148,55 @@ RUN_REPAIR_MAX_ATTEMPTS=1
 - `backend/.env.example` 只保留占位模板
 - 项目已默认忽略 `backend/.env*`，但会保留 `backend/.env.example` 供提交
 
+## 6.0.1 诊断 LLM 连接状态
+
+当前后端提供了一个开发期排错接口：
+
+```text
+GET /llm/diagnostics
+```
+
+默认只检查本地配置是否被后端正确读取，不会主动请求上游模型服务。你可以这样调用：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/llm/diagnostics
+```
+
+返回里重点看这些字段：
+
+- `configured`：后端是否认为 LLM 配置完整
+- `api_key_present`：是否检测到 API Key
+- `base_url`：当前读取到的基础地址
+- `resolved_url`：后端真正会请求的 `/chat/completions` 地址
+- `model`：当前模型名
+
+如果你想进一步确认“后端是否真的能打通上游模型接口”，可以显式加上远程检查参数：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
+```
+
+此时后端会向上游模型发送一次最小测试请求，并额外返回：
+
+- `checked_remote`：是否真的执行了远程检查
+- `request_ok`：远程检查是否成功
+- `status_code`：上游接口返回状态码
+- `response_preview`：成功时返回的响应摘要
+- `error_message`：失败时的错误摘要
+
+推荐排查顺序：
+
+1. 先看 `configured` 是否为 `true`
+2. 再看 `resolved_url` 是否符合你的 provider 规范
+3. 最后用 `check_remote=true` 看真实连通结果
+
 ## 6.1 当前后端已提供的接口
 
 当前后端除了 `/health` 和 `/chat` 之外，还提供了最小任务流接口：
 
+- `GET /llm/diagnostics`：检查当前 LLM 配置和可选的远程连通性
 - `POST /runs`：创建一个任务，并在后台执行 coding task
+- `GET /runs/summary`：读取轻量的 run 摘要列表，适合前端列表页或轮询
 - `GET /runs`：列出历史任务
 - `GET /runs/{run_id}`：查询单个任务状态和结果
 - `GET /runs/{run_id}/attempts`：读取该任务的结构化执行尝试列表
@@ -163,9 +207,32 @@ RUN_REPAIR_MAX_ATTEMPTS=1
 
 其中 `POST /runs` 的返回通常会先是 `queued`，随后你可以通过 `GET /runs/{run_id}` 轮询它是否变成 `done` 或 `failed`。
 
+如果你只需要展示任务列表，推荐优先使用：
+
+```text
+GET /runs/summary?offset=0&limit=20
+```
+
+这个接口只返回轻量摘要字段，例如：
+
+- `run_id`
+- `status`
+- `summary`
+- `prompt_preview`
+- `output_preview`
+- `attempt_count`
+- `repair_count`
+- `latest_attempt_summary`
+
+当前保留原来的 `GET /runs`，是为了兼容现有联调流程；后续如果前端切换到摘要接口，列表轮询的压力会更小。
+
 如果你已经配置了真实大模型，`/runs` 会优先尝试让模型生成 Python 脚本；如果没有配置，或模型返回内容无法解析为可执行 Python 代码，则会自动回退到本地 demo 模板。
 
 如果脚本首次执行失败，后端会在已配置 LLM 的前提下自动把原始脚本、执行命令、`stdout`、`stderr` 和错误信息发给模型进行修复，并按 `RUN_REPAIR_MAX_ATTEMPTS` 的设置继续重试。当前默认值是 `1`，也就是“失败后自动修一次”。
+
+后端每次启动时，还会自动扫描历史 `runs/` 目录。如果发现有遗留的 `queued` 或 `running` 任务，说明这些任务大概率在上一次服务退出或重启时被中断了，后端会在启动阶段将它们统一标记为 `failed`，并写入日志与错误说明，避免它们长期卡在假运行中状态。
+
+你也可以通过 `GET /health` 返回中的 `startup_recovery` 字段，查看本次启动时扫描了多少历史任务、实际恢复了多少条中断任务。
 
 `GET /runs/{run_id}` 的返回里现在还会包含这些字段，便于你在后端调试阶段观察任务行为：
 
@@ -212,6 +279,24 @@ GET /runs/{run_id}/attempts/{attempt_number}/script
 
 ## 6.2 用 PowerShell 快速测试接口
 
+先测试 LLM 配置是否被后端读到：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/llm/diagnostics
+```
+
+查看本次启动是否恢复过中断任务：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+需要时再测试真实上游连通性：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
+```
+
 创建一个 run：
 
 ```powershell
@@ -226,6 +311,12 @@ Invoke-RestMethod `
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/runs
+```
+
+读取轻量摘要列表：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8000/runs/summary?offset=0&limit=20"
 ```
 
 查询单个 run，其中 `<run_id>` 是你要查询的 run 的 ID，可在 `http://127.0.0.1:8000/runs` 的响应中找到，下述同理：

@@ -1,10 +1,14 @@
+from contextlib import asynccontextmanager
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 
 from backend.app.core.config import settings
+from backend.app.llm.client import diagnose_llm
 from backend.app.schemas import (
     ATTEMPT_OUTPUT_STREAM,
     ChatRequest,
     ChatResponse,
+    LLMDiagnosticsResponse,
     RunAttemptListResponse,
     RunAttemptOutputChunkResponse,
     RunAttemptResponse,
@@ -12,9 +16,11 @@ from backend.app.schemas import (
     RunCreateRequest,
     RunLogResponse,
     RunResponse,
+    RunSummaryListResponse,
 )
 from backend.app.services.chat_service import generate_chat_response
 from backend.app.services.run_service import (
+    StartupRecoveryResult,
     create_run,
     execute_run,
     get_run,
@@ -24,10 +30,29 @@ from backend.app.services.run_service import (
     get_run_attempt_script,
     get_run_log,
     list_runs,
+    list_run_summaries,
+    recover_interrupted_runs,
 )
 
 
-app = FastAPI(title="AI Chat Backend", version=settings.app_version)
+def serialize_startup_recovery(result: StartupRecoveryResult | None) -> dict[str, object] | None:
+    if result is None:
+        return None
+    return {
+        "checked_at": result.checked_at,
+        "scanned_count": result.scanned_count,
+        "recovered_count": result.recovered_count,
+        "recovered_run_ids": result.recovered_run_ids,
+    }
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.startup_recovery = recover_interrupted_runs()
+    yield
+
+
+app = FastAPI(title="AI Chat Backend", version=settings.app_version, lifespan=lifespan)
 
 
 @app.get("/health")
@@ -35,8 +60,31 @@ async def health():
     return {
         "ok": True,
         "service": "backend",
-        "version": settings.app_version
+        "version": settings.app_version,
+        "startup_recovery": serialize_startup_recovery(
+            getattr(app.state, "startup_recovery", None)
+        ),
     }
+
+
+@app.get("/llm/diagnostics", response_model=LLMDiagnosticsResponse)
+async def llm_diagnostics_route(
+    check_remote: bool = Query(default=False),
+):
+    result = await diagnose_llm(check_remote=check_remote)
+    return LLMDiagnosticsResponse(
+        configured=result.configured,
+        api_key_present=result.api_key_present,
+        base_url=result.base_url,
+        resolved_url=result.resolved_url,
+        model=result.model,
+        timeout_seconds=result.timeout_seconds,
+        checked_remote=result.checked_remote,
+        request_ok=result.request_ok,
+        status_code=result.status_code,
+        response_preview=result.response_preview,
+        error_message=result.error_message,
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -44,8 +92,13 @@ async def chat(req: ChatRequest):
     prompt = req.prompt.strip()
     context = (req.context or "").strip() or None
 
-    intent, output = await generate_chat_response(prompt, context)
-    return ChatResponse(intent=intent, output=output)
+    result = await generate_chat_response(prompt, context)
+    return ChatResponse(
+        ok=result.ok,
+        intent=result.intent,
+        output=result.output,
+        error=result.error,
+    )
 
 
 @app.post("/runs", response_model=RunResponse)
@@ -60,6 +113,14 @@ async def create_run_route(req: RunCreateRequest, background_tasks: BackgroundTa
 @app.get("/runs", response_model=list[RunResponse])
 async def list_runs_route():
     return list_runs()
+
+
+@app.get("/runs/summary", response_model=RunSummaryListResponse)
+async def list_run_summaries_route(
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
+):
+    return list_run_summaries(offset=offset, limit=limit)
 
 
 @app.get("/runs/{run_id}", response_model=RunResponse)

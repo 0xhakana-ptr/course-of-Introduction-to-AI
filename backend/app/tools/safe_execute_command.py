@@ -1,37 +1,61 @@
 import subprocess
+from collections.abc import Sequence
+from pathlib import Path
 
 from backend.app.core.config import settings
 from backend.app.tools.safe_fs import WORKSPACE_DIR, ensure_workspace_dirs, resolve_workspace_path
 
 
-BLOCKED_TOKENS = (
-    "rm ",
+BLOCKED_EXECUTABLES = {
+    "cmd",
+    "cmd.exe",
+    "powershell",
+    "powershell.exe",
+    "pwsh",
+    "pwsh.exe",
+    "sh",
+    "bash",
+}
+
+BLOCKED_ARGUMENT_TOKENS = {
+    "rm",
     "rmdir",
-    "del ",
-    "format ",
+    "del",
+    "format",
     "shutdown",
     "taskkill",
     "remove-item",
-    "&&",
-    "||",
-    ";",
-    "|",
-)
+    "/c",
+    "-c",
+    "-command",
+    "--command",
+}
 
 
-def is_blocked_command(command: str) -> bool:
-    normalized = f" {command.strip().lower()} "
-    return any(token in normalized for token in BLOCKED_TOKENS)
+def normalize_command(command: Sequence[str]) -> list[str]:
+    normalized = [str(part).strip() for part in command if str(part).strip()]
+    if not normalized:
+        raise ValueError("命令不能为空")
+    return normalized
+
+
+def is_blocked_command(command: Sequence[str]) -> bool:
+    normalized = normalize_command(command)
+    executable = Path(normalized[0]).name.lower()
+    if executable in BLOCKED_EXECUTABLES:
+        return True
+
+    arguments = [part.lower() for part in normalized[1:]]
+    return any(argument in BLOCKED_ARGUMENT_TOKENS for argument in arguments)
 
 
 def safe_execute_command(
-    command: str,
+    command: Sequence[str],
     cwd: str | None = None,
     timeout_seconds: int | None = None,
 ) -> dict[str, object]:
-    if not command.strip():
-        raise ValueError("命令不能为空")
-    if is_blocked_command(command):
+    normalized_command = normalize_command(command)
+    if is_blocked_command(normalized_command):
         raise PermissionError("命令被安全策略拦截")
 
     ensure_workspace_dirs()
@@ -40,8 +64,8 @@ def safe_execute_command(
 
     try:
         completed = subprocess.run(
-            command,
-            shell=True,
+            normalized_command,
+            shell=False,
             cwd=working_dir,
             capture_output=True,
             text=True,

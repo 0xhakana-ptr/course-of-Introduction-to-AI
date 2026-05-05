@@ -1,5 +1,15 @@
-from backend.app.llm.client import call_llm
+from dataclasses import dataclass
+
+from backend.app.llm.client import LLMCallResult, call_llm
 from backend.app.schemas import INTENT_TYPE
+
+
+@dataclass(slots=True)
+class ChatServiceResult:
+    intent: INTENT_TYPE
+    ok: bool
+    output: str
+    error: str | None = None
 
 
 def detect_intent(prompt: str) -> INTENT_TYPE:
@@ -51,37 +61,51 @@ def detect_intent(prompt: str) -> INTENT_TYPE:
     return "unknown"
 
 
-async def build_chat_reply(prompt: str, context: str | None) -> str:
+async def build_chat_reply(prompt: str, context: str | None) -> LLMCallResult:
     return await call_llm(prompt, context)
 
 
-def build_coding_reply(prompt: str, context: str | None) -> str:
+def build_coding_reply(prompt: str, context: str | None) -> ChatServiceResult:
     _ = context
-    return (
-        "这是代码任务分支。\n\n"
-        f"我识别到你的请求更像是一个开发任务：{prompt}\n\n"
-        "建议后续把这个分支继续拆成：\n"
-        "1. 需求分析\n"
-        "2. 任务拆分\n"
-        "3. 代码生成\n"
-        "4. 测试与修复\n\n"
-        "当前项目里，下一步最适合先补安全文件读写和命令执行。"
+    return ChatServiceResult(
+        intent="coding",
+        ok=True,
+        output=(
+            "这是代码任务分支。\n\n"
+            f"我识别到你的请求更像是一个开发任务：{prompt}\n\n"
+            "建议后续把这个分支继续拆成：\n"
+            "1. 需求分析\n"
+            "2. 任务拆分\n"
+            "3. 代码生成\n"
+            "4. 测试与修复\n\n"
+            "当前项目里，下一步最适合先补安全文件读写和命令执行。"
+        ),
     )
 
 
-def build_unknown_reply(prompt: str) -> str:
-    return (
-        "抱歉，我暂时还不能很好地判断你的意图。\n\n"
-        f"你输入的内容是：{prompt}\n\n"
-        "你可以继续补充信息，或者明确说明你是想聊天还是想让我帮你处理代码任务。"
+def build_unknown_reply(prompt: str) -> ChatServiceResult:
+    return ChatServiceResult(
+        intent="unknown",
+        ok=True,
+        output=(
+            "抱歉，我暂时还不能很好地判断你的意图。\n\n"
+            f"你输入的内容是：{prompt}\n\n"
+            "你可以继续补充信息，或者明确说明你是想聊天还是想让我帮你处理代码任务。"
+        ),
     )
 
 
-async def generate_chat_response(prompt: str, context: str | None) -> tuple[INTENT_TYPE, str]:
+async def generate_chat_response(prompt: str, context: str | None) -> ChatServiceResult:
     intent = detect_intent(prompt)
 
     if intent == "chat":
-        return intent, await build_chat_reply(prompt, context)
+        result = await build_chat_reply(prompt, context)
+        return ChatServiceResult(
+            intent=intent,
+            ok=result.ok,
+            output=result.output,
+            error=result.error,
+        )
     if intent == "coding":
-        return intent, build_coding_reply(prompt, context)
-    return intent, build_unknown_reply(prompt)
+        return build_coding_reply(prompt, context)
+    return build_unknown_reply(prompt)

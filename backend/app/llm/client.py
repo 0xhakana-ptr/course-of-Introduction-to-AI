@@ -1,8 +1,35 @@
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from backend.app.core.config import settings
+
+
+@dataclass(slots=True)
+class LLMCallResult:
+    ok: bool
+    output: str
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class LLMDiagnosticsResult:
+    configured: bool
+    api_key_present: bool
+    base_url: str | None
+    resolved_url: str | None
+    model: str | None
+    timeout_seconds: int
+    checked_remote: bool = False
+    request_ok: bool | None = None
+    status_code: int | None = None
+    response_preview: str | None = None
+    error_message: str | None = None
+
+
+DIAGNOSTIC_PREVIEW_LIMIT = 200
+DIAGNOSTIC_ERROR_LIMIT = 500
 
 
 def llm_is_configured() -> bool:
@@ -33,8 +60,23 @@ def normalize_message_content(content: Any) -> str:
     return str(content or "").strip()
 
 
-def unconfigured_message(prompt: str, context: str | None = None) -> str:
-    return (
+def preview_text(text: str, limit: int = DIAGNOSTIC_PREVIEW_LIMIT) -> str:
+    normalized = " ".join(text.strip().split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
+
+
+def failure_result(message: str) -> LLMCallResult:
+    return LLMCallResult(ok=False, output=message, error=message)
+
+
+def success_result(message: str) -> LLMCallResult:
+    return LLMCallResult(ok=True, output=message, error=None)
+
+
+def unconfigured_message(prompt: str, context: str | None = None) -> LLMCallResult:
+    return failure_result(
         "当前还没有配置真实大模型连接信息。\n\n"
         "请至少设置以下环境变量：\n"
         "- LLM_BASE_URL\n"
@@ -80,10 +122,10 @@ def build_headers() -> dict[str, str]:
     }
 
 
-def parse_chat_response(data: dict[str, Any], endpoint: str) -> str:
+def parse_chat_response(data: dict[str, Any], endpoint: str) -> LLMCallResult:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
-        return (
+        return failure_result(
             "大模型接口响应中缺少 choices。\n\n"
             f"endpoint: {endpoint}\n"
             f"raw_json: {data}"
@@ -92,9 +134,9 @@ def parse_chat_response(data: dict[str, Any], endpoint: str) -> str:
     message = choices[0].get("message", {})
     content = normalize_message_content(message.get("content"))
     if content:
-        return content
+        return success_result(content)
 
-    return (
+    return failure_result(
         "大模型接口已返回响应，但没有提取到有效文本内容。\n\n"
         f"endpoint: {endpoint}\n"
         f"raw_json: {data}"
@@ -127,13 +169,116 @@ def build_invalid_json_message(response_text: str, endpoint: str) -> str:
     )
 
 
+def build_llm_diagnostics_result(
+    *,
+    checked_remote: bool = False,
+    request_ok: bool | None = None,
+    status_code: int | None = None,
+    response_preview: str | None = None,
+    error_message: str | None = None,
+) -> LLMDiagnosticsResult:
+    resolved_url = resolve_chat_completions_url()
+    return LLMDiagnosticsResult(
+        configured=llm_is_configured(),
+        api_key_present=bool(settings.llm_api_key),
+        base_url=settings.llm_base_url or None,
+        resolved_url=resolved_url or None,
+        model=settings.llm_model or None,
+        timeout_seconds=settings.llm_timeout_seconds,
+        checked_remote=checked_remote,
+        request_ok=request_ok,
+        status_code=status_code,
+        response_preview=response_preview,
+        error_message=error_message,
+    )
+
+
+async def diagnose_llm(*, check_remote: bool = False) -> LLMDiagnosticsResult:
+    diagnostics = build_llm_diagnostics_result()
+    if not check_remote:
+        return diagnostics
+
+    endpoint = diagnostics.resolved_url
+    if not diagnostics.configured or not endpoint:
+        return build_llm_diagnostics_result(
+            checked_remote=False,
+            request_ok=False,
+            error_message="当前 LLM 配置不完整，无法执行远程连通性测试。",
+        )
+
+    payload = build_payload(
+        prompt="ping",
+        context=None,
+        system_prompt="Reply with OK only.",
+        temperature=0.0,
+    )
+    payload["max_tokens"] = 16
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.llm_timeout_seconds) as client:
+            response = await client.post(endpoint, json=payload, headers=build_headers())
+            status_code = response.status_code
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return build_llm_diagnostics_result(
+            checked_remote=True,
+            request_ok=False,
+            status_code=exc.response.status_code,
+            error_message=preview_text(
+                build_status_error_message(exc, endpoint),
+                limit=DIAGNOSTIC_ERROR_LIMIT,
+            ),
+        )
+    except httpx.RequestError as exc:
+        return build_llm_diagnostics_result(
+            checked_remote=True,
+            request_ok=False,
+            error_message=preview_text(
+                build_request_error_message(exc, endpoint),
+                limit=DIAGNOSTIC_ERROR_LIMIT,
+            ),
+        )
+
+    try:
+        data = response.json()
+    except ValueError:
+        return build_llm_diagnostics_result(
+            checked_remote=True,
+            request_ok=False,
+            status_code=status_code,
+            error_message=preview_text(
+                build_invalid_json_message(response.text, endpoint),
+                limit=DIAGNOSTIC_ERROR_LIMIT,
+            ),
+        )
+
+    parsed = parse_chat_response(data, endpoint)
+    if not parsed.ok:
+        return build_llm_diagnostics_result(
+            checked_remote=True,
+            request_ok=False,
+            status_code=status_code,
+            error_message=preview_text(
+                parsed.error or parsed.output,
+                limit=DIAGNOSTIC_ERROR_LIMIT,
+            ),
+        )
+
+    return build_llm_diagnostics_result(
+        checked_remote=True,
+        request_ok=True,
+        status_code=status_code,
+        response_preview=preview_text(parsed.output),
+    )
+
+
 async def call_llm(
     prompt: str,
     context: str | None = None,
     *,
     system_prompt: str | None = None,
     temperature: float = 0.3,
-) -> str:
+) -> LLMCallResult:
     if not llm_is_configured():
         return unconfigured_message(prompt, context)
 
@@ -150,14 +295,14 @@ async def call_llm(
             response = await client.post(endpoint, json=payload, headers=build_headers())
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        return build_status_error_message(exc, endpoint)
+        return failure_result(build_status_error_message(exc, endpoint))
     except httpx.RequestError as exc:
-        return build_request_error_message(exc, endpoint)
+        return failure_result(build_request_error_message(exc, endpoint))
 
     try:
         data = response.json()
     except ValueError:
-        return build_invalid_json_message(response.text, endpoint)
+        return failure_result(build_invalid_json_message(response.text, endpoint))
 
     return parse_chat_response(data, endpoint)
 
@@ -168,7 +313,7 @@ def call_llm_sync(
     *,
     system_prompt: str | None = None,
     temperature: float = 0.3,
-) -> str:
+) -> LLMCallResult:
     if not llm_is_configured():
         return unconfigured_message(prompt, context)
 
@@ -185,13 +330,13 @@ def call_llm_sync(
             response = client.post(endpoint, json=payload, headers=build_headers())
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        return build_status_error_message(exc, endpoint)
+        return failure_result(build_status_error_message(exc, endpoint))
     except httpx.RequestError as exc:
-        return build_request_error_message(exc, endpoint)
+        return failure_result(build_request_error_message(exc, endpoint))
 
     try:
         data = response.json()
     except ValueError:
-        return build_invalid_json_message(response.text, endpoint)
+        return failure_result(build_invalid_json_message(response.text, endpoint))
 
     return parse_chat_response(data, endpoint)

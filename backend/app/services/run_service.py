@@ -2,6 +2,7 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from typing import Any
 
 from backend.app.core.config import settings
@@ -14,6 +15,8 @@ from backend.app.schemas import (
     RunAttemptScriptResponse,
     RunLogResponse,
     RunResponse,
+    RunSummaryListResponse,
+    RunSummaryResponse,
 )
 from backend.app.storage.run_store import (
     append_run_log,
@@ -85,6 +88,24 @@ SUMMARY_PREVIEW_LIMIT = 120
 ATTEMPT_OUTPUT_PREVIEW_LIMIT = 2000
 ATTEMPT_OUTPUT_CHUNK_LIMIT = 4000
 ATTEMPT_OUTPUT_CHUNK_MAX_LIMIT = 20000
+STARTUP_RECOVERY_PREVIEW_LIMIT = 10
+
+
+@dataclass(slots=True)
+class ScriptGenerationResult:
+    ok: bool
+    file_name: str | None = None
+    script_content: str | None = None
+    raw_output: str | None = None
+    error: str | None = None
+
+
+@dataclass(slots=True)
+class StartupRecoveryResult:
+    checked_at: str
+    scanned_count: int
+    recovered_count: int
+    recovered_run_ids: list[str]
 
 
 def preview_single_line(text: str, limit: int = SUMMARY_PREVIEW_LIMIT) -> str:
@@ -92,6 +113,12 @@ def preview_single_line(text: str, limit: int = SUMMARY_PREVIEW_LIMIT) -> str:
     if len(normalized) <= limit:
         return normalized
     return f"{normalized[:limit]}..."
+
+
+def build_startup_recovery_message(previous_status: str) -> str:
+    if previous_status == "queued":
+        return "服务重启前任务仍处于排队状态，已在启动时标记为失败。"
+    return "服务重启导致运行中的任务中断，已在启动时标记为失败。"
 
 
 def clip_text(text: str | None, limit: int = ATTEMPT_OUTPUT_PREVIEW_LIMIT) -> tuple[str | None, int, bool]:
@@ -237,6 +264,61 @@ def to_run_response(record: dict[str, object]) -> RunResponse:
             to_run_attempt_response(item)
             for item in get_attempt_records(record)
         ],
+    )
+
+
+def build_run_summary_text(record: dict[str, object]) -> str:
+    status = str(record.get("status") or "queued")
+    generator = describe_generator(str(record.get("generator") or "unknown"))
+    attempt_count = int(record.get("attempt_count") or 0)
+    repair_count = int(record.get("repair_count") or 0)
+    latest_attempt = get_attempt_records(record)[-1] if get_attempt_records(record) else None
+
+    if status == "queued":
+        return "任务已创建，等待后台执行。"
+    if status == "running":
+        if latest_attempt is not None:
+            return f"任务正在执行中。最近一次尝试：{build_attempt_summary(latest_attempt)}"
+        return "任务正在后台执行。"
+    if status == "done":
+        latest_attempt_summary = (
+            build_attempt_summary(latest_attempt) if latest_attempt is not None else "任务执行成功。"
+        )
+        return (
+            f"任务执行成功，使用 {generator}，共尝试 {attempt_count} 次，"
+            f"自动修复 {repair_count} 次。{latest_attempt_summary}"
+        )
+
+    error_preview = preview_single_line(str(record.get("error") or "未提供更多错误信息"))
+    return (
+        f"任务执行失败，使用 {generator}，共尝试 {attempt_count} 次，"
+        f"自动修复 {repair_count} 次。错误摘要：{error_preview}"
+    )
+
+
+def to_run_summary_response(record: dict[str, object]) -> RunSummaryResponse:
+    attempts = get_attempt_records(record)
+    latest_attempt = attempts[-1] if attempts else None
+    prompt_preview = preview_single_line(str(record.get("prompt") or ""), limit=160)
+    output_preview = preview_single_line(str(record.get("output") or ""), limit=160)
+    error_text = str(record.get("error") or "").strip()
+    return RunSummaryResponse(
+        run_id=str(record["run_id"]),
+        status=str(record["status"]),
+        summary=build_run_summary_text(record),
+        prompt_preview=prompt_preview or None,
+        output_preview=output_preview or None,
+        created_at=str(record["created_at"]),
+        updated_at=str(record["updated_at"]),
+        generator=str(record["generator"]) if record.get("generator") is not None else None,
+        attempt_count=int(record["attempt_count"]) if record.get("attempt_count") is not None else 0,
+        repair_attempted=bool(record.get("repair_attempted", False)),
+        repair_count=int(record["repair_count"]) if record.get("repair_count") is not None else 0,
+        started_at=str(record["started_at"]) if record.get("started_at") is not None else None,
+        finished_at=str(record["finished_at"]) if record.get("finished_at") is not None else None,
+        duration_ms=int(record["duration_ms"]) if record.get("duration_ms") is not None else None,
+        error_preview=preview_single_line(error_text, limit=160) if error_text else None,
+        latest_attempt_summary=build_attempt_summary(latest_attempt) if latest_attempt is not None else None,
     )
 
 
@@ -405,23 +487,39 @@ def build_repair_prompt(
     )
 
 
-def generate_script_with_llm(prompt: str, context: str | None) -> tuple[str, str, str] | None:
+def generate_script_with_llm(prompt: str, context: str | None) -> ScriptGenerationResult:
     if not llm_is_configured():
-        return None
+        return ScriptGenerationResult(ok=False, error="未配置真实大模型。")
 
-    raw = call_llm_sync(
+    llm_result = call_llm_sync(
         prompt=prompt,
         context=context,
         system_prompt=CODE_SYSTEM_PROMPT,
         temperature=0.2,
     )
+    if not llm_result.ok:
+        return ScriptGenerationResult(
+            ok=False,
+            raw_output=llm_result.output,
+            error=llm_result.error or llm_result.output,
+        )
 
+    raw = llm_result.output
     code = extract_python_code(raw)
     if not code:
-        return None
+        return ScriptGenerationResult(
+            ok=False,
+            raw_output=raw,
+            error="大模型返回内容中没有可解析的 Python 代码。",
+        )
 
     filename = sanitize_filename(extract_filename(raw), fallback="main.py")
-    return filename, code, raw
+    return ScriptGenerationResult(
+        ok=True,
+        file_name=filename,
+        script_content=code,
+        raw_output=raw,
+    )
 
 
 def generate_repaired_script_with_llm(
@@ -430,23 +528,39 @@ def generate_repaired_script_with_llm(
     file_name: str,
     script_content: str,
     failure_result: dict[str, Any],
-) -> tuple[str, str, str] | None:
+) -> ScriptGenerationResult:
     if not llm_is_configured():
-        return None
+        return ScriptGenerationResult(ok=False, error="未配置真实大模型。")
 
-    raw = call_llm_sync(
+    llm_result = call_llm_sync(
         prompt=build_repair_prompt(prompt, context, file_name, script_content, failure_result),
         context=None,
         system_prompt=CODE_REPAIR_SYSTEM_PROMPT,
         temperature=0.1,
     )
+    if not llm_result.ok:
+        return ScriptGenerationResult(
+            ok=False,
+            raw_output=llm_result.output,
+            error=llm_result.error or llm_result.output,
+        )
 
+    raw = llm_result.output
     code = extract_python_code(raw)
     if not code:
-        return None
+        return ScriptGenerationResult(
+            ok=False,
+            raw_output=raw,
+            error="大模型修复结果中没有可解析的 Python 代码。",
+        )
 
     filename = sanitize_filename(extract_filename(raw), fallback=file_name)
-    return filename, code, raw
+    return ScriptGenerationResult(
+        ok=True,
+        file_name=filename,
+        script_content=code,
+        raw_output=raw,
+    )
 
 
 def build_attempt_record(
@@ -458,7 +572,8 @@ def build_attempt_record(
 ) -> dict[str, object]:
     source_file_name = sanitize_filename(file_name)
     attempt_file_name = build_attempt_filename(source_file_name, attempt_number)
-    command = subprocess.list2cmdline([sys.executable, attempt_file_name])
+    command_args = [sys.executable, attempt_file_name]
+    command = subprocess.list2cmdline(command_args)
     return {
         "attempt_number": attempt_number,
         "generator": generator,
@@ -503,6 +618,7 @@ def execute_script_attempt(
     append_run_log(run_id, f"Generated file for attempt {attempt_number}: {script_rel_path}")
 
     command = str(attempt_record["command"])
+    command_args = [sys.executable, attempt_file_name]
     syntax_error = validate_python_script(attempt_file_name, script_content)
     if syntax_error:
         finished_at = utc_now_iso()
@@ -537,7 +653,7 @@ def execute_script_attempt(
         return result
 
     append_run_log(run_id, f"Executing attempt {attempt_number}: {command}")
-    result = safe_execute_command(command, cwd=generated_dir)
+    result = safe_execute_command(command_args, cwd=generated_dir)
     finished_at = utc_now_iso()
     result["command"] = command
     result["script_rel_path"] = script_rel_path
@@ -690,16 +806,34 @@ def execute_run(run_id: str) -> RunResponse | None:
     )
     append_run_log(run_id, "Status updated to running.")
 
-    llm_result = generate_script_with_llm(prompt, context)
-    if llm_result is not None:
-        current_file_name, current_script_content, raw_llm_output = llm_result
+    if llm_is_configured():
+        llm_result = generate_script_with_llm(prompt, context)
+    else:
+        llm_result = ScriptGenerationResult(ok=False, error="未配置真实大模型。")
+
+    if llm_result.ok and llm_result.file_name and llm_result.script_content and llm_result.raw_output:
+        current_file_name = llm_result.file_name
+        current_script_content = llm_result.script_content
+        raw_llm_output = llm_result.raw_output
         initial_generator = "llm"
         append_run_log(run_id, "Using LLM-generated Python script.")
         append_run_log(run_id, f"LLM raw response preview: {preview_text(raw_llm_output)}")
     else:
         current_file_name, current_script_content = choose_demo_script(prompt)
         initial_generator = "template"
-        append_run_log(run_id, "Falling back to local template script.")
+        if llm_is_configured():
+            failure_reason = llm_result.error or "大模型生成失败。"
+            append_run_log(
+                run_id,
+                f"LLM generation failed. Falling back to local template script: {preview_text(failure_reason)}",
+            )
+            if llm_result.raw_output and llm_result.raw_output != failure_reason:
+                append_run_log(
+                    run_id,
+                    f"LLM generation raw preview: {preview_text(llm_result.raw_output)}",
+                )
+        else:
+            append_run_log(run_id, "LLM is not configured. Falling back to local template script.")
 
     current_generator = initial_generator
     attempt_count = 0
@@ -795,12 +929,27 @@ def execute_run(run_id: str) -> RunResponse | None:
                 script_content=current_script_content,
                 failure_result=result,
             )
-            if repaired_result is None:
-                repair_note = "自动修复已触发，但没有生成可解析的 Python 代码。"
+            if not (
+                repaired_result.ok
+                and repaired_result.file_name
+                and repaired_result.script_content
+                and repaired_result.raw_output
+            ):
+                repair_note = (
+                    repaired_result.error
+                    or "自动修复已触发，但没有生成可解析的 Python 代码。"
+                )
                 append_run_log(run_id, repair_note)
+                if repaired_result.raw_output and repaired_result.raw_output != repair_note:
+                    append_run_log(
+                        run_id,
+                        f"LLM repair raw preview: {preview_text(repaired_result.raw_output)}",
+                    )
                 break
 
-            current_file_name, current_script_content, raw_repair_output = repaired_result
+            current_file_name = repaired_result.file_name
+            current_script_content = repaired_result.script_content
+            raw_repair_output = repaired_result.raw_output
             current_generator = "llm_repair"
             append_run_log(run_id, "Using LLM-repaired Python script for the next attempt.")
             append_run_log(
@@ -863,14 +1012,14 @@ def execute_run(run_id: str) -> RunResponse | None:
 
 
 def get_run(run_id: str) -> RunResponse | None:
-    record = load_run_record(run_id)
+    record = load_run_record(run_id, allow_invalid=True)
     if record is None:
         return None
     return to_run_response(record)
 
 
 def get_run_attempts(run_id: str) -> RunAttemptListResponse | None:
-    record = load_run_record(run_id)
+    record = load_run_record(run_id, allow_invalid=True)
     if record is None:
         return None
     attempts = [to_run_attempt_response(item) for item in get_attempt_records(record)]
@@ -882,7 +1031,7 @@ def get_run_attempts(run_id: str) -> RunAttemptListResponse | None:
 
 
 def get_run_attempt(run_id: str, attempt_number: int) -> RunAttemptResponse | None:
-    record = load_run_record(run_id)
+    record = load_run_record(run_id, allow_invalid=True)
     if record is None:
         return None
 
@@ -893,7 +1042,7 @@ def get_run_attempt(run_id: str, attempt_number: int) -> RunAttemptResponse | No
 
 
 def get_run_attempt_script(run_id: str, attempt_number: int) -> RunAttemptScriptResponse | None:
-    record = load_run_record(run_id)
+    record = load_run_record(run_id, allow_invalid=True)
     if record is None:
         return None
 
@@ -928,7 +1077,7 @@ def get_run_attempt_output_chunk(
     offset: int = 0,
     limit: int = ATTEMPT_OUTPUT_CHUNK_LIMIT,
 ) -> RunAttemptOutputChunkResponse | None:
-    record = load_run_record(run_id)
+    record = load_run_record(run_id, allow_invalid=True)
     if record is None:
         return None
 
@@ -961,8 +1110,75 @@ def list_runs() -> list[RunResponse]:
     return [to_run_response(record) for record in list_run_records()]
 
 
+def list_run_summaries(offset: int = 0, limit: int = 20) -> RunSummaryListResponse:
+    records = list_run_records()
+    safe_offset = max(0, offset)
+    safe_limit = max(1, limit)
+    total = len(records)
+    items = [
+        to_run_summary_response(record)
+        for record in records[safe_offset:safe_offset + safe_limit]
+    ]
+    return RunSummaryListResponse(
+        total=total,
+        offset=safe_offset,
+        limit=safe_limit,
+        items=items,
+    )
+
+
+def recover_interrupted_runs() -> StartupRecoveryResult:
+    checked_at = utc_now_iso()
+    records = list_run_records()
+    recovered_run_ids: list[str] = []
+
+    for record in records:
+        status = str(record.get("status") or "")
+        if status not in {"queued", "running"}:
+            continue
+
+        run_id = str(record["run_id"])
+        finished_at = utc_now_iso()
+        recovery_message = build_startup_recovery_message(status)
+
+        for attempt in get_attempt_records(record):
+            if str(attempt.get("status") or "") != "running":
+                continue
+            attempt_number = int(attempt.get("attempt_number") or 0)
+            update_run_attempt(
+                run_id,
+                attempt_number,
+                status="failed",
+                error=recovery_message,
+                finished_at=finished_at,
+            )
+
+        append_run_log(
+            run_id,
+            (
+                "Startup recovery marked the run as failed after restart. "
+                f"Previous status: {status}."
+            ),
+        )
+        update_run_record(
+            run_id,
+            status="failed",
+            output=recovery_message,
+            error=recovery_message,
+            finished_at=finished_at,
+        )
+        recovered_run_ids.append(run_id)
+
+    return StartupRecoveryResult(
+        checked_at=checked_at,
+        scanned_count=len(records),
+        recovered_count=len(recovered_run_ids),
+        recovered_run_ids=recovered_run_ids[:STARTUP_RECOVERY_PREVIEW_LIMIT],
+    )
+
+
 def get_run_log(run_id: str) -> RunLogResponse | None:
-    record = load_run_record(run_id)
+    record = load_run_record(run_id, allow_invalid=True)
     if record is None:
         return None
     return RunLogResponse(

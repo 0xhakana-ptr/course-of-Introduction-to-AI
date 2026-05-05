@@ -17,6 +17,21 @@ class ChatResponse(BaseModel):
     ok: bool = True
     intent: INTENT_TYPE
     output: str
+    error: str | None = None
+
+
+class LLMDiagnosticsResponse(BaseModel):
+    configured: bool
+    api_key_present: bool
+    base_url: str | None = None
+    resolved_url: str | None = None
+    model: str | None = None
+    timeout_seconds: int
+    checked_remote: bool = False
+    request_ok: bool | None = None
+    status_code: int | None = None
+    response_preview: str | None = None
+    error_message: str | None = None
 
 
 class RunCreateRequest(BaseModel):
@@ -80,6 +95,32 @@ class RunResponse(BaseModel):
     log_path: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     attempts: list[RunAttemptResponse] = Field(default_factory=list)
+
+
+class RunSummaryResponse(BaseModel):
+    run_id: str
+    status: RUN_STATUS
+    summary: str
+    prompt_preview: str | None = None
+    output_preview: str | None = None
+    created_at: str
+    updated_at: str
+    generator: str | None = None
+    attempt_count: int = 0
+    repair_attempted: bool = False
+    repair_count: int = 0
+    started_at: str | None = None
+    finished_at: str | None = None
+    duration_ms: int | None = None
+    error_preview: str | None = None
+    latest_attempt_summary: str | None = None
+
+
+class RunSummaryListResponse(BaseModel):
+    total: int
+    offset: int
+    limit: int
+    items: list[RunSummaryResponse] = Field(default_factory=list)
 
 
 class RunLogResponse(BaseModel):

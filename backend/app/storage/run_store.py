@@ -1,4 +1,6 @@
 import json
+import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -42,6 +44,10 @@ ATTEMPT_DEFAULTS: dict[str, object] = {
     "finished_at": None,
     "duration_ms": None,
 }
+
+
+_RUN_LOCKS: dict[str, threading.RLock] = {}
+_RUN_LOCKS_GUARD = threading.Lock()
 
 
 def utc_now_iso() -> str:
@@ -109,16 +115,65 @@ def normalize_run_record(data: dict[str, object]) -> dict[str, object]:
     return record
 
 
-def save_run_record(run_id: str, data: dict[str, object]) -> dict[str, object]:
+def get_run_lock(run_id: str) -> threading.RLock:
+    with _RUN_LOCKS_GUARD:
+        lock = _RUN_LOCKS.get(run_id)
+        if lock is None:
+            lock = threading.RLock()
+            _RUN_LOCKS[run_id] = lock
+        return lock
+
+
+def write_json_atomic(target_file: Path, data: dict[str, object]) -> None:
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    temp_file = target_file.with_name(f".{target_file.name}.{uuid4().hex}.tmp")
+    try:
+        with temp_file.open("w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        temp_file.replace(target_file)
+    finally:
+        if temp_file.exists():
+            temp_file.unlink(missing_ok=True)
+
+
+def _save_run_record_unlocked(run_id: str, data: dict[str, object]) -> dict[str, object]:
     normalized = normalize_run_record(data)
     target_dir = run_dir(run_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     target_file = run_file(run_id)
-    target_file.write_text(
-        json.dumps(normalized, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    write_json_atomic(target_file, normalized)
     return normalized
+
+
+def _load_run_record_unlocked(
+    run_id: str,
+    *,
+    allow_invalid: bool = False,
+) -> dict[str, object] | None:
+    target = run_file(run_id)
+    if not target.exists():
+        return None
+
+    try:
+        raw_data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        if allow_invalid:
+            return None
+        raise ValueError(f"run record is unreadable: {run_id}") from exc
+
+    if not isinstance(raw_data, dict):
+        if allow_invalid:
+            return None
+        raise ValueError(f"run record is invalid: {run_id}")
+
+    return normalize_run_record(raw_data)
+
+
+def save_run_record(run_id: str, data: dict[str, object]) -> dict[str, object]:
+    with get_run_lock(run_id):
+        return _save_run_record_unlocked(run_id, data)
 
 
 def create_run_record(prompt: str, context: str | None, status: str, output: str) -> dict[str, object]:
@@ -137,52 +192,53 @@ def create_run_record(prompt: str, context: str | None, status: str, output: str
     return save_run_record(run_id, data)
 
 
-def load_run_record(run_id: str) -> dict[str, object] | None:
-    target = run_file(run_id)
-    if not target.exists():
-        return None
-    return normalize_run_record(json.loads(target.read_text(encoding="utf-8")))
+def load_run_record(run_id: str, *, allow_invalid: bool = False) -> dict[str, object] | None:
+    with get_run_lock(run_id):
+        return _load_run_record_unlocked(run_id, allow_invalid=allow_invalid)
 
 
 def update_run_record(run_id: str, **fields) -> dict[str, object]:
-    record = load_run_record(run_id)
-    if record is None:
-        raise FileNotFoundError(f"run not found: {run_id}")
+    with get_run_lock(run_id):
+        record = _load_run_record_unlocked(run_id)
+        if record is None:
+            raise FileNotFoundError(f"run not found: {run_id}")
 
-    record.update(fields)
-    record["updated_at"] = utc_now_iso()
-    return save_run_record(run_id, record)
+        record.update(fields)
+        record["updated_at"] = utc_now_iso()
+        return _save_run_record_unlocked(run_id, record)
 
 
 def append_run_attempt(run_id: str, attempt: dict[str, object]) -> dict[str, object]:
-    record = load_run_record(run_id)
-    if record is None:
-        raise FileNotFoundError(f"run not found: {run_id}")
+    with get_run_lock(run_id):
+        record = _load_run_record_unlocked(run_id)
+        if record is None:
+            raise FileNotFoundError(f"run not found: {run_id}")
 
-    attempts = [item for item in record.get("attempts", []) if isinstance(item, dict)]
-    attempts.append(normalize_attempt_record(attempt))
-    record["attempts"] = attempts
-    record["updated_at"] = utc_now_iso()
-    return save_run_record(run_id, record)
+        attempts = [item for item in record.get("attempts", []) if isinstance(item, dict)]
+        attempts.append(normalize_attempt_record(attempt))
+        record["attempts"] = attempts
+        record["updated_at"] = utc_now_iso()
+        return _save_run_record_unlocked(run_id, record)
 
 
 def update_run_attempt(run_id: str, attempt_number: int, **fields) -> dict[str, object]:
-    record = load_run_record(run_id)
-    if record is None:
-        raise FileNotFoundError(f"run not found: {run_id}")
+    with get_run_lock(run_id):
+        record = _load_run_record_unlocked(run_id)
+        if record is None:
+            raise FileNotFoundError(f"run not found: {run_id}")
 
-    attempts = [item for item in record.get("attempts", []) if isinstance(item, dict)]
-    for index, attempt in enumerate(attempts):
-        current_number = attempt.get("attempt_number")
-        if isinstance(current_number, int) and current_number == attempt_number:
-            updated_attempt = dict(attempt)
-            updated_attempt.update(fields)
-            attempts[index] = normalize_attempt_record(updated_attempt)
-            record["attempts"] = attempts
-            record["updated_at"] = utc_now_iso()
-            return save_run_record(run_id, record)
+        attempts = [item for item in record.get("attempts", []) if isinstance(item, dict)]
+        for index, attempt in enumerate(attempts):
+            current_number = attempt.get("attempt_number")
+            if isinstance(current_number, int) and current_number == attempt_number:
+                updated_attempt = dict(attempt)
+                updated_attempt.update(fields)
+                attempts[index] = normalize_attempt_record(updated_attempt)
+                record["attempts"] = attempts
+                record["updated_at"] = utc_now_iso()
+                return _save_run_record_unlocked(run_id, record)
 
-    raise FileNotFoundError(f"attempt not found: {run_id}#{attempt_number}")
+        raise FileNotFoundError(f"attempt not found: {run_id}#{attempt_number}")
 
 
 def list_run_records() -> list[dict[str, object]]:
@@ -192,7 +248,8 @@ def list_run_records() -> list[dict[str, object]]:
     for child in settings.runs_dir.iterdir():
         if not child.is_dir():
             continue
-        record = load_run_record(child.name)
+        with get_run_lock(child.name):
+            record = _load_run_record_unlocked(child.name, allow_invalid=True)
         if record is not None:
             records.append(record)
 
