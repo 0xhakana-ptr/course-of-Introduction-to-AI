@@ -5,9 +5,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from backend.app.core.config import settings
-from backend.app.llm.client import call_llm_sync, llm_is_configured
-from backend.app.schemas import (
+from core.config import settings
+from llm.client import call_llm_sync, llm_is_configured
+from schemas import (
     ATTEMPT_OUTPUT_STREAM,
     RunAttemptListResponse,
     RunAttemptOutputChunkResponse,
@@ -18,7 +18,7 @@ from backend.app.schemas import (
     RunSummaryListResponse,
     RunSummaryResponse,
 )
-from backend.app.storage.run_store import (
+from storage.run_store import (
     append_run_log,
     append_run_attempt,
     create_run_record,

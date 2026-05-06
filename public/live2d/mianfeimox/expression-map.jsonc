@@ -30,42 +30,42 @@
         //工作流标签
         // 思考状态
         "thinking": [
-            "expr/眼镜.exp3.json",
-            "expr/外套.exp3.json"
+            "expr/expressions/眼镜.exp3.json",
+            "expr/expressions/外套.exp3.json"
         ],
         
         // 专注状态
-        "focused": "expr/眼镜.exp3.json",
+        "focused": "expr/expressions/眼镜.exp3.json",
         
         // 编程状态
         "coding": [
-            "expr/眼镜.exp3.json"
+            "expr/expressions/眼镜.exp3.json"
         ],
         
         // 工作状态
         "working": [
-            "expr/眼镜.exp3.json"
+            "expr/expressions/眼镜.exp3.json"
         ],
         
         // 分析状态
         "analyzing": [
-            "expr/眼镜.exp3.json"
+            "expr/expressions/眼镜.exp3.json"
         ],
         
         // 担忧状态
         "worried": [
-            "expr/荷包蛋.exp3.json"
+            "expr/expressions/荷包蛋.exp3.json"
         ],
         
         // 开心状态
         "happy": [
-            "expr/比心.exp3.json",
-            "expr/星星.exp3.json"
+            "expr/expressions/比心.exp3.json",
+            "expr/expressions/星星.exp3.json"
         ],
         
         // 难过状态
         "sad": [
-            "expr/哭.exp3.json"
+            "expr/expressions/哭.exp3.json"
         ]
         
         // 你也可以添加自定义 tag：

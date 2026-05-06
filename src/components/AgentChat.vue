@@ -1,9 +1,52 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { getIpcRenderer } from '../platform/electronIpc'
 
 type ChatLine = { role: 'user' | 'assistant' | 'system' | 'err'; text: string }
 type AgentChatResponse = { ok: boolean; output: string }
+
+// AI Agent 消息类型定义
+type ChatMessage = {
+  type: 'chat'
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+  metadata?: {
+    is_partial: boolean
+    sequence_id?: number
+    total_parts?: number
+    node_name?: string
+  }
+}
+
+type ExpressionMessage = {
+  type: 'expression'
+  expression: string
+  intensity?: number
+  node_name: string
+  timestamp: string
+  metadata?: {
+    duration?: number
+    transition?: 'smooth' | 'instant'
+  }
+}
+
+type ErrorMessage = {
+  type: 'error'
+  code: string
+  message: string
+  details?: any
+  timestamp: string
+  node_name?: string
+}
+
+type StatusUpdate = {
+  type: 'status'
+  status: 'idle' | 'running' | 'paused' | 'done' | 'error'
+  progress?: number
+  node_name?: string
+  timestamp: string
+}
 
 const ipcRenderer = getIpcRenderer()
 
@@ -12,6 +55,12 @@ const input = ref('')
 const inputHistory = ref<string[]>([])
 const historyIndex = ref(-1)
 const isSending = ref(false)
+const currentStatus = ref('idle')
+const currentProgress = ref(0)
+const currentNode = ref('')
+
+// 存储部分消息
+const partialMessages = new Map<number, string>()
 
 const outputRef = ref<HTMLDivElement | null>(null)
 const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
@@ -30,6 +79,59 @@ function push(role: ChatLine['role'], text: string) {
 function clearScreen() {
   lines.value = []
   push('system', '屏幕已清空（Ctrl+L）。')
+}
+
+// 处理 Chat 消息
+function handleChat(event: any, data: ChatMessage) {
+  const { content, metadata } = data
+  
+  if (metadata?.is_partial && typeof metadata.sequence_id === 'number' && typeof metadata.total_parts === 'number') {
+    // 处理流式输出
+    const { sequence_id, total_parts } = metadata
+    partialMessages.set(sequence_id, content)
+    
+    // 检查是否所有部分都已接收
+    if (partialMessages.size === total_parts) {
+      // 按顺序组合所有部分
+      let fullContent = ''
+      for (let i = 0; i < total_parts; i++) {
+        fullContent += partialMessages.get(i) || ''
+      }
+      push('assistant', fullContent)
+      partialMessages.clear()
+    }
+  } else {
+    // 完整消息，直接显示
+    push('assistant', content)
+  }
+}
+
+// 处理错误消息
+function handleError(event: any, data: ErrorMessage) {
+  push('err', `[${data.code}] ${data.message}`)
+  if (data.details) {
+    push('err', JSON.stringify(data.details, null, 2))
+  }
+}
+
+// 处理状态更新
+function handleStatus(event: any, data: StatusUpdate) {
+  currentStatus.value = data.status
+  currentProgress.value = data.progress || 0
+  currentNode.value = data.node_name || ''
+  
+  if (data.status === 'running') {
+    push('system', `[状态] 正在运行... 节点: ${data.node_name || '未知'} 进度: ${data.progress || 0}%`)
+  } else if (data.status === 'done') {
+    push('system', '[状态] 任务完成')
+  } else if (data.status === 'error') {
+    push('system', '[状态] 发生错误')
+  }
+}
+
+// 处理表情消息
+function handleExpression(event: any, data: ExpressionMessage) {
+  push('system', `[表情] 切换到: ${data.expression} (强度: ${data.intensity})`)
 }
 
 function buildContext(maxChars = 4000): string {
@@ -125,6 +227,24 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(() => {
   push('system', 'AI Chat 已启动。Enter 发送，Shift+Enter 换行，↑/↓ 历史，Ctrl+L 清屏。')
   if (!canInvoke.value) push('err', '（仅 Electron 可用：请通过 pnpm dev 启动桌面端）')
+  
+  // 监听消息
+  if (ipcRenderer) {
+    ipcRenderer.on('agent:chat', handleChat)
+    ipcRenderer.on('agent:error', handleError)
+    ipcRenderer.on('agent:status', handleStatus)
+    ipcRenderer.on('agent:expression', handleExpression)
+  } else {
+    push('err', 'IPC 不可用，无法接收 AI Agent 消息')
+  }
+})
+
+onUnmounted(() => {
+  if (ipcRenderer) {
+    ipcRenderer.removeListener('agent:chat', handleChat)
+    ipcRenderer.removeListener('agent:error', handleError)
+    ipcRenderer.removeListener('agent:status', handleStatus)
+  }
 })
 </script>
 
@@ -133,6 +253,12 @@ onMounted(() => {
     <div class="header">
       <div class="title">AI Chat</div>
       <div class="right">
+        <!-- 显示当前状态 -->
+        <div class="status-info" v-if="currentStatus !== 'idle'">
+          <span class="status-badge" :class="currentStatus">{{ currentStatus }}</span>
+          <span v-if="currentProgress > 0" class="progress">{{ currentProgress }}%</span>
+          <span v-if="currentNode" class="node">{{ currentNode }}</span>
+        </div>
         <div class="status" :class="{ busy: isSending }">{{ isSending ? 'thinking…' : 'ready' }}</div>
         <button class="btn" type="button" @click="clearScreen">清屏</button>
       </div>
@@ -267,6 +393,46 @@ onMounted(() => {
   color: inherit;
   cursor: pointer;
 }
+
+.status-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+}
+
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status-badge.running {
+  background: rgba(183, 215, 255, 0.2);
+  color: #b7d7ff;
+}
+
+.status-badge.done {
+  background: rgba(180, 255, 180, 0.2);
+  color: #b4ffb4;
+}
+
+.status-badge.error {
+  background: rgba(255, 180, 180, 0.2);
+  color: #ffb4b4;
+}
+
+.progress {
+  font-size: 11px;
+  color: rgba(234, 234, 234, 0.8);
+}
+
+.node {
+  font-size: 11px;
+  color: rgba(234, 234, 234, 0.6);
+}
+
 
 .btn.primary {
   background: rgba(183, 215, 255, 0.14);

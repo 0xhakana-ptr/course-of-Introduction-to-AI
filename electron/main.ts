@@ -31,6 +31,62 @@ const mouseTrackDebug = String(process.env.MOUSETRACK_DEBUG ?? '').trim() === '1
 type Live2DCommandResponse = { ok: boolean; output: string }
 const pendingCommandResponses = new Map<string, (value: Live2DCommandResponse) => void>()
 
+// AI Agent 消息类型定义
+type QuipMessage = {
+  type: 'quip'
+  content: string
+  node_name: string
+  timestamp: string
+  metadata?: {
+    priority: 'low' | 'medium' | 'high'
+    duration?: number
+  }
+}
+
+type ExpressionMessage = {
+  type: 'expression'
+  expression: string
+  intensity?: number
+  node_name: string
+  timestamp: string
+  metadata?: {
+    duration?: number
+    transition?: 'smooth' | 'instant'
+  }
+}
+
+type ChatMessage = {
+  type: 'chat'
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp: string
+  metadata?: {
+    is_partial: boolean
+    sequence_id?: number
+    total_parts?: number
+    node_name?: string
+  }
+}
+
+type ErrorMessage = {
+  type: 'error'
+  code: string
+  message: string
+  details?: any
+  timestamp: string
+  node_name?: string
+}
+
+type StatusUpdate = {
+  type: 'status'
+  status: 'idle' | 'running' | 'paused' | 'done' | 'error'
+  progress?: number
+  node_name?: string
+  timestamp: string
+}
+
+type AgentMessage = QuipMessage | ExpressionMessage | ChatMessage | ErrorMessage | StatusUpdate
+
 type Live2DApiRequest =
     | { op: 'status' }
     | { op: 'list'; type?: 'expression' | 'motion' }
@@ -473,6 +529,132 @@ ipcMain.on('live2d:commandResult', (_event, payload: any) => {
     resolve({ ok, output })
 })
 
+// ========== WebSocket 连接 ==========
+
+let ws: WebSocket | null = null
+let reconnectInterval: NodeJS.Timeout | null = null
+
+function connectWebSocket() {
+  console.log('[WebSocket] 正在连接到 ws://localhost:8001')
+  
+  ws = new WebSocket('ws://localhost:8001')
+  
+  ws.onopen = () => {
+    console.log('[WebSocket] 连接成功')
+    
+    // 清除重连定时器
+    if (reconnectInterval) {
+      clearInterval(reconnectInterval)
+      reconnectInterval = null
+    }
+  }
+  
+  ws.onmessage = (event) => {
+    try {
+      const message = JSON.parse(event.data)
+      console.log(`[WebSocket] 收到消息: ${message.type}`)
+      
+      const channel = message._channel
+      
+      // 根据消息类型转发到对应的窗口
+      switch (channel) {
+        case 'agent:quip':
+          if (quipWindow && !quipWindow.isDestroyed()) {
+            quipWindow.webContents.send('agent:quip', message)
+          }
+          break
+        case 'agent:expression':
+          // 发送到 mainWindow（用于 Live2D 模型）
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('agent:expression', message)
+          }
+          // 发送到 consoleWindow（用于 Live2DConsole 显示）
+          if (consoleWindow && !consoleWindow.isDestroyed()) {
+            consoleWindow.webContents.send('agent:expression', message)
+          }
+          break
+        case 'agent:chat':
+          if (chatWindow && !chatWindow.isDestroyed()) {
+            chatWindow.webContents.send('agent:chat', message)
+          }
+          break
+        case 'agent:error':
+          if (chatWindow && !chatWindow.isDestroyed()) {
+            chatWindow.webContents.send('agent:error', message)
+          }
+          break
+        case 'agent:status':
+          if (chatWindow && !chatWindow.isDestroyed()) {
+            chatWindow.webContents.send('agent:status', message)
+          }
+          break
+      }
+    } catch (error) {
+      console.error('[WebSocket] 解析消息失败:', error)
+    }
+  }
+  
+  ws.onerror = (error) => {
+    console.error('[WebSocket] 连接错误:', error)
+  }
+  
+  ws.onclose = () => {
+    console.log('[WebSocket] 连接断开')
+    
+    // 3 秒后尝试重连
+    if (!reconnectInterval) {
+      reconnectInterval = setInterval(() => {
+        console.log('[WebSocket] 尝试重连...')
+        connectWebSocket()
+      }, 60000)
+    }
+  }
+}
+
+function disconnectWebSocket() {
+  if (ws) {
+    ws.close()
+    ws = null
+  }
+  if (reconnectInterval) {
+    clearInterval(reconnectInterval)
+    reconnectInterval = null
+  }
+  console.log('[WebSocket] 已断开连接')
+}
+
+// AI Agent 消息转发处理器
+
+// 处理来自后端的 Quip 消息
+ipcMain.on('backend:quip', (_event, data: QuipMessage) => {
+  if (!quipWindow || quipWindow.isDestroyed()) return
+  quipWindow.webContents.send('agent:quip', data)
+})
+
+// 处理来自后端的表情消息
+ipcMain.on('backend:expression', (_event, data: ExpressionMessage) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('agent:expression', data)
+})
+
+// 处理来自后端的 Chat 消息
+ipcMain.on('backend:chat', (_event, data: ChatMessage) => {
+  if (!chatWindow || chatWindow.isDestroyed()) return
+  chatWindow.webContents.send('agent:chat', data)
+})
+
+// 处理来自后端的错误消息
+ipcMain.on('backend:error', (_event, data: ErrorMessage) => {
+  if (!chatWindow || chatWindow.isDestroyed()) return
+  chatWindow.webContents.send('agent:error', data)
+})
+
+// 处理来自后端的状态更新
+ipcMain.on('backend:status', (_event, data: StatusUpdate) => {
+  if (!chatWindow || chatWindow.isDestroyed()) return
+  chatWindow.webContents.send('agent:status', data)
+})
+
 app.whenReady().then(() => {
     mouseTracking = installGlobalMouseTracking(() => mainWindow)
     createWindow()
@@ -480,6 +662,7 @@ app.whenReady().then(() => {
     createQuipWindow()
     createChatWindow()
     startLive2DWebSocketServer()
+    connectWebSocket()
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
