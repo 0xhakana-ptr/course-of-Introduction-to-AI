@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from typing import Any, Dict
-import json
 import os
 
 
@@ -11,7 +10,7 @@ def get_message_queue():
     """获取消息队列实例"""
     global message_queue
     if message_queue is None:
-        from message_queue import message_queue as mq
+        from ..message_queue import message_queue as mq
         message_queue = mq
     return message_queue
 
@@ -23,7 +22,7 @@ class MessageSender:
     
     def _get_timestamp(self) -> str:
         """获取 ISO 8601 格式时间戳"""
-        return datetime.now(timezone.utc).isoformat() + 'Z'
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     
     def _send_to_frontend(self, channel: str, message: Dict[str, Any]) -> bool:
         """发送消息到前端

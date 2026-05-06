@@ -321,6 +321,8 @@ pnpm dev
 
 - 请求：`POST` JSON `{ prompt, context }`
 - 响应：可以返回纯文本；或返回 JSON `{ output: string }` / `{ text: string }`
+- 设置 `AI_AGENT_ENDPOINT` 后，Electron 主进程会自动从同一后端轮询 `GET /messages`，接收 quip / expression / chat / status / error 消息。
+- 如果消息接口地址需要单独指定，可以额外设置 `AI_AGENT_MESSAGES_ENDPOINT` 覆盖默认推导值。
 
 完整后端说明见：`backend/README.md`。
 

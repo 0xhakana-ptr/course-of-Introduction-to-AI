@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from core.config import settings
+from ..core.config import settings
 
 
 WORKSPACE_DIR = settings.workspace_dir.resolve()

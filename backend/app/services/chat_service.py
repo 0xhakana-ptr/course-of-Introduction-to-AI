@@ -1,9 +1,9 @@
-from llm.client import call_llm
-from schemas import INTENT_TYPE
-from agent_workflow.agent_graph import run_agent
-from messaging.message_sender import message_sender
-from agent_workflow.node_mappings import get_node_quip_and_expression
-import asyncio
+from dataclasses import dataclass
+
+from ..llm.client import LLMCallResult, call_llm
+from ..messaging.message_sender import message_sender
+from ..schemas import INTENT_TYPE
+
 
 @dataclass(slots=True)
 class ChatServiceResult:
@@ -65,24 +65,71 @@ def detect_intent(prompt: str) -> INTENT_TYPE:
 async def build_chat_reply(prompt: str, context: str | None) -> LLMCallResult:
     return await call_llm(prompt, context)
 
+def get_node_quip_and_expression(node_name: str) -> tuple[str, str]:
+    try:
+        from ..agent_workflow.node_mappings import get_node_quip_and_expression as resolver
+    except Exception:
+        fallback_mappings = {
+            "start": ("开始思考...", "thinking"),
+            "planning": ("正在规划任务...", "focused"),
+            "coding": ("正在编写代码...", "coding"),
+            "executing": ("正在执行代码...", "working"),
+            "analyzing": ("正在分析结果...", "analyzing"),
+            "repairing": ("正在修复问题...", "worried"),
+            "done": ("任务完成！", "happy"),
+            "error": ("遇到错误...", "sad"),
+        }
+        return fallback_mappings.get(node_name, ("处理中...", "neutral"))
+    return resolver(node_name)
 
-# def build_coding_reply(prompt: str, context: str | None) -> str:
-#     _ = context
-#     return (
-#         "这是代码任务分支。\n\n"
-#         f"我识别到你的请求更像是一个开发任务：{prompt}\n\n"
-#         "建议后续把这个分支继续拆成：\n"
-#         "1. 需求分析\n"
-#         "2. 任务拆分\n"
-#         "3. 代码生成\n"
-#         "4. 测试与修复\n\n"
-#         "当前项目里，下一步最适合先补安全文件读写和命令执行。"
-#     )
 
-def build_coding_reply(prompt: str, context: str | None) -> str:
-    # 使用 LangGraph 运行 Agent
-    result = run_agent(prompt, context)
-    return result.get('output', '任务执行中...')
+def build_coding_reply(prompt: str, context: str | None) -> ChatServiceResult:
+    try:
+        from ..agent_workflow.agent_graph import run_agent
+    except Exception as exc:
+        return ChatServiceResult(
+            intent="coding",
+            ok=False,
+            output=(
+                "代码任务分支当前不可用，原因是 Agent 工作流依赖尚未正确加载。\n\n"
+                f"prompt: {prompt}\n"
+                f"context: {context or '(none)'}"
+            ),
+            error=str(exc),
+        )
+
+    try:
+        result = run_agent(prompt, context)
+    except Exception as exc:
+        return ChatServiceResult(
+            intent="coding",
+            ok=False,
+            output=(
+                "代码任务执行失败。\n\n"
+                f"prompt: {prompt}\n"
+                f"context: {context or '(none)'}"
+            ),
+            error=str(exc),
+        )
+
+    output = str(result.get("output") or "").strip()
+    if output:
+        return ChatServiceResult(
+            intent="coding",
+            ok=bool(result.get("ok", True)),
+            output=output,
+            error=str(result.get("error")) if result.get("error") is not None else None,
+        )
+
+    return ChatServiceResult(
+        intent="coding",
+        ok=bool(result.get("ok", True)),
+        output=(
+            "我已经把这条请求识别为代码任务，并触发了后端 Agent 工作流。\n\n"
+            "当前 coding 分支还在继续完善中，暂时先返回占位结果。"
+        ),
+        error=str(result.get("error")) if result.get("error") is not None else None,
+    )
 
 
 def build_unknown_reply(prompt: str) -> ChatServiceResult:
@@ -376,11 +423,15 @@ def get_test_help() -> str:
 
 
 
-async def generate_chat_response(prompt: str, context: str | None) -> tuple[INTENT_TYPE, str]:
+async def generate_chat_response(prompt: str, context: str | None) -> ChatServiceResult:
     # 优先检查是否为测试命令
     if is_test_command(prompt):
-        return 'test', handle_test_command(prompt)
-    
+        return ChatServiceResult(
+            intent="chat",
+            ok=True,
+            output=handle_test_command(prompt),
+        )
+
     intent = detect_intent(prompt)
 
     if intent == "chat":
@@ -392,5 +443,5 @@ async def generate_chat_response(prompt: str, context: str | None) -> tuple[INTE
             error=result.error,
         )
     if intent == "coding":
-        return intent, build_coding_reply(prompt, context)
-    return intent, build_unknown_reply(prompt)
+        return build_coding_reply(prompt, context)
+    return build_unknown_reply(prompt)

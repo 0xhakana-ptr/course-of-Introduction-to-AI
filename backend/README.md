@@ -375,6 +375,8 @@ pnpm dev
 
 - 执行这一步之前，请先确保你已经在项目根目录完成过一次 `pnpm install`。
 - 执行 `pnpm dev` 时，不要关闭前一个正在运行后端的终端窗口。
+- 设置 `AI_AGENT_ENDPOINT` 后，Electron 主进程会自动从同一后端轮询 `GET /messages`，用于接收角色提示、表情、聊天、状态和错误消息。
+- 如果消息接口地址不和 `/chat` 在同一个基地址下，可以额外设置 `AI_AGENT_MESSAGES_ENDPOINT`，例如：`http://127.0.0.1:8000/messages`。
 
 ## 可选：激活虚拟环境
 

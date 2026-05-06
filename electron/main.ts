@@ -4,7 +4,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import { installGlobalMouseTracking } from './mouseTracking'
-import wsPkg from 'ws'
+import * as wsNamespace from 'ws'
 import type { WebSocketServer as WebSocketServerType } from 'ws'
 
 // Optional GPU/DComp workarounds (opt-in via env vars).
@@ -86,6 +86,16 @@ type StatusUpdate = {
 }
 
 type AgentMessage = QuipMessage | ExpressionMessage | ChatMessage | ErrorMessage | StatusUpdate
+type AgentMessageEnvelope = AgentMessage & {
+  _id?: string
+  _channel?: string
+  _timestamp?: string
+}
+type BackendMessagesResponse = {
+  ok?: boolean
+  messages?: unknown[]
+  count?: number
+}
 
 type Live2DApiRequest =
     | { op: 'status' }
@@ -131,7 +141,20 @@ ipcMain.on('live2d:apiResponse', (_event, payload: any) => {
     pending.resolve({ ok, data, error })
 })
 
-const WebSocketServer = ((wsPkg as any)?.WebSocketServer ?? (wsPkg as any)?.Server) as
+const wsCompat = wsNamespace as typeof wsNamespace & {
+    default?: {
+        WebSocketServer?: new (...args: any[]) => WebSocketServerType
+        Server?: new (...args: any[]) => WebSocketServerType
+    }
+    Server?: new (...args: any[]) => WebSocketServerType
+}
+
+const WebSocketServer = (
+    wsCompat.WebSocketServer
+    ?? wsCompat.default?.WebSocketServer
+    ?? wsCompat.Server
+    ?? wsCompat.default?.Server
+) as
     | (new (...args: any[]) => WebSocketServerType)
     | undefined
 
@@ -529,130 +552,234 @@ ipcMain.on('live2d:commandResult', (_event, payload: any) => {
     resolve({ ok, output })
 })
 
-// ========== WebSocket 连接 ==========
+function getConfiguredAgentEndpoint(): string | null {
+    const endpoint = String(process.env.AI_AGENT_ENDPOINT ?? '').trim()
+    return endpoint || null
+}
 
-let ws: WebSocket | null = null
-let reconnectInterval: NodeJS.Timeout | null = null
+function normalizeBaseUrl(value: string): string {
+    return value.replace(/\/+$/, '')
+}
 
-function connectWebSocket() {
-  console.log('[WebSocket] 正在连接到 ws://localhost:8001')
-  
-  ws = new WebSocket('ws://localhost:8001')
-  
-  ws.onopen = () => {
-    console.log('[WebSocket] 连接成功')
-    
-    // 清除重连定时器
-    if (reconnectInterval) {
-      clearInterval(reconnectInterval)
-      reconnectInterval = null
+function resolveAgentBaseUrl(): string | null {
+    const explicitBaseUrl = String(
+        process.env.AI_AGENT_BASE_URL
+        ?? process.env.BACKEND_BASE_URL
+        ?? '',
+    ).trim()
+    if (explicitBaseUrl) {
+        return normalizeBaseUrl(explicitBaseUrl)
     }
-  }
-  
-  ws.onmessage = (event) => {
+
+    const endpoint = getConfiguredAgentEndpoint()
+    if (!endpoint) return null
+
     try {
-      const message = JSON.parse(event.data)
-      console.log(`[WebSocket] 收到消息: ${message.type}`)
-      
-      const channel = message._channel
-      
-      // 根据消息类型转发到对应的窗口
-      switch (channel) {
+        const url = new URL(endpoint)
+        return normalizeBaseUrl(`${url.protocol}//${url.host}`)
+    } catch {
+        return null
+    }
+}
+
+function resolveAgentMessagesEndpoint(): string | null {
+    const explicitEndpoint = String(
+        process.env.AI_AGENT_MESSAGES_ENDPOINT
+        ?? process.env.BACKEND_MESSAGES_URL
+        ?? '',
+    ).trim()
+    if (explicitEndpoint) {
+        return explicitEndpoint
+    }
+
+    const baseUrl = resolveAgentBaseUrl()
+    if (!baseUrl) return null
+    return `${baseUrl}/messages`
+}
+
+function parsePositiveIntegerEnv(name: string, fallback: number): number {
+    const raw = String(process.env[name] ?? '').trim()
+    if (!raw) return fallback
+    const parsed = Number.parseInt(raw, 10)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function resolveAgentMessageChannel(message: AgentMessageEnvelope): string | null {
+    if (typeof message._channel === 'string' && message._channel.trim()) {
+        return message._channel
+    }
+    if (typeof message.type === 'string' && message.type.trim()) {
+        return `agent:${message.type}`
+    }
+    return null
+}
+
+function dispatchAgentMessage(message: AgentMessageEnvelope) {
+    const channel = resolveAgentMessageChannel(message)
+    if (!channel) return
+
+    switch (channel) {
         case 'agent:quip':
-          if (quipWindow && !quipWindow.isDestroyed()) {
-            quipWindow.webContents.send('agent:quip', message)
-          }
-          break
+            if (quipWindow && !quipWindow.isDestroyed()) {
+                quipWindow.webContents.send('agent:quip', message)
+            }
+            break
         case 'agent:expression':
-          // 发送到 mainWindow（用于 Live2D 模型）
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('agent:expression', message)
-          }
-          // 发送到 consoleWindow（用于 Live2DConsole 显示）
-          if (consoleWindow && !consoleWindow.isDestroyed()) {
-            consoleWindow.webContents.send('agent:expression', message)
-          }
-          break
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('agent:expression', message)
+            }
+            if (consoleWindow && !consoleWindow.isDestroyed()) {
+                consoleWindow.webContents.send('agent:expression', message)
+            }
+            break
         case 'agent:chat':
-          if (chatWindow && !chatWindow.isDestroyed()) {
-            chatWindow.webContents.send('agent:chat', message)
-          }
-          break
+            if (chatWindow && !chatWindow.isDestroyed()) {
+                chatWindow.webContents.send('agent:chat', message)
+            }
+            break
         case 'agent:error':
-          if (chatWindow && !chatWindow.isDestroyed()) {
-            chatWindow.webContents.send('agent:error', message)
-          }
-          break
+            if (chatWindow && !chatWindow.isDestroyed()) {
+                chatWindow.webContents.send('agent:error', message)
+            }
+            break
         case 'agent:status':
-          if (chatWindow && !chatWindow.isDestroyed()) {
-            chatWindow.webContents.send('agent:status', message)
-          }
-          break
-      }
+            if (chatWindow && !chatWindow.isDestroyed()) {
+                chatWindow.webContents.send('agent:status', message)
+            }
+            break
+    }
+}
+
+function toAgentMessageEnvelope(value: unknown): AgentMessageEnvelope | null {
+    if (!value || typeof value !== 'object') return null
+    const candidate = value as Partial<AgentMessageEnvelope>
+    if (typeof candidate.type !== 'string' || !candidate.type.trim()) return null
+    return candidate as AgentMessageEnvelope
+}
+
+let backendBridgeTimer: NodeJS.Timeout | null = null
+let backendBridgeInFlight = false
+let backendBridgeSinceId: string | null = null
+let backendBridgeLastError: string | null = null
+let backendBridgeEndpoint: string | null = null
+
+async function pollBackendMessagesOnce() {
+    if (!backendBridgeEndpoint || backendBridgeInFlight) return
+    backendBridgeInFlight = true
+
+    try {
+        const url = new URL(backendBridgeEndpoint)
+        if (backendBridgeSinceId) {
+            url.searchParams.set('since_id', backendBridgeSinceId)
+        }
+
+        const response = await fetch(url.toString(), {
+            method: 'GET',
+            headers: {
+                accept: 'application/json',
+            },
+        })
+        const rawText = await response.text()
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${rawText || '(empty response body)'}`)
+        }
+
+        let payload: BackendMessagesResponse = {}
+        if (rawText.trim()) {
+            try {
+                payload = JSON.parse(rawText) as BackendMessagesResponse
+            } catch (error) {
+                throw new Error(`invalid JSON from /messages: ${String(error)}`)
+            }
+        }
+
+        const messages = Array.isArray(payload.messages) ? payload.messages : []
+        for (const item of messages) {
+            const message = toAgentMessageEnvelope(item)
+            if (!message) continue
+            dispatchAgentMessage(message)
+            if (typeof message._id === 'string' && message._id.trim()) {
+                backendBridgeSinceId = message._id
+            }
+        }
+
+        if (backendBridgeLastError) {
+            console.log(`[backend-bridge] reconnected: ${backendBridgeEndpoint}`)
+            backendBridgeLastError = null
+        }
     } catch (error) {
-      console.error('[WebSocket] 解析消息失败:', error)
+        const message = String(error)
+        if (backendBridgeLastError !== message) {
+            console.warn(`[backend-bridge] poll failed: ${message}`)
+            backendBridgeLastError = message
+        }
+    } finally {
+        backendBridgeInFlight = false
     }
-  }
-  
-  ws.onerror = (error) => {
-    console.error('[WebSocket] 连接错误:', error)
-  }
-  
-  ws.onclose = () => {
-    console.log('[WebSocket] 连接断开')
-    
-    // 3 秒后尝试重连
-    if (!reconnectInterval) {
-      reconnectInterval = setInterval(() => {
-        console.log('[WebSocket] 尝试重连...')
-        connectWebSocket()
-      }, 60000)
-    }
-  }
 }
 
-function disconnectWebSocket() {
-  if (ws) {
-    ws.close()
-    ws = null
-  }
-  if (reconnectInterval) {
-    clearInterval(reconnectInterval)
-    reconnectInterval = null
-  }
-  console.log('[WebSocket] 已断开连接')
+function startBackendMessageBridge() {
+    if (backendBridgeTimer) return
+
+    backendBridgeEndpoint = resolveAgentMessagesEndpoint()
+    if (!backendBridgeEndpoint) {
+        console.log('[backend-bridge] AI_AGENT_ENDPOINT not configured; skip polling /messages')
+        return
+    }
+
+    const intervalMs = parsePositiveIntegerEnv('AI_AGENT_MESSAGES_POLL_MS', 1000)
+    console.log(`[backend-bridge] polling ${backendBridgeEndpoint} every ${intervalMs}ms`)
+
+    void pollBackendMessagesOnce()
+    backendBridgeTimer = setInterval(() => {
+        void pollBackendMessagesOnce()
+    }, intervalMs)
 }
 
-// AI Agent 消息转发处理器
+function stopBackendMessageBridge() {
+    if (backendBridgeTimer) {
+        clearInterval(backendBridgeTimer)
+        backendBridgeTimer = null
+    }
+    backendBridgeInFlight = false
+    backendBridgeLastError = null
+    backendBridgeSinceId = null
+    backendBridgeEndpoint = null
+}
 
-// 处理来自后端的 Quip 消息
 ipcMain.on('backend:quip', (_event, data: QuipMessage) => {
-  if (!quipWindow || quipWindow.isDestroyed()) return
-  quipWindow.webContents.send('agent:quip', data)
+    dispatchAgentMessage({
+        ...data,
+        _channel: 'agent:quip',
+    })
 })
 
-// 处理来自后端的表情消息
 ipcMain.on('backend:expression', (_event, data: ExpressionMessage) => {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send('agent:expression', data)
+    dispatchAgentMessage({
+        ...data,
+        _channel: 'agent:expression',
+    })
 })
 
-// 处理来自后端的 Chat 消息
 ipcMain.on('backend:chat', (_event, data: ChatMessage) => {
-  if (!chatWindow || chatWindow.isDestroyed()) return
-  chatWindow.webContents.send('agent:chat', data)
+    dispatchAgentMessage({
+        ...data,
+        _channel: 'agent:chat',
+    })
 })
 
-// 处理来自后端的错误消息
 ipcMain.on('backend:error', (_event, data: ErrorMessage) => {
-  if (!chatWindow || chatWindow.isDestroyed()) return
-  chatWindow.webContents.send('agent:error', data)
+    dispatchAgentMessage({
+        ...data,
+        _channel: 'agent:error',
+    })
 })
 
-// 处理来自后端的状态更新
 ipcMain.on('backend:status', (_event, data: StatusUpdate) => {
-  if (!chatWindow || chatWindow.isDestroyed()) return
-  chatWindow.webContents.send('agent:status', data)
+    dispatchAgentMessage({
+        ...data,
+        _channel: 'agent:status',
+    })
 })
 
 app.whenReady().then(() => {
@@ -662,7 +789,7 @@ app.whenReady().then(() => {
     createQuipWindow()
     createChatWindow()
     startLive2DWebSocketServer()
-    connectWebSocket()
+    startBackendMessageBridge()
 
     app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -672,6 +799,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
     mouseTracking?.dispose()
     mouseTracking = null
+    stopBackendMessageBridge()
     try {
         wss?.close()
     } catch {

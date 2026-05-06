@@ -3,7 +3,7 @@ from typing import Any
 
 import httpx
 
-from core.config import settings
+from ..core.config import settings
 
 
 @dataclass(slots=True)

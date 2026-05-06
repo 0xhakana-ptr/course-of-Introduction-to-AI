@@ -5,9 +5,9 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from core.config import settings
-from llm.client import call_llm_sync, llm_is_configured
-from schemas import (
+from ..core.config import settings
+from ..llm.client import call_llm_sync, llm_is_configured
+from ..schemas import (
     ATTEMPT_OUTPUT_STREAM,
     RunAttemptListResponse,
     RunAttemptOutputChunkResponse,
@@ -18,7 +18,7 @@ from schemas import (
     RunSummaryListResponse,
     RunSummaryResponse,
 )
-from storage.run_store import (
+from ..storage.run_store import (
     append_run_log,
     append_run_attempt,
     create_run_record,
@@ -29,8 +29,8 @@ from storage.run_store import (
     update_run_attempt,
     update_run_record,
 )
-from backend.app.tools.safe_execute_command import safe_execute_command
-from backend.app.tools.safe_fs import safe_read_file, safe_write_file
+from ..tools.safe_execute_command import safe_execute_command
+from ..tools.safe_fs import safe_read_file, safe_write_file
 
 
 CODE_SYSTEM_PROMPT = """

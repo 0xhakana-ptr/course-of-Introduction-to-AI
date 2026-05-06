@@ -2,9 +2,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 
-from core.config import settings
-from message_queue import message_queue
-from schemas import (
+from .core.config import settings
+from .llm.client import diagnose_llm
+from .message_queue import message_queue
+from .schemas import (
     ATTEMPT_OUTPUT_STREAM,
     ChatRequest,
     ChatResponse,
@@ -18,8 +19,9 @@ from schemas import (
     RunResponse,
     RunSummaryListResponse,
 )
-from services.chat_service import generate_chat_response
-from services.run_service import (
+from .services.chat_service import generate_chat_response
+from .services.run_service import (
+    StartupRecoveryResult,
     create_run,
     execute_run,
     get_run,
@@ -185,7 +187,7 @@ async def get_run_log_route(run_id: str):
 # ========== 消息队列 API ==========
 
 @app.get("/messages")
-async def get_messages(since_id: str = Query(default=None)):
+async def get_messages(since_id: str | None = Query(default=None)):
     """获取消息队列中的消息
     
     Args:
