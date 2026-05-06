@@ -12,6 +12,7 @@ class MessageQueue:
         self.max_size = 1000
         self._lock = threading.RLock()
         self._counter = 0
+        self._message_index: dict[str, int] = {}
 
     def _next_message_id(self) -> str:
         self._counter += 1
@@ -19,6 +20,13 @@ class MessageQueue:
 
     def _timestamp(self) -> str:
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _rebuild_index(self) -> None:
+        self._message_index = {
+            str(message["_id"]): index
+            for index, message in enumerate(self.messages)
+            if message.get("_id") is not None
+        }
     
     def add_message(self, message: Dict[str, Any]) -> str:
         """添加消息到队列
@@ -36,9 +44,11 @@ class MessageQueue:
             stored_message['_timestamp'] = self._timestamp()
 
             self.messages.append(stored_message)
+            self._message_index[message_id] = len(self.messages) - 1
 
             if len(self.messages) > self.max_size:
                 self.messages = self.messages[-self.max_size:]
+                self._rebuild_index()
 
             total = len(self.messages)
 
@@ -58,16 +68,11 @@ class MessageQueue:
             if since_id is None:
                 return self.messages.copy()
 
-            start_index = None
-            for i, msg in enumerate(self.messages):
-                if msg.get('_id') == since_id:
-                    start_index = i + 1
-                    break
-
-            if start_index is None:
+            index = self._message_index.get(since_id)
+            if index is None:
                 return []
 
-            result = self.messages[start_index:]
+            result = self.messages[index + 1:]
         if result:
             print(f"[MessageQueue] 获取消息: {len(result)} 条, 从: {since_id}")
         return result
@@ -77,6 +82,7 @@ class MessageQueue:
         with self._lock:
             count = len(self.messages)
             self.messages.clear()
+            self._message_index.clear()
         print(f"[MessageQueue] 清空队列: {count} 条消息")
 
 

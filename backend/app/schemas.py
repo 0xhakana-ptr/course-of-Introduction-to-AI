@@ -1,11 +1,12 @@
-from typing import Literal
-from pydantic import BaseModel, Field
+from typing import Any, Literal
+from pydantic import BaseModel, ConfigDict, Field
 
 
 INTENT_TYPE = Literal["chat", "coding", "unknown"]
 RUN_STATUS = Literal["queued", "running", "done", "failed"]
 ATTEMPT_STATUS = Literal["running", "done", "failed"]
 ATTEMPT_OUTPUT_STREAM = Literal["stdout", "stderr", "error"]
+MESSAGE_TYPE = Literal["quip", "expression", "chat", "error", "status"]
 
 
 class ChatRequest(BaseModel):
@@ -20,6 +21,38 @@ class ChatResponse(BaseModel):
     error: str | None = None
 
 
+class MessageEnvelope(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    message_id: str | None = Field(default=None, alias="_id")
+    queue_timestamp: str | None = Field(default=None, alias="_timestamp")
+    channel: str | None = Field(default=None, alias="_channel")
+    type: MESSAGE_TYPE
+    timestamp: str | None = None
+    node_name: str | None = None
+    metadata: dict[str, Any] | None = None
+    content: str | None = None
+    role: Literal["user", "assistant", "system"] | None = None
+    expression: str | None = None
+    intensity: float | None = None
+    code: str | None = None
+    message: str | None = None
+    details: Any | None = None
+    status: str | None = None
+    progress: int | None = None
+
+
+class MessagesResponse(BaseModel):
+    ok: bool = True
+    messages: list[MessageEnvelope] = Field(default_factory=list)
+    count: int = 0
+
+
+class ClearMessagesResponse(BaseModel):
+    ok: bool = True
+    message: str
+
+
 class LLMDiagnosticsResponse(BaseModel):
     configured: bool
     api_key_present: bool
@@ -27,11 +60,18 @@ class LLMDiagnosticsResponse(BaseModel):
     resolved_url: str | None = None
     model: str | None = None
     timeout_seconds: int
+    fallback_configured: bool = False
+    fallback_base_url: str | None = None
+    fallback_resolved_url: str | None = None
+    fallback_model: str | None = None
+    fallback_timeout_seconds: int | None = None
     checked_remote: bool = False
     request_ok: bool | None = None
     status_code: int | None = None
     response_preview: str | None = None
     error_message: str | None = None
+    provider_used: str | None = None
+    fallback_used: bool = False
 
 
 class RunCreateRequest(BaseModel):

@@ -1,0 +1,293 @@
+from ...schemas import (
+    RunAttemptResponse,
+    RunResponse,
+    RunSummaryResponse,
+)
+from .types import (
+    ATTEMPT_OUTPUT_PREVIEW_LIMIT,
+    AttemptRecord,
+    CommandResult,
+    RunRecord,
+    SUMMARY_PREVIEW_LIMIT,
+)
+
+
+def preview_single_line(text: str, limit: int = SUMMARY_PREVIEW_LIMIT) -> str:
+    normalized = " ".join(text.strip().split())
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit]}..."
+
+
+def clip_text(text: str | None, limit: int = ATTEMPT_OUTPUT_PREVIEW_LIMIT) -> tuple[str | None, int, bool]:
+    raw = text or ""
+    total_length = len(raw)
+    if total_length <= limit:
+        return (raw or None), total_length, False
+    return raw[:limit], total_length, True
+
+
+def describe_generator(generator: str) -> str:
+    generator_map = {
+        "template": "本地模板",
+        "llm": "LLM 生成",
+        "llm_repair": "LLM 修复",
+    }
+    return generator_map.get(generator, generator)
+
+
+def get_attempt_records(record: RunRecord) -> list[AttemptRecord]:
+    attempts = [
+        item
+        for item in record.get("attempts", [])
+        if isinstance(item, dict) and item.get("attempt_number") is not None
+    ]
+    attempts.sort(key=lambda item: int(item.get("attempt_number") or 0))
+    return attempts
+
+
+def find_attempt_record(record: RunRecord, attempt_number: int) -> AttemptRecord | None:
+    return next(
+        (
+            item
+            for item in get_attempt_records(record)
+            if int(item.get("attempt_number") or 0) == attempt_number
+        ),
+        None,
+    )
+
+
+def build_attempt_summary(record: AttemptRecord) -> str:
+    attempt_number = int(record.get("attempt_number") or 0)
+    repair_round = int(record.get("repair_round") or 0)
+    status = str(record.get("status") or "running")
+    generator = describe_generator(str(record.get("generator") or "unknown"))
+    prefix = f"第 {attempt_number} 次尝试"
+    if repair_round > 0:
+        prefix += f"（第 {repair_round} 轮自动修复后，{generator}）"
+    else:
+        prefix += f"（{generator}）"
+
+    returncode = record.get("returncode")
+    duration_ms = record.get("duration_ms")
+    suffix_parts: list[str] = []
+    if isinstance(returncode, int):
+        suffix_parts.append(f"返回码 {returncode}")
+    if isinstance(duration_ms, int):
+        suffix_parts.append(f"耗时 {duration_ms} ms")
+    suffix = f"；{'，'.join(suffix_parts)}" if suffix_parts else ""
+
+    if status == "running":
+        return f"{prefix}：正在执行。"
+
+    if status == "done":
+        stdout = str(record.get("stdout") or "").strip()
+        if stdout:
+            return f"{prefix}：执行成功{suffix}。输出摘要：{preview_single_line(stdout)}"
+        return f"{prefix}：执行成功{suffix}。"
+
+    failure_text = (
+        str(record.get("error") or "").strip()
+        or str(record.get("stderr") or "").strip()
+        or str(record.get("stdout") or "").strip()
+        or "未提供更多错误信息"
+    )
+    return f"{prefix}：执行失败{suffix}。错误摘要：{preview_single_line(failure_text)}"
+
+
+def to_run_attempt_response(record: AttemptRecord) -> RunAttemptResponse:
+    stdout_value, stdout_length, stdout_truncated = clip_text(
+        str(record.get("stdout")) if record.get("stdout") is not None else None
+    )
+    stderr_value, stderr_length, stderr_truncated = clip_text(
+        str(record.get("stderr")) if record.get("stderr") is not None else None
+    )
+    error_value, error_length, error_truncated = clip_text(
+        str(record.get("error")) if record.get("error") is not None else None
+    )
+    script_rel_path = str(record["script_rel_path"]) if record.get("script_rel_path") is not None else None
+    return RunAttemptResponse(
+        attempt_number=int(record["attempt_number"]),
+        generator=str(record["generator"]),
+        repair_round=int(record["repair_round"]) if record.get("repair_round") is not None else 0,
+        status=str(record["status"]),
+        summary=build_attempt_summary(record),
+        source_file_name=(
+            str(record["source_file_name"]) if record.get("source_file_name") is not None else None
+        ),
+        attempt_file_name=(
+            str(record["attempt_file_name"]) if record.get("attempt_file_name") is not None else None
+        ),
+        script_rel_path=script_rel_path,
+        command=str(record["command"]) if record.get("command") is not None else None,
+        cwd=str(record["cwd"]) if record.get("cwd") is not None else None,
+        returncode=int(record["returncode"]) if record.get("returncode") is not None else None,
+        stdout=stdout_value,
+        stdout_length=stdout_length,
+        stdout_truncated=stdout_truncated,
+        stderr=stderr_value,
+        stderr_length=stderr_length,
+        stderr_truncated=stderr_truncated,
+        error=error_value,
+        error_length=error_length,
+        error_truncated=error_truncated,
+        script_available=script_rel_path is not None,
+        started_at=str(record["started_at"]) if record.get("started_at") is not None else None,
+        finished_at=str(record["finished_at"]) if record.get("finished_at") is not None else None,
+        duration_ms=int(record["duration_ms"]) if record.get("duration_ms") is not None else None,
+    )
+
+
+def to_run_response(record: RunRecord) -> RunResponse:
+    attempts = get_attempt_records(record)
+    return RunResponse(
+        run_id=str(record["run_id"]),
+        status=str(record["status"]),
+        output=str(record["output"]),
+        created_at=str(record["created_at"]),
+        updated_at=str(record["updated_at"]),
+        generator=str(record["generator"]) if record.get("generator") is not None else None,
+        attempt_count=int(record["attempt_count"]) if record.get("attempt_count") is not None else 0,
+        repair_attempted=bool(record.get("repair_attempted", False)),
+        repair_count=int(record["repair_count"]) if record.get("repair_count") is not None else 0,
+        started_at=str(record["started_at"]) if record.get("started_at") is not None else None,
+        finished_at=str(record["finished_at"]) if record.get("finished_at") is not None else None,
+        duration_ms=int(record["duration_ms"]) if record.get("duration_ms") is not None else None,
+        error=str(record["error"]) if record.get("error") is not None else None,
+        prompt=str(record["prompt"]) if record.get("prompt") is not None else None,
+        context=str(record["context"]) if record.get("context") is not None else None,
+        command=str(record["command"]) if record.get("command") is not None else None,
+        returncode=int(record["returncode"]) if record.get("returncode") is not None else None,
+        stdout=str(record["stdout"]) if record.get("stdout") is not None else None,
+        stderr=str(record["stderr"]) if record.get("stderr") is not None else None,
+        log_path=str(record["log_path"]) if record.get("log_path") is not None else None,
+        artifacts=[str(item) for item in record.get("artifacts", []) if isinstance(item, str)],
+        attempts=[to_run_attempt_response(item) for item in attempts],
+    )
+
+
+def build_run_summary_text(record: RunRecord) -> str:
+    status = str(record.get("status") or "queued")
+    generator = describe_generator(str(record.get("generator") or "unknown"))
+    attempt_count = int(record.get("attempt_count") or 0)
+    repair_count = int(record.get("repair_count") or 0)
+    attempts = get_attempt_records(record)
+    latest_attempt = attempts[-1] if attempts else None
+
+    if status == "queued":
+        return "任务已创建，等待后台执行。"
+    if status == "running":
+        if latest_attempt is not None:
+            return f"任务正在执行中。最近一次尝试：{build_attempt_summary(latest_attempt)}"
+        return "任务正在后台执行。"
+    if status == "done":
+        latest_attempt_summary = (
+            build_attempt_summary(latest_attempt) if latest_attempt is not None else "任务执行成功。"
+        )
+        return (
+            f"任务执行成功，使用 {generator}，共尝试 {attempt_count} 次，"
+            f"自动修复 {repair_count} 次。{latest_attempt_summary}"
+        )
+
+    error_preview = preview_single_line(str(record.get("error") or "未提供更多错误信息"))
+    return (
+        f"任务执行失败，使用 {generator}，共尝试 {attempt_count} 次，"
+        f"自动修复 {repair_count} 次。错误摘要：{error_preview}"
+    )
+
+
+def to_run_summary_response(record: RunRecord) -> RunSummaryResponse:
+    attempts = get_attempt_records(record)
+    latest_attempt = attempts[-1] if attempts else None
+    prompt_preview = preview_single_line(str(record.get("prompt") or ""), limit=160)
+    output_preview = preview_single_line(str(record.get("output") or ""), limit=160)
+    error_text = str(record.get("error") or "").strip()
+    return RunSummaryResponse(
+        run_id=str(record["run_id"]),
+        status=str(record["status"]),
+        summary=build_run_summary_text(record),
+        prompt_preview=prompt_preview or None,
+        output_preview=output_preview or None,
+        created_at=str(record["created_at"]),
+        updated_at=str(record["updated_at"]),
+        generator=str(record["generator"]) if record.get("generator") is not None else None,
+        attempt_count=int(record["attempt_count"]) if record.get("attempt_count") is not None else 0,
+        repair_attempted=bool(record.get("repair_attempted", False)),
+        repair_count=int(record["repair_count"]) if record.get("repair_count") is not None else 0,
+        started_at=str(record["started_at"]) if record.get("started_at") is not None else None,
+        finished_at=str(record["finished_at"]) if record.get("finished_at") is not None else None,
+        duration_ms=int(record["duration_ms"]) if record.get("duration_ms") is not None else None,
+        error_preview=preview_single_line(error_text, limit=160) if error_text else None,
+        latest_attempt_summary=build_attempt_summary(latest_attempt) if latest_attempt is not None else None,
+    )
+
+
+def format_artifacts(artifacts: list[str]) -> str:
+    if not artifacts:
+        return "(none)"
+    return "\n".join(f"- {artifact}" for artifact in artifacts)
+
+
+def build_success_output(
+    initial_generator: str,
+    final_generator: str,
+    attempt_count: int,
+    repair_count: int,
+    result: CommandResult,
+    artifacts: list[str],
+) -> str:
+    stdout = str(result.get("stdout") or "").strip() or "(empty)"
+    stderr = str(result.get("stderr") or "").strip()
+    returncode = result.get("returncode")
+    repair_summary = "未触发自动修复。"
+    if repair_count > 0:
+        repair_summary = "首次执行失败，自动修复后重试成功。"
+
+    output = (
+        "任务执行成功。\n\n"
+        f"初始生成方式：{initial_generator}\n"
+        f"最终生成方式：{final_generator}\n"
+        f"执行尝试次数：{attempt_count}\n"
+        f"自动修复次数：{repair_count}\n"
+        f"{repair_summary}\n"
+        f"最终执行命令：{result.get('command')}\n"
+        f"最终返回码：{returncode}\n"
+        f"产物：\n{format_artifacts(artifacts)}\n\n"
+        f"stdout:\n{stdout}"
+    )
+    if stderr:
+        output += f"\n\nstderr:\n{stderr}"
+    return output
+
+
+def build_failure_output(
+    initial_generator: str,
+    final_generator: str,
+    attempt_count: int,
+    repair_count: int,
+    result: CommandResult,
+    artifacts: list[str],
+    repair_note: str | None,
+) -> str:
+    stdout = str(result.get("stdout") or "").strip() or "(empty)"
+    stderr = str(result.get("stderr") or "").strip() or "(empty)"
+    error = str(result.get("error") or "").strip()
+    returncode = result.get("returncode")
+
+    output = (
+        "任务执行失败。\n\n"
+        f"初始生成方式：{initial_generator}\n"
+        f"最终生成方式：{final_generator}\n"
+        f"执行尝试次数：{attempt_count}\n"
+        f"自动修复次数：{repair_count}\n"
+        f"最终执行命令：{result.get('command') or '(not executed)'}\n"
+        f"最终返回码：{returncode}\n"
+        f"产物：\n{format_artifacts(artifacts)}\n\n"
+        f"stdout:\n{stdout}\n\n"
+        f"stderr:\n{stderr}"
+    )
+    if error:
+        output += f"\n\nerror:\n{error}"
+    if repair_note:
+        output += f"\n\nrepair:\n{repair_note}"
+    return output

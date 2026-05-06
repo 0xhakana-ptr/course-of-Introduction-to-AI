@@ -132,6 +132,29 @@ LLM_BASE_URL=https://api.longcat.chat/openai/v1
 LLM_MODEL=LongCat-Flash-Thinking-2601
 ```
 
+如果你使用的是响应较慢的 thinking 类模型，更稳妥的做法通常不是一味把超时拉很大，而是：
+
+1. 主模型保留 thinking 模型
+2. 给主模型设置一个相对克制的超时时间
+3. 再配置一个更快的备用 chat 模型
+
+例如：
+
+```text
+LLM_TIMEOUT_SECONDS=20
+LLM_FALLBACK_MODEL=LongCat-Flash-Chat
+LLM_FALLBACK_TIMEOUT_SECONDS=30
+```
+
+如果你的备用模型和主模型使用同一个 provider、同一个 key，通常不需要重复设置：
+
+```text
+LLM_FALLBACK_BASE_URL=
+LLM_FALLBACK_API_KEY=
+```
+
+此时后端会自动继承 `LLM_BASE_URL` 和 `LLM_API_KEY`。
+
 补充可选项：
 
 ```text

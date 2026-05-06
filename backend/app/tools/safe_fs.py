@@ -3,24 +3,27 @@ from pathlib import Path
 from ..core.config import settings
 
 
-WORKSPACE_DIR = settings.workspace_dir.resolve()
+def get_workspace_dir() -> Path:
+    return settings.workspace_dir.resolve()
 
 
 def ensure_workspace_dirs() -> None:
-    WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
+    workspace_dir = get_workspace_dir()
+    workspace_dir.mkdir(parents=True, exist_ok=True)
     settings.runs_dir.mkdir(parents=True, exist_ok=True)
 
 
 def assert_within_workspace(target: Path) -> None:
+    workspace_dir = get_workspace_dir()
     try:
-        target.relative_to(WORKSPACE_DIR)
+        target.relative_to(workspace_dir)
     except ValueError as exc:
         raise PermissionError("路径超出 workspace 范围") from exc
 
 
 def resolve_workspace_path(rel_path: str) -> Path:
     ensure_workspace_dirs()
-    target = (WORKSPACE_DIR / rel_path).resolve()
+    target = (get_workspace_dir() / rel_path).resolve()
     assert_within_workspace(target)
     return target
 
@@ -39,15 +42,16 @@ def safe_read_file(rel_path: str) -> str:
 
 def safe_list_files(rel_path: str = ".", recursive: bool = False) -> list[str]:
     target = resolve_workspace_path(rel_path)
+    workspace_dir = get_workspace_dir()
     if not target.exists():
         return []
     if target.is_file():
-        return [str(target.relative_to(WORKSPACE_DIR)).replace("\\", "/")]
+        return [str(target.relative_to(workspace_dir)).replace("\\", "/")]
 
     pattern = "**/*" if recursive else "*"
     files: list[str] = []
     for path in target.glob(pattern):
         if path.is_file():
-            files.append(str(path.relative_to(WORKSPACE_DIR)).replace("\\", "/"))
+            files.append(str(path.relative_to(workspace_dir)).replace("\\", "/"))
     files.sort()
     return files

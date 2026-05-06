@@ -49,3 +49,15 @@ def test_chat_test_command_keeps_response_contract(client):
     queue_payload = queue_response.json()
     assert queue_payload["ok"] is True
     assert queue_payload["count"] >= 1
+    assert queue_payload["messages"][0]["type"] == "chat"
+    assert queue_payload["messages"][0]["_channel"] == "agent:chat"
+
+
+def test_chat_coding_branch_keeps_response_contract(client):
+    response = client.post("/chat", json={"prompt": "write python code", "context": None})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["intent"] == "coding"
+    assert isinstance(payload["ok"], bool)
+    assert isinstance(payload["output"], str)

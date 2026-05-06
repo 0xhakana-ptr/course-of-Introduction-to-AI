@@ -7,9 +7,11 @@ from .llm.client import diagnose_llm
 from .message_queue import message_queue
 from .schemas import (
     ATTEMPT_OUTPUT_STREAM,
+    ClearMessagesResponse,
     ChatRequest,
     ChatResponse,
     LLMDiagnosticsResponse,
+    MessagesResponse,
     RunAttemptListResponse,
     RunAttemptOutputChunkResponse,
     RunAttemptResponse,
@@ -19,8 +21,8 @@ from .schemas import (
     RunResponse,
     RunSummaryListResponse,
 )
-from .services.chat_service import generate_chat_response
-from .services.run_service import (
+from .services.chat_interface import generate_chat_response
+from .services.run_interface import (
     StartupRecoveryResult,
     create_run,
     execute_run,
@@ -80,11 +82,18 @@ async def llm_diagnostics_route(
         resolved_url=result.resolved_url,
         model=result.model,
         timeout_seconds=result.timeout_seconds,
+        fallback_configured=result.fallback_configured,
+        fallback_base_url=result.fallback_base_url,
+        fallback_resolved_url=result.fallback_resolved_url,
+        fallback_model=result.fallback_model,
+        fallback_timeout_seconds=result.fallback_timeout_seconds,
         checked_remote=result.checked_remote,
         request_ok=result.request_ok,
         status_code=result.status_code,
         response_preview=result.response_preview,
         error_message=result.error_message,
+        provider_used=result.provider_used,
+        fallback_used=result.fallback_used,
     )
 
 
@@ -186,7 +195,7 @@ async def get_run_log_route(run_id: str):
 
 # ========== 消息队列 API ==========
 
-@app.get("/messages")
+@app.get("/messages", response_model=MessagesResponse)
 async def get_messages(since_id: str | None = Query(default=None)):
     """获取消息队列中的消息
     
@@ -197,17 +206,17 @@ async def get_messages(since_id: str | None = Query(default=None)):
         消息列表
     """
     messages = message_queue.get_messages(since_id)
-    return {
-        "ok": True,
-        "messages": messages,
-        "count": len(messages)
-    }
+    return MessagesResponse(
+        ok=True,
+        messages=messages,
+        count=len(messages),
+    )
 
-@app.delete("/messages")
+@app.delete("/messages", response_model=ClearMessagesResponse)
 async def clear_messages():
     """清空消息队列"""
     message_queue.clear()
-    return {
-        "ok": True,
-        "message": "消息队列已清空"
-    }
+    return ClearMessagesResponse(
+        ok=True,
+        message="消息队列已清空",
+    )

@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ..core.config import settings
-from .safe_fs import WORKSPACE_DIR, ensure_workspace_dirs, resolve_workspace_path
+from .safe_fs import ensure_workspace_dirs, get_workspace_dir, resolve_workspace_path
 
 
 BLOCKED_EXECUTABLES = {
@@ -59,7 +59,7 @@ def safe_execute_command(
         raise PermissionError("命令被安全策略拦截")
 
     ensure_workspace_dirs()
-    working_dir = WORKSPACE_DIR if cwd is None else resolve_workspace_path(cwd)
+    working_dir = get_workspace_dir() if cwd is None else resolve_workspace_path(cwd)
     timeout = timeout_seconds or settings.command_timeout_seconds
 
     try:

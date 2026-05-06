@@ -29,6 +29,16 @@ class Settings:
         llm_timeout_raw = os.getenv("LLM_TIMEOUT_SECONDS", "30").strip()
         self.llm_timeout_seconds = int(llm_timeout_raw) if llm_timeout_raw.isdigit() else 30
 
+        self.llm_fallback_base_url = os.getenv("LLM_FALLBACK_BASE_URL", "").strip()
+        self.llm_fallback_api_key = os.getenv("LLM_FALLBACK_API_KEY", "").strip()
+        self.llm_fallback_model = os.getenv("LLM_FALLBACK_MODEL", "").strip()
+
+        llm_fallback_timeout_raw = os.getenv("LLM_FALLBACK_TIMEOUT_SECONDS", "").strip()
+        if llm_fallback_timeout_raw.isdigit():
+            self.llm_fallback_timeout_seconds = int(llm_fallback_timeout_raw)
+        else:
+            self.llm_fallback_timeout_seconds = self.llm_timeout_seconds
+
         timeout_raw = os.getenv("COMMAND_TIMEOUT_SECONDS", "15").strip()
         self.command_timeout_seconds = int(timeout_raw) if timeout_raw.isdigit() else 15
 
