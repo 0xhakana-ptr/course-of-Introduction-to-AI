@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from backend.app.core.config import settings
+from core.config import settings
 
 
 RUN_DEFAULTS: dict[str, object] = {

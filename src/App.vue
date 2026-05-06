@@ -9,8 +9,9 @@ import { installLive2DFocusMouseTracking } from './mouseTracking'
 (window as any).PIXI = PIXI
 
 //const DEFAULT_MODEL_JSON_PATH = 'live2d/pajamas_catcat/pajamas_catcat.model3.json'
-const DEFAULT_MODEL_JSON_PATH = 'live2d/strawberry_catcat/strawberry_catcat.model3.json'
-//const DEFAULT_MODEL_JSON_PATH = 'live2d/mianfeimox/llny.model3.json'
+//const DEFAULT_MODEL_JSON_PATH = 'live2d/strawberry_catcat/strawberry_catcat.model3.json'
+//const DEFAULT_MODEL_JSON_PATH = 'live2d/ive2d/k2x1.model3.json'
+const DEFAULT_MODEL_JSON_PATH = 'live2d/mianfeimox/llny.model3.json'
 const CUBISM2_RUNTIME_PATH = 'live2d/live2d.min.js'
 const CUBISM4_CORE_PATH = 'live2d/live2dcubismcore.min.js'
 const CUBISM4_WASM_PATH = 'live2d/_em_module.wasm'
@@ -1583,6 +1584,18 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
       ipcRenderer.send('live2d:commandResult', { id, ok: res.ok, output: res.output })
     } catch (e) {
       ipcRenderer.send('live2d:commandResult', { id, ok: false, output: String(e) })
+    }
+  })
+
+  ipcRenderer.on('agent:expression', async (_evt: any, data: any) => {
+    const expression = data?.expression
+    if (typeof expression !== 'string' || !expression.trim()) return
+
+    try {
+      const res = await playLive2DAction({ type: 'expression', id: `tag:${expression}`, mode: 'set' })
+      console.log('[agent:expression] 已切换表情:', expression, res.ok ? '成功' : '失败', res.output)
+    } catch (e) {
+      console.error('[agent:expression] 切换表情异常:', e)
     }
   })
 

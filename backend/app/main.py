@@ -2,9 +2,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 
-from backend.app.core.config import settings
-from backend.app.llm.client import diagnose_llm
-from backend.app.schemas import (
+from core.config import settings
+from message_queue import message_queue
+from schemas import (
     ATTEMPT_OUTPUT_STREAM,
     ChatRequest,
     ChatResponse,
@@ -18,9 +18,8 @@ from backend.app.schemas import (
     RunResponse,
     RunSummaryListResponse,
 )
-from backend.app.services.chat_service import generate_chat_response
-from backend.app.services.run_service import (
-    StartupRecoveryResult,
+from services.chat_service import generate_chat_response
+from services.run_service import (
     create_run,
     execute_run,
     get_run,
@@ -181,3 +180,32 @@ async def get_run_log_route(run_id: str):
     if run_log is None:
         raise HTTPException(status_code=404, detail="run not found")
     return run_log
+
+
+# ========== 消息队列 API ==========
+
+@app.get("/messages")
+async def get_messages(since_id: str = Query(default=None)):
+    """获取消息队列中的消息
+    
+    Args:
+        since_id: 从哪个消息 ID 开始获取
+        
+    Returns:
+        消息列表
+    """
+    messages = message_queue.get_messages(since_id)
+    return {
+        "ok": True,
+        "messages": messages,
+        "count": len(messages)
+    }
+
+@app.delete("/messages")
+async def clear_messages():
+    """清空消息队列"""
+    message_queue.clear()
+    return {
+        "ok": True,
+        "message": "消息队列已清空"
+    }

@@ -2,8 +2,8 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from backend.app.core.config import settings
-from backend.app.tools.safe_fs import WORKSPACE_DIR, ensure_workspace_dirs, resolve_workspace_path
+from core.config import settings
+from tools.safe_fs import WORKSPACE_DIR, ensure_workspace_dirs, resolve_workspace_path
 
 
 BLOCKED_EXECUTABLES = {
