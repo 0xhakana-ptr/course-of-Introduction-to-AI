@@ -3,8 +3,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 INTENT_TYPE = Literal["chat", "coding", "unknown"]
-RUN_STATUS = Literal["queued", "running", "done", "failed"]
-ATTEMPT_STATUS = Literal["running", "done", "failed"]
+RUN_STATUS = Literal["queued", "running", "done", "failed", "cancelled"]
+ATTEMPT_STATUS = Literal["running", "done", "failed", "cancelled"]
 ATTEMPT_OUTPUT_STREAM = Literal["stdout", "stderr", "error"]
 MESSAGE_TYPE = Literal["quip", "expression", "chat", "error", "status"]
 
@@ -118,6 +118,9 @@ class RunResponse(BaseModel):
     output: str
     created_at: str
     updated_at: str
+    source_run_id: str | None = None
+    trigger_mode: str | None = None
+    cancel_requested: bool = False
     generator: str | None = None
     attempt_count: int = 0
     repair_attempted: bool = False
@@ -145,6 +148,9 @@ class RunSummaryResponse(BaseModel):
     output_preview: str | None = None
     created_at: str
     updated_at: str
+    source_run_id: str | None = None
+    trigger_mode: str | None = None
+    cancel_requested: bool = False
     generator: str | None = None
     attempt_count: int = 0
     repair_attempted: bool = False

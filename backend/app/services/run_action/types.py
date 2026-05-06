@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -30,3 +30,28 @@ class StartupRecoveryResult:
     scanned_count: int
     recovered_count: int
     recovered_run_ids: list[str]
+
+
+class RunActionError(Exception):
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+@dataclass(slots=True)
+class RunExecutionState:
+    prompt: str
+    context: str | None
+    generated_dir: str
+    log_path: str
+    current_file_name: str
+    current_script_content: str
+    initial_generator: str
+    current_generator: str
+    attempt_count: int = 0
+    repair_count: int = 0
+    repair_attempted: bool = False
+    repair_note: str | None = None
+    artifacts: list[str] = field(default_factory=list)
+    last_result: CommandResult | None = None

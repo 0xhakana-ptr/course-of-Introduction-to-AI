@@ -9,6 +9,9 @@ from ..core.config import settings
 
 
 RUN_DEFAULTS: dict[str, object] = {
+    "source_run_id": None,
+    "trigger_mode": "create",
+    "cancel_requested": False,
     "generator": None,
     "attempt_count": 0,
     "repair_attempted": False,
@@ -176,7 +179,13 @@ def save_run_record(run_id: str, data: dict[str, object]) -> dict[str, object]:
         return _save_run_record_unlocked(run_id, data)
 
 
-def create_run_record(prompt: str, context: str | None, status: str, output: str) -> dict[str, object]:
+def create_run_record(
+    prompt: str,
+    context: str | None,
+    status: str,
+    output: str,
+    **extra_fields,
+) -> dict[str, object]:
     run_id = str(uuid4())
     timestamp = utc_now_iso()
     data = {
@@ -189,6 +198,7 @@ def create_run_record(prompt: str, context: str | None, status: str, output: str
         "updated_at": timestamp,
     }
     data.update(RUN_DEFAULTS)
+    data.update(extra_fields)
     return save_run_record(run_id, data)
 
 

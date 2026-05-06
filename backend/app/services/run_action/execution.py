@@ -10,6 +10,7 @@ from ...storage.run_store import (
 from ...tools.safe_execute_command import safe_execute_command
 from ...tools.safe_fs import safe_write_file
 from .codegen import build_attempt_filename, sanitize_filename, validate_python_script
+from .control import clear_run_process, is_run_cancel_requested, register_run_process
 from .types import AttemptRecord, CommandResult
 
 
@@ -120,7 +121,13 @@ def execute_script_attempt(
 
     command = str(attempt_record["command"])
     append_run_log(run_id, f"Executing attempt {attempt_number}: {command}")
-    result = safe_execute_command(command_args, cwd=generated_dir)
+    result = safe_execute_command(
+        command_args,
+        cwd=generated_dir,
+        cancel_requested=lambda: is_run_cancel_requested(run_id),
+        on_process_start=lambda process: register_run_process(run_id, process),
+        on_process_end=lambda process: clear_run_process(run_id, process),
+    )
     finished_at = utc_now_iso()
     result["command"] = command
     result["script_rel_path"] = script_rel_path
@@ -133,7 +140,11 @@ def execute_script_attempt(
     update_run_attempt(
         run_id,
         attempt_number,
-        status="done" if bool(result.get("ok")) else "failed",
+        status=(
+            "cancelled"
+            if bool(result.get("cancelled"))
+            else "done" if bool(result.get("ok")) else "failed"
+        ),
         cwd=str(result.get("cwd") or generated_dir),
         returncode=result.get("returncode"),
         stdout=str(result.get("stdout") or ""),

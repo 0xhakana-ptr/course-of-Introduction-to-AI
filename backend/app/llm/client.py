@@ -4,6 +4,7 @@ from typing import Any
 import httpx
 
 from ..core.config import settings
+from ..core.text_utils import build_preview
 
 
 @dataclass(slots=True)
@@ -127,10 +128,7 @@ def normalize_message_content(content: Any) -> str:
 
 
 def preview_text(text: str, limit: int = DIAGNOSTIC_PREVIEW_LIMIT) -> str:
-    normalized = " ".join(text.strip().split())
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[:limit]}..."
+    return build_preview(text, limit=limit)
 
 
 def failure_result(
@@ -226,6 +224,28 @@ def build_headers(api_key: str | None = None) -> dict[str, str]:
         "Authorization": f"Bearer {api_key or settings.llm_api_key}",
         "Content-Type": "application/json",
     }
+
+
+def build_provider_request_parts(
+    provider: LLMProviderConfig,
+    *,
+    prompt: str,
+    context: str | None,
+    system_prompt: str,
+    temperature: float,
+    max_tokens: int | None = None,
+) -> tuple[str, dict[str, object], dict[str, str]]:
+    endpoint = resolve_chat_completions_url(provider.base_url)
+    payload = build_payload(
+        prompt=prompt,
+        context=context,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        model=provider.model,
+        max_tokens=max_tokens,
+    )
+    headers = build_headers(provider.api_key)
+    return endpoint, payload, headers
 
 
 def parse_chat_response(
@@ -334,6 +354,90 @@ def should_attempt_next_provider(result: LLMCallResult) -> bool:
     return False
 
 
+def build_status_failure_result(
+    exc: httpx.HTTPStatusError,
+    *,
+    endpoint: str,
+    provider_name: str,
+    fallback_used: bool,
+) -> LLMCallResult:
+    return failure_result(
+        build_status_error_message(exc, endpoint),
+        provider_name=provider_name,
+        fallback_used=fallback_used,
+        error_kind="http_status",
+        status_code=exc.response.status_code,
+    )
+
+
+def build_request_failure_result(
+    exc: httpx.RequestError,
+    *,
+    endpoint: str,
+    provider_name: str,
+    fallback_used: bool,
+    timeout_seconds: int,
+) -> LLMCallResult:
+    return failure_result(
+        build_request_error_message(exc, endpoint, timeout_seconds=timeout_seconds),
+        provider_name=provider_name,
+        fallback_used=fallback_used,
+        error_kind="request",
+    )
+
+
+def parse_provider_http_response(
+    response: httpx.Response,
+    endpoint: str,
+    *,
+    provider_name: str,
+    fallback_used: bool,
+) -> LLMCallResult:
+    status_code = response.status_code
+    try:
+        data = response.json()
+    except ValueError:
+        return failure_result(
+            build_invalid_json_message(response.text, endpoint),
+            provider_name=provider_name,
+            fallback_used=fallback_used,
+            error_kind="invalid_json",
+            status_code=status_code,
+        )
+
+    return parse_chat_response(
+        data,
+        endpoint,
+        provider_name=provider_name,
+        status_code=status_code,
+        fallback_used=fallback_used,
+    )
+
+
+def finalize_provider_chain_step(
+    results: list[LLMCallResult],
+    result: LLMCallResult,
+    *,
+    is_last_provider: bool,
+) -> LLMCallResult | None:
+    if result.ok:
+        return result
+
+    if not is_last_provider and should_attempt_next_provider(result):
+        return None
+
+    if len(results) == 1:
+        return result
+
+    return failure_result(
+        build_combined_provider_failure_message(results),
+        provider_name=result.provider_name,
+        fallback_used=result.fallback_used,
+        error_kind=result.error_kind,
+        status_code=result.status_code,
+    )
+
+
 def build_llm_diagnostics_result(
     *,
     checked_remote: bool = False,
@@ -382,53 +486,39 @@ async def _request_provider_async(
     max_tokens: int | None = None,
     fallback_used: bool = False,
 ) -> LLMCallResult:
-    endpoint = resolve_chat_completions_url(provider.base_url)
-    payload = build_payload(
+    endpoint, payload, headers = build_provider_request_parts(
+        provider,
         prompt=prompt,
         context=context,
         system_prompt=system_prompt,
         temperature=temperature,
-        model=provider.model,
         max_tokens=max_tokens,
     )
 
     try:
         async with httpx.AsyncClient(timeout=provider.timeout_seconds) as client:
-            response = await client.post(endpoint, json=payload, headers=build_headers(provider.api_key))
-            status_code = response.status_code
+            response = await client.post(endpoint, json=payload, headers=headers)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        return failure_result(
-            build_status_error_message(exc, endpoint),
+        return build_status_failure_result(
+            exc,
+            endpoint=endpoint,
             provider_name=provider.name,
             fallback_used=fallback_used,
-            error_kind="http_status",
-            status_code=exc.response.status_code,
         )
     except httpx.RequestError as exc:
-        return failure_result(
-            build_request_error_message(exc, endpoint, timeout_seconds=provider.timeout_seconds),
+        return build_request_failure_result(
+            exc,
+            endpoint=endpoint,
             provider_name=provider.name,
             fallback_used=fallback_used,
-            error_kind="request",
+            timeout_seconds=provider.timeout_seconds,
         )
 
-    try:
-        data = response.json()
-    except ValueError:
-        return failure_result(
-            build_invalid_json_message(response.text, endpoint),
-            provider_name=provider.name,
-            fallback_used=fallback_used,
-            error_kind="invalid_json",
-            status_code=status_code,
-        )
-
-    return parse_chat_response(
-        data,
+    return parse_provider_http_response(
+        response,
         endpoint,
         provider_name=provider.name,
-        status_code=status_code,
         fallback_used=fallback_used,
     )
 
@@ -443,53 +533,39 @@ def _request_provider_sync(
     max_tokens: int | None = None,
     fallback_used: bool = False,
 ) -> LLMCallResult:
-    endpoint = resolve_chat_completions_url(provider.base_url)
-    payload = build_payload(
+    endpoint, payload, headers = build_provider_request_parts(
+        provider,
         prompt=prompt,
         context=context,
         system_prompt=system_prompt,
         temperature=temperature,
-        model=provider.model,
         max_tokens=max_tokens,
     )
 
     try:
         with httpx.Client(timeout=provider.timeout_seconds) as client:
-            response = client.post(endpoint, json=payload, headers=build_headers(provider.api_key))
-            status_code = response.status_code
+            response = client.post(endpoint, json=payload, headers=headers)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        return failure_result(
-            build_status_error_message(exc, endpoint),
+        return build_status_failure_result(
+            exc,
+            endpoint=endpoint,
             provider_name=provider.name,
             fallback_used=fallback_used,
-            error_kind="http_status",
-            status_code=exc.response.status_code,
         )
     except httpx.RequestError as exc:
-        return failure_result(
-            build_request_error_message(exc, endpoint, timeout_seconds=provider.timeout_seconds),
+        return build_request_failure_result(
+            exc,
+            endpoint=endpoint,
             provider_name=provider.name,
             fallback_used=fallback_used,
-            error_kind="request",
+            timeout_seconds=provider.timeout_seconds,
         )
 
-    try:
-        data = response.json()
-    except ValueError:
-        return failure_result(
-            build_invalid_json_message(response.text, endpoint),
-            provider_name=provider.name,
-            fallback_used=fallback_used,
-            error_kind="invalid_json",
-            status_code=status_code,
-        )
-
-    return parse_chat_response(
-        data,
+    return parse_provider_http_response(
+        response,
         endpoint,
         provider_name=provider.name,
-        status_code=status_code,
         fallback_used=fallback_used,
     )
 
@@ -519,16 +595,13 @@ async def _call_with_provider_chain_async(
         )
         results.append(result)
 
-        if result.ok:
-            return result
-        if index == len(providers) - 1 or not should_attempt_next_provider(result):
-            return result if len(results) == 1 else failure_result(
-                build_combined_provider_failure_message(results),
-                provider_name=result.provider_name,
-                fallback_used=index > 0,
-                error_kind=result.error_kind,
-                status_code=result.status_code,
-            )
+        final_result = finalize_provider_chain_step(
+            results,
+            result,
+            is_last_provider=index == len(providers) - 1,
+        )
+        if final_result is not None:
+            return final_result
 
     return failure_result("调用大模型接口失败，但没有得到可用结果。", error_kind="unknown")
 
@@ -558,16 +631,13 @@ def _call_with_provider_chain_sync(
         )
         results.append(result)
 
-        if result.ok:
-            return result
-        if index == len(providers) - 1 or not should_attempt_next_provider(result):
-            return result if len(results) == 1 else failure_result(
-                build_combined_provider_failure_message(results),
-                provider_name=result.provider_name,
-                fallback_used=index > 0,
-                error_kind=result.error_kind,
-                status_code=result.status_code,
-            )
+        final_result = finalize_provider_chain_step(
+            results,
+            result,
+            is_last_provider=index == len(providers) - 1,
+        )
+        if final_result is not None:
+            return final_result
 
     return failure_result("调用大模型接口失败，但没有得到可用结果。", error_kind="unknown")
 

@@ -1,8 +1,10 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 
 from .core.config import settings
+from .core.logging_config import configure_logging
 from .llm.client import diagnose_llm
 from .message_queue import message_queue
 from .schemas import (
@@ -23,7 +25,9 @@ from .schemas import (
 )
 from .services.chat_interface import generate_chat_response
 from .services.run_interface import (
+    RunActionError,
     StartupRecoveryResult,
+    cancel_run,
     create_run,
     execute_run,
     get_run,
@@ -35,7 +39,13 @@ from .services.run_interface import (
     list_runs,
     list_run_summaries,
     recover_interrupted_runs,
+    rerun_run,
+    retry_run,
 )
+
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 
 def serialize_startup_recovery(result: StartupRecoveryResult | None) -> dict[str, object] | None:
@@ -52,6 +62,15 @@ def serialize_startup_recovery(result: StartupRecoveryResult | None) -> dict[str
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.startup_recovery = recover_interrupted_runs()
+    recovery = app.state.startup_recovery
+    if recovery.recovered_count > 0:
+        logger.warning(
+            "Startup recovery completed: recovered_count=%s scanned_count=%s",
+            recovery.recovered_count,
+            recovery.scanned_count,
+        )
+    else:
+        logger.info("Startup recovery completed: scanned_count=%s", recovery.scanned_count)
     yield
 
 
@@ -191,6 +210,34 @@ async def get_run_log_route(run_id: str):
     if run_log is None:
         raise HTTPException(status_code=404, detail="run not found")
     return run_log
+
+
+@app.post("/runs/{run_id}/retry", response_model=RunResponse)
+async def retry_run_route(run_id: str, background_tasks: BackgroundTasks):
+    try:
+        run = retry_run(run_id)
+    except RunActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    background_tasks.add_task(execute_run, run.run_id)
+    return run
+
+
+@app.post("/runs/{run_id}/rerun", response_model=RunResponse)
+async def rerun_run_route(run_id: str, background_tasks: BackgroundTasks):
+    try:
+        run = rerun_run(run_id)
+    except RunActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+    background_tasks.add_task(execute_run, run.run_id)
+    return run
+
+
+@app.post("/runs/{run_id}/cancel", response_model=RunResponse)
+async def cancel_run_route(run_id: str):
+    try:
+        return cancel_run(run_id)
+    except RunActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
 
 
 # ========== 消息队列 API ==========

@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
-from typing import Any, Dict
+import logging
 import os
+from typing import Any
 
 
 message_queue = None
+logger = logging.getLogger(__name__)
 
 
 def get_message_queue():
@@ -24,7 +26,7 @@ class MessageSender:
         """获取 ISO 8601 格式时间戳"""
         return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     
-    def _send_to_frontend(self, channel: str, message: Dict[str, Any]) -> bool:
+    def _send_to_frontend(self, channel: str, message: dict[str, Any]) -> bool:
         """发送消息到前端
         
         Args:
@@ -40,11 +42,10 @@ class MessageSender:
             # 添加 channel 信息到消息中
             message['_channel'] = channel
             message_id = mq.add_message(message)
-            print(f"[MessageSender] 消息已添加到队列: {message_id}, channel: {channel}")
+            logger.debug("Frontend message queued: id=%s channel=%s", message_id, channel)
             return True
-        else:
-            print(f"[MessageSender] 消息队列不可用，消息未发送")
-            return False
+        logger.warning("Message queue unavailable; frontend message was not sent: channel=%s", channel)
+        return False
     
     def send_quip(self, content: str, node_name: str, priority: str = 'medium', duration: int = 3000) -> bool:
         """发送 Quip 消息"""
@@ -105,7 +106,7 @@ class MessageSender:
         }
         return self._send_to_frontend('agent:error', error_message)
     
-    def send_status(self, status: str, progress: int = None, node_name: str = '') -> bool:
+    def send_status(self, status: str, progress: int | None = None, node_name: str = '') -> bool:
         """发送状态更新"""
         status_message = {
             'type': 'status',

@@ -13,6 +13,7 @@ class Settings:
         project_root = backend_root.parent
 
         self.app_version = os.getenv("APP_VERSION", "0.2.0").strip()
+        self.log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
         self.project_root = project_root
         self.backend_root = backend_root
         self.workspace_dir = backend_root / "workspace"

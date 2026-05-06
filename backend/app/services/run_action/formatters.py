@@ -1,3 +1,4 @@
+from ...core.text_utils import build_preview, clip_text
 from ...schemas import (
     RunAttemptResponse,
     RunResponse,
@@ -13,18 +14,7 @@ from .types import (
 
 
 def preview_single_line(text: str, limit: int = SUMMARY_PREVIEW_LIMIT) -> str:
-    normalized = " ".join(text.strip().split())
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[:limit]}..."
-
-
-def clip_text(text: str | None, limit: int = ATTEMPT_OUTPUT_PREVIEW_LIMIT) -> tuple[str | None, int, bool]:
-    raw = text or ""
-    total_length = len(raw)
-    if total_length <= limit:
-        return (raw or None), total_length, False
-    return raw[:limit], total_length, True
+    return build_preview(text, limit=limit)
 
 
 def describe_generator(generator: str) -> str:
@@ -86,6 +76,14 @@ def build_attempt_summary(record: AttemptRecord) -> str:
             return f"{prefix}：执行成功{suffix}。输出摘要：{preview_single_line(stdout)}"
         return f"{prefix}：执行成功{suffix}。"
 
+    if status == "cancelled":
+        cancel_text = (
+            str(record.get("error") or "").strip()
+            or str(record.get("stderr") or "").strip()
+            or "任务已取消"
+        )
+        return f"{prefix}：执行已取消{suffix}。说明：{preview_single_line(cancel_text)}"
+
     failure_text = (
         str(record.get("error") or "").strip()
         or str(record.get("stderr") or "").strip()
@@ -97,13 +95,16 @@ def build_attempt_summary(record: AttemptRecord) -> str:
 
 def to_run_attempt_response(record: AttemptRecord) -> RunAttemptResponse:
     stdout_value, stdout_length, stdout_truncated = clip_text(
-        str(record.get("stdout")) if record.get("stdout") is not None else None
+        str(record.get("stdout")) if record.get("stdout") is not None else None,
+        limit=ATTEMPT_OUTPUT_PREVIEW_LIMIT,
     )
     stderr_value, stderr_length, stderr_truncated = clip_text(
-        str(record.get("stderr")) if record.get("stderr") is not None else None
+        str(record.get("stderr")) if record.get("stderr") is not None else None,
+        limit=ATTEMPT_OUTPUT_PREVIEW_LIMIT,
     )
     error_value, error_length, error_truncated = clip_text(
-        str(record.get("error")) if record.get("error") is not None else None
+        str(record.get("error")) if record.get("error") is not None else None,
+        limit=ATTEMPT_OUTPUT_PREVIEW_LIMIT,
     )
     script_rel_path = str(record["script_rel_path"]) if record.get("script_rel_path") is not None else None
     return RunAttemptResponse(
@@ -146,6 +147,9 @@ def to_run_response(record: RunRecord) -> RunResponse:
         output=str(record["output"]),
         created_at=str(record["created_at"]),
         updated_at=str(record["updated_at"]),
+        source_run_id=str(record["source_run_id"]) if record.get("source_run_id") is not None else None,
+        trigger_mode=str(record["trigger_mode"]) if record.get("trigger_mode") is not None else None,
+        cancel_requested=bool(record.get("cancel_requested", False)),
         generator=str(record["generator"]) if record.get("generator") is not None else None,
         attempt_count=int(record["attempt_count"]) if record.get("attempt_count") is not None else 0,
         repair_attempted=bool(record.get("repair_attempted", False)),
@@ -168,6 +172,7 @@ def to_run_response(record: RunRecord) -> RunResponse:
 
 def build_run_summary_text(record: RunRecord) -> str:
     status = str(record.get("status") or "queued")
+    cancel_requested = bool(record.get("cancel_requested", False))
     generator = describe_generator(str(record.get("generator") or "unknown"))
     attempt_count = int(record.get("attempt_count") or 0)
     repair_count = int(record.get("repair_count") or 0)
@@ -177,6 +182,10 @@ def build_run_summary_text(record: RunRecord) -> str:
     if status == "queued":
         return "任务已创建，等待后台执行。"
     if status == "running":
+        if cancel_requested:
+            if latest_attempt is not None:
+                return f"任务已收到取消请求，正在结束执行。最近一次尝试：{build_attempt_summary(latest_attempt)}"
+            return "任务已收到取消请求，正在结束执行。"
         if latest_attempt is not None:
             return f"任务正在执行中。最近一次尝试：{build_attempt_summary(latest_attempt)}"
         return "任务正在后台执行。"
@@ -187,6 +196,13 @@ def build_run_summary_text(record: RunRecord) -> str:
         return (
             f"任务执行成功，使用 {generator}，共尝试 {attempt_count} 次，"
             f"自动修复 {repair_count} 次。{latest_attempt_summary}"
+        )
+
+    if status == "cancelled":
+        cancel_preview = preview_single_line(str(record.get("error") or "任务已取消"))
+        return (
+            f"任务已取消，使用 {generator}，共尝试 {attempt_count} 次，"
+            f"自动修复 {repair_count} 次。说明：{cancel_preview}"
         )
 
     error_preview = preview_single_line(str(record.get("error") or "未提供更多错误信息"))
@@ -210,6 +226,9 @@ def to_run_summary_response(record: RunRecord) -> RunSummaryResponse:
         output_preview=output_preview or None,
         created_at=str(record["created_at"]),
         updated_at=str(record["updated_at"]),
+        source_run_id=str(record["source_run_id"]) if record.get("source_run_id") is not None else None,
+        trigger_mode=str(record["trigger_mode"]) if record.get("trigger_mode") is not None else None,
+        cancel_requested=bool(record.get("cancel_requested", False)),
         generator=str(record["generator"]) if record.get("generator") is not None else None,
         attempt_count=int(record["attempt_count"]) if record.get("attempt_count") is not None else 0,
         repair_attempted=bool(record.get("repair_attempted", False)),
@@ -290,4 +309,36 @@ def build_failure_output(
         output += f"\n\nerror:\n{error}"
     if repair_note:
         output += f"\n\nrepair:\n{repair_note}"
+    return output
+
+
+def build_cancelled_output(
+    initial_generator: str,
+    final_generator: str,
+    attempt_count: int,
+    repair_count: int,
+    artifacts: list[str],
+    cancel_reason: str,
+    result: CommandResult | None = None,
+) -> str:
+    command = str(result.get("command") or "").strip() if result else ""
+    stdout = str(result.get("stdout") or "").strip() if result else ""
+    stderr = str(result.get("stderr") or "").strip() if result else ""
+    returncode = result.get("returncode") if result else None
+
+    output = (
+        "任务已取消。\n\n"
+        f"初始生成方式：{initial_generator}\n"
+        f"最终生成方式：{final_generator}\n"
+        f"执行尝试次数：{attempt_count}\n"
+        f"自动修复次数：{repair_count}\n"
+        f"取消原因：{cancel_reason}\n"
+        f"最后执行命令：{command or '(not executed)'}\n"
+        f"最后返回码：{returncode}\n"
+        f"产物：\n{format_artifacts(artifacts)}"
+    )
+    if stdout:
+        output += f"\n\nstdout:\n{stdout}"
+    if stderr:
+        output += f"\n\nstderr:\n{stderr}"
     return output

@@ -1,158 +1,283 @@
+# AI Agent Backend API Specification
 
-## AI Agent 后端通信接口设计文档
+本文档描述的是当前仓库中已经实现并验证过的后端接口与内部通信边界，基于 2026-05-06 当前代码状态整理。
 
-### 1. 系统概述
+## 1. 当前后端结构
 
-本设计文档描述了 AI Agent 后端通信接口的完整架构，重点解决了前后端通信中的消息类型区分、数据格式统一和实时通信问题。
+后端主入口：
 
-### 2. 核心设计原则
+- `backend/app/main.py`
 
-#### 2.1 消息类型分离
-系统将消息分为两大类：
-- **UI 装饰性消息**：`quip`、`expression`、`status` - 用于表示 Agent 状态变化
-- **真实聊天消息**：`chat` - 用于 AI Agent 聊天窗口的对话内容
+当前服务层已经整理为“接口层 + 动作层”结构：
 
-#### 2.2 LangGraph 节点与消息映射
-- 每个 LangGraph 节点切换时自动发送对应的 `quip` 和 `expression`
-- 只有在任务完成或需要长输出时才发送 `chat` 消息
-- 确保聊天窗口不会收到过程性的装饰性消息
+- `backend/app/services/chat_interface.py`
+- `backend/app/services/chat_action/`
+- `backend/app/services/run_interface.py`
+- `backend/app/services/run_action/`
 
-### 3. 架构组件
+相关基础模块：
 
-#### 3.1 消息队列系统
-**文件**: `message_queue.py`
+- `backend/app/llm/client.py`
+- `backend/app/message_queue.py`
+- `backend/app/messaging/message_sender.py`
+- `backend/app/storage/run_store.py`
+- `backend/app/tools/safe_fs.py`
+- `backend/app/tools/safe_execute_command.py`
 
-```python
-class MessageQueue:
-    - add_message(): 添加消息到队列
-    - get_messages(): 获取消息（支持增量拉取）
-    - clear(): 清空队列
-```
+## 2. 当前能力边界
 
-**特性**:
-- 自动生成消息 ID 和时间戳
-- 支持增量拉取（since_id 参数）
-- 队列大小限制（1000 条）
-- 线程安全设计
+### 2.1 聊天链路
 
-#### 3.2 消息发送器
-**文件**: `messaging/message_sender.py`
+`/chat` 当前支持三类意图：
 
-```python
-class MessageSender:
-    - send_quip(): 发送节点提示消息
-    - send_expression(): 发送表情/动画消息
-    - send_chat_message(): 发送聊天消息
-    - send_error(): 发送错误消息
-    - send_status(): 发送状态更新
-```
+- `chat`
+- `coding`
+- `unknown`
 
-**特性**:
-- 统一的消息格式
-- 自动添加 channel 信息
-- 支持元数据扩展
+其中：
 
-#### 3.3 LangGraph 集成
-**文件**: `agent_workflow/agent_graph.py`
+- `chat` 会调用 OpenAI-compatible LLM 接口。
+- `coding` 会尝试桥接到 `agent_workflow`。
+- `unknown` 会返回引导性回复。
 
-**节点定义**:
-- `start`: 开始节点
-- `planning`: 规划节点
-- `coding`: 代码生成节点
-- `executing`: 执行节点
-- `analyzing`: 分析节点
-- `done`: 完成节点
-- `error`: 错误节点
+说明：
 
-**节点行为**:
-- 每个节点切换时调用 `on_node_change()` 发送 quip 和 expression
-- 只有 `done` 节点发送最终的 chat 消息
-- `error` 节点发送错误消息
+- `coding` 分支当前仍属于实验性桥接能力，不等同于完整的多 Agent 协同系统。
+- `agent_workflow` 通过 lazy import 暴露，缺少依赖时不会阻塞主服务启动。
 
-### 4. 统一消息格式
+### 2.2 任务执行链路
 
-#### 4.1 消息包结构
-```json
-{
-  "_id": "msg_168xxxx",
-  "_timestamp": "2026-05-06T08:00:00Z",
-  "_channel": "agent:chat",
-  "type": "chat",
-  "node_name": "done",
-  "timestamp": "2026-05-06T08:00:00Z",
-  "metadata": { ... }
-}
-```
+`/runs` 链路当前支持：
 
-#### 4.2 各类型消息格式
+- 创建任务
+- 后台执行
+- 本地模板 fallback
+- LLM 自动修复失败脚本
+- 基于历史任务创建 `retry / rerun`
+- 真实取消 `cancel`
+- 查询尝试记录
+- 查询脚本内容
+- 分块读取 stdout / stderr / error
+- 查询运行日志
+- 启动恢复
 
-**Quip 消息**:
-```json
-{
-  "type": "quip",
-  "content": "进入 planning 节点，开始分析需求。",
-  "node_name": "planning",
-  "timestamp": "...",
-  "metadata": {
-    "priority": "medium",
-    "duration": 3000
-  },
-  "_channel": "agent:quip"
-}
-```
+### 2.3 消息队列链路
 
-**Expression 消息**:
-```json
-{
-  "type": "expression",
-  "expression": "thinking",
-  "intensity": 0.8,
-  "node_name": "planning",
-  "timestamp": "...",
-  "metadata": {
-    "duration": 5000,
-    "transition": "smooth"
-  },
-  "_channel": "agent:expression"
-}
-```
+当前通过轮询接口提供消息：
 
-**Chat 消息**:
-```json
-{
-  "type": "chat",
-  "role": "assistant",
-  "content": "这是最终输出内容。",
-  "timestamp": "...",
-  "metadata": {
-    "is_partial": false,
-    "sequence_id": 1,
-    "total_parts": 1,
-    "node_name": "done"
-  },
-  "_channel": "agent:chat"
-}
-```
+- `GET /messages`
+- `DELETE /messages`
 
-### 5. API 接口设计
+消息队列特性：
 
-#### 5.1 消息队列接口
+- 自动生成 `_id`
+- 自动生成 `_timestamp`
+- 支持 `since_id` 增量拉取
+- 线程安全
+- 队列上限 `1000`
 
-**GET /messages**
-- 描述: 获取待发送消息
-- 参数: `since_id` (可选) - 从哪个消息 ID 开始获取
-- 返回:
+### 2.4 LLM 能力
+
+当前 LLM 调用基于 OpenAI-compatible 接口实现，支持：
+
+- 主 provider
+- fallback provider
+- 远程诊断
+- 请求超时提示
+- 不可重试 / 可重试错误区分
+
+## 3. API 列表
+
+### 3.1 `GET /health`
+
+用途：
+
+- 健康检查
+- 返回启动恢复统计
+
+返回示例：
+
 ```json
 {
   "ok": true,
-  "messages": [...],
-  "count": 10
+  "service": "backend",
+  "version": "0.2.0",
+  "startup_recovery": {
+    "checked_at": "2026-05-06T08:00:00+00:00",
+    "scanned_count": 0,
+    "recovered_count": 0,
+    "recovered_run_ids": []
+  }
 }
 ```
 
-**DELETE /messages**
-- 描述: 清空消息队列
-- 返回:
+### 3.2 `GET /llm/diagnostics`
+
+查询参数：
+
+- `check_remote: bool = false`
+
+用途：
+
+- 检查本地 LLM 配置是否完整
+- 可选远程探测主 / 备模型连通性
+
+返回字段包括：
+
+- `configured`
+- `api_key_present`
+- `base_url`
+- `resolved_url`
+- `model`
+- `timeout_seconds`
+- `fallback_configured`
+- `fallback_model`
+- `request_ok`
+- `status_code`
+- `response_preview`
+- `error_message`
+- `provider_used`
+- `fallback_used`
+
+### 3.3 `POST /chat`
+
+请求体：
+
+```json
+{
+  "prompt": "hello",
+  "context": null
+}
+```
+
+返回体：
+
+```json
+{
+  "ok": true,
+  "intent": "chat",
+  "output": "response text",
+  "error": null
+}
+```
+
+补充说明：
+
+- `/test ...` 命令也通过 `/chat` 入口处理。
+- 测试命令会向消息队列写入消息，不依赖真实 LLM。
+
+### 3.4 `POST /runs`
+
+请求体：
+
+```json
+{
+  "prompt": "build a calculator demo",
+  "context": null
+}
+```
+
+用途：
+
+- 创建一个后台任务
+- 立即返回 `RunResponse`
+- 后续由后台任务执行 `execute_run`
+
+### 3.5 `GET /runs`
+
+用途：
+
+- 返回完整任务列表
+
+返回类型：
+
+- `list[RunResponse]`
+
+### 3.6 `GET /runs/summary`
+
+查询参数：
+
+- `offset`
+- `limit`
+
+用途：
+
+- 返回轻量任务摘要
+
+### 3.7 `GET /runs/{run_id}`
+
+用途：
+
+- 获取单个任务完整状态
+
+### 3.8 `GET /runs/{run_id}/attempts`
+
+用途：
+
+- 获取该任务的尝试列表
+
+### 3.9 `GET /runs/{run_id}/attempts/{attempt_number}`
+
+用途：
+
+- 获取单次尝试详情
+
+### 3.10 `GET /runs/{run_id}/attempts/{attempt_number}/script`
+
+用途：
+
+- 获取某次尝试生成的脚本内容
+
+### 3.11 `GET /runs/{run_id}/attempts/{attempt_number}/output`
+
+查询参数：
+
+- `stream`: `stdout | stderr | error`
+- `offset`
+- `limit`
+
+用途：
+
+- 分块读取单次尝试输出
+
+### 3.12 `GET /runs/{run_id}/logs`
+
+用途：
+
+- 获取单个任务的完整文本日志
+
+### 3.13 `GET /messages`
+
+查询参数：
+
+- `since_id` 可选
+
+返回体：
+
+```json
+{
+  "ok": true,
+  "messages": [
+    {
+      "_id": "msg_168xxxx",
+      "_timestamp": "2026-05-06T08:00:00Z",
+      "_channel": "agent:chat",
+      "type": "chat",
+      "content": "hello"
+    }
+  ],
+  "count": 1
+}
+```
+
+### 3.14 `DELETE /messages`
+
+用途：
+
+- 清空消息队列
+
+返回体：
+
 ```json
 {
   "ok": true,
@@ -160,184 +285,226 @@ class MessageSender:
 }
 ```
 
-#### 5.2 其他新增接口
+### 3.15 `POST /runs/{run_id}/retry`
 
-**GET /llm/diagnostics**
-- 描述: LLM 配置诊断
-- 参数: `check_remote` (可选) - 是否测试远程连接
+用途：
 
-**GET /runs/summary**
-- 描述: 轻量级任务摘要列表
-- 参数: `offset`, `limit`
+- 基于一个 `failed` 任务创建新的 follow-up run
 
-**GET /health**
-- 描述: 健康检查
-- 返回新增 `startup_recovery` 字段
+行为说明：
 
-### 6. 前后端通信方法
+- 只有源任务状态为 `failed` 时允许调用
+- 返回新的 `RunResponse`
+- 新 run 会保留原始 `prompt / context`
+- 新 run 会记录 `source_run_id`
+- 新 run 会记录 `trigger_mode=retry`
 
-#### 6.1 通信流程
-1. 后端将消息写入全局 `message_queue`
-2. 前端定期调用 `GET /messages?since_id=...` 轮询获取新消息
-3. 前端根据 `_channel` 和 `type` 进行路由和展示
+### 3.16 `POST /runs/{run_id}/rerun`
 
-#### 6.2 前端处理建议
+用途：
 
-**Quip/Expression 消息**:
-- 仅用于 UI 装饰、节点提示、角色表情变化
-- 不显示在聊天窗口中
+- 基于一个已完成或失败的任务重新创建新的 follow-up run
 
-**Chat 消息**:
-- 作为 AI Agent 聊天窗口的最终输出
-- 支持 `is_partial` 分片处理
+行为说明：
 
-**Status/Error 消息**:
-- 用于状态条、进度条、系统异常提示
-- 不写入对话历史
+- 允许源任务状态为 `done` 或 `failed`
+- 返回新的 `RunResponse`
+- 新 run 会保留原始 `prompt / context`
+- 新 run 会记录 `source_run_id`
+- 新 run 会记录 `trigger_mode=rerun`
 
-### 7. 数据模型扩展
+### 3.17 `POST /runs/{run_id}/cancel`
 
-#### 7.1 新增 Schema 字段
+用途：
 
-**ChatResponse**:
-- 新增 `ok`: bool
-- 新增 `error`: str | None
+- 取消一个 `queued` 或 `running` 的任务
 
-**RunResponse**:
-- 新增 `generator`, `attempt_count`, `repair_attempted`, `repair_count`
-- 新增 `started_at`, `finished_at`, `duration_ms`
+行为说明：
 
-**RunAttemptResponse**:
-- 新增 `stdout_length`, `stderr_length`, `error_length`
-- 新增裁剪标志字段
+- 如果源任务状态为 `queued`，会直接标记为 `cancelled`
+- 如果源任务状态为 `running`，会先登记 `cancel_requested=true`
+- 后端会尝试终止当前本地 Python 子进程，避免“状态取消但进程仍在跑”的假取消
+- 任务最终状态会落为 `cancelled`
+- 如果任务已经是 `done`、`failed` 或 `cancelled`，会返回 `409`
 
-#### 7.2 新增 Schema 类型
+## 4. 当前消息格式
 
-**RunSummaryResponse**: 轻量级任务摘要
-**RunSummaryListResponse**: 任务摘要列表
-**LLMDiagnosticsResponse**: LLM 诊断结果
+当前消息 envelope 对应 `MessageEnvelope`：
 
-### 8. 测试与验证
-
-#### 8.1 测试命令系统
-
-系统提供了完整的测试命令集：
-- `/test quip [node]`: 测试 Quip 消息
-- `/test expression [expr]`: 测试表情消息
-- `/test chat [content]`: 测试聊天消息
-- `/test error`: 测试错误消息
-- `/test status [status] [progress] [node]`: 测试状态消息
-- `/test workflow`: 测试完整工作流
-- `/test all`: 测试所有消息类型
-
-#### 8.2 节点映射配置
-
-**文件**: `agent_workflow/node_mappings.py`
-
-定义了每个节点对应的 quip 内容和表情：
-```python
-NODE_MAPPINGS = {
-    'start': ('开始执行任务...', 'thinking'),
-    'planning': ('正在分析需求...', 'focused'),
-    'coding': ('正在生成代码...', 'coding'),
-    'executing': ('正在执行代码...', 'working'),
-    'analyzing': ('正在分析结果...', 'analyzing'),
-    'done': ('任务完成！', 'happy'),
-    'error': ('任务失败', 'sad')
-}
-```
-
-### 9. 系统特性
-
-#### 9.1 启动恢复
-- 后端启动时扫描 `runs/` 目录
-- 将遗留的 `queued`/`running` 任务标记为 `failed`
-- 在 `/health` 接口中返回恢复统计信息
-
-#### 9.2 并发安全
-- 任务存储增加线程锁
-- 原子写入防止并发损坏
-- 消息队列线程安全设计
-
-#### 9.3 错误处理
-- 完善的错误消息机制
-- LLM 调用失败时的详细错误信息
-- 任务执行失败的状态跟踪
-
-### 10. 未来扩展建议
-
-#### 10.1 统一事件包
-建议使用统一的 `EventEnvelope` 格式：
 ```json
 {
-  "_id": "...",
+  "_id": "msg_168xxxx",
+  "_timestamp": "2026-05-06T08:00:00Z",
   "_channel": "agent:chat",
   "type": "chat",
-  "display_target": "agent_chat",
-  "payload": { ... }
+  "timestamp": "2026-05-06T08:00:00Z",
+  "node_name": "done",
+  "metadata": {},
+  "content": "text"
 }
 ```
 
-#### 10.2 长输出分片
-- `metadata.is_partial`: 是否为分片
-- `metadata.sequence_id`: 分片序号
-- `metadata.total_parts`: 总分片数
+支持的 `type`：
 
-#### 10.3 WebSocket 支持
-当前使用轮询机制，未来可考虑升级为 WebSocket 实现更高效的实时通信。
+- `quip`
+- `expression`
+- `chat`
+- `error`
+- `status`
 
----
+当前前后端约定：
 
-## 需求满足度检查
+- `_channel` 用于区分展示通道
+- `type` 用于区分消息语义
+- `_id` 用于增量拉取
 
-### 原始需求对照检查
+## 5. 当前运行结果模型
 
-✅ **需求1**: 彻底封装好后端未来的通信接口
-- **实现**: 创建了统一的 `MessageSender` 类和消息队列系统
-- **验证**: 所有消息都通过统一接口发送，格式一致
+### 5.1 `RunResponse`
 
-✅ **需求2**: 彻底优化好后端需要发的数据格式
-- **实现**: 定义了统一的消息包格式，包含 `_id`, `_timestamp`, `_channel` 等字段
-- **验证**: 所有消息类型都遵循相同的结构
+核心字段：
 
-✅ **需求3**: 区分表情 quip 和真正的 AI agent 聊天窗口的区别
-- **实现**: 明确区分 `quip`/`expression` 和 `chat` 消息类型
-- **验证**: 通过 `_channel` 字段区分 (`agent:quip`, `agent:expression`, `agent:chat`)
+- `run_id`
+- `status`
+- `output`
+- `source_run_id`
+- `trigger_mode`
+- `cancel_requested`
+- `generator`
+- `attempt_count`
+- `repair_attempted`
+- `repair_count`
+- `command`
+- `returncode`
+- `stdout`
+- `stderr`
+- `log_path`
+- `artifacts`
+- `attempts`
 
-✅ **需求4**: 做好数据区分
-- **实现**: 每个消息类型都有明确的用途和展示目标
-- **验证**: 前端可根据 `_channel` 和 `type` 进行精确路由
+### 5.2 `RunAttemptResponse`
 
-✅ **需求5**: 当进入不同的 LangGraph 节点时发送不同的 quip 和表情
-- **实现**: `on_node_change()` 函数在每个节点切换时自动发送对应消息
-- **验证**: `node_mappings.py` 定义了每个节点的 quip 和表情映射
+核心字段：
 
-✅ **需求6**: AI agent 聊天窗口只在全部做完或遇到长输出时才收到信息
-- **实现**: 只有 `done` 节点发送 `chat` 消息，其他节点只发送装饰性消息
-- **验证**: `agent_graph.py` 中 `done_node()` 是唯一发送 chat 消息的节点
+- `attempt_number`
+- `generator`
+- `repair_round`
+- `status`
+- `summary`
+- `script_rel_path`
+- `command`
+- `cwd`
+- `returncode`
+- `stdout`
+- `stderr`
+- `error`
+- `stdout_length`
+- `stderr_length`
+- `error_length`
+- `stdout_truncated`
+- `stderr_truncated`
+- `error_truncated`
 
-✅ **需求7**: 约定好统一的数据结果
-- **实现**: 所有消息都包含统一的核心字段和类型定义
-- **验证**: `schemas.py` 中定义了完整的数据模型
+## 6. 安全工具边界
 
-✅ **需求8**: 写一个给后端开发者看的 markdown 说明文档
-- **实现**: 创建了 `COMMUNICATION_INTERFACE.md` 详细文档
-- **验证**: 文档包含接口说明、数据格式、通信方法等完整内容
+`safe_fs.py` 与 `safe_execute_command.py` 是后端内部工具，不是对外 HTTP API，但它们决定了 `runs` 链路的安全边界。
 
-✅ **需求9**: 把前后端通信方法也写入 markdown
-- **实现**: 文档中详细描述了前后端通信流程和 API 接口
-- **验证**: 包含消息队列 API、轮询机制、前端处理建议等
+### 6.1 `safe_fs.py`
 
-### 结论
+提供：
 
-**新版本完全满足原始需求**，并且在以下方面还有额外增强：
+- `resolve_workspace_path`
+- `safe_write_file`
+- `safe_read_file`
+- `safe_list_files`
 
-1. **完善的测试系统**: 提供了完整的测试命令集，方便开发者验证功能
-2. **LLM 诊断接口**: 新增 LLM 配置检查和远程连接测试
-3. **任务摘要接口**: 轻量级任务列表，优化前端性能
-4. **启动恢复机制**: 自动处理遗留任务，提高系统健壮性
-5. **并发安全**: 线程锁和原子写入，防止并发问题
-6. **错误处理**: 完善的错误消息和状态跟踪
+当前安全约束：
 
-新版本不仅满足了所有原始需求，还提供了一个生产级的、可扩展的、易于维护的通信接口架构。
-        
+- 所有路径必须落在 `settings.workspace_dir` 内
+- 路径逃逸会抛出 `PermissionError`
+
+### 6.2 `safe_execute_command.py`
+
+提供：
+
+- `normalize_command`
+- `is_blocked_command`
+- `safe_execute_command`
+
+当前安全约束：
+
+- 明确拦截 shell 类可执行文件：
+  - `cmd`
+  - `powershell`
+  - `pwsh`
+  - `sh`
+  - `bash`
+- 明确拦截危险参数 token：
+  - `rm`
+  - `rmdir`
+  - `del`
+  - `format`
+  - `shutdown`
+  - `taskkill`
+  - `remove-item`
+  - `/c`
+  - `-c`
+  - `-command`
+  - `--command`
+- 命令超时时返回结构化错误结果，而不是直接让进程崩掉
+
+## 7. 当前自动化测试覆盖
+
+当前后端已覆盖以下方向：
+
+- `chat intent`
+- `llm client` 主备链路
+- `logging config`
+- `message queue`
+- `run` 成功 / 失败 / 修复 / 启动恢复
+- `run cancel`
+- `text utils`
+- `safe tools`
+
+## 8. 当前已知定位
+
+### 8.1 稳定主线
+
+当前稳定主线是：
+
+- `/health`
+- `/llm/diagnostics`
+- `/chat`
+- `/runs`
+- `/messages`
+
+### 8.2 实验性部分
+
+以下能力目前仍更适合视作实验性或桥接态：
+
+- `coding` 分支里的 `agent_workflow`
+- 完整多 Agent 协同编排
+
+它们不会阻塞主服务启动，但也不应被文档表述为“已经完整稳定交付”。
+
+### 8.3 当前 runs 执行控制说明
+
+当前 `cancel` 已经作为正式 HTTP 接口接入，并具备真实执行控制：
+
+- 执行中的 run 会登记到进程控制表
+- `cancel` 会设置取消请求，并尝试终止对应的本地子进程
+- 运行中的取消会先表现为 `cancel_requested=true`
+- 最终任务状态会落为 `cancelled`
+
+当前仍存在的边界是：
+
+- 取消主要覆盖本地脚本执行阶段
+- 如果任务正处于同步的 LLM 请求阶段，取消会在该阶段结束后尽快生效，而不是强制中断远程 HTTP 请求
+
+## 9. 建议
+
+后续如果继续扩展本文档，建议优先同步：
+
+- `safe tools` 的更细测试结果
+- `runs` 生命周期进一步扩展，例如更细粒度的 LLM 阶段取消
+- `coding` 分支从实验性桥接转为稳定能力后的契约变化

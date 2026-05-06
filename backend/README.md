@@ -8,6 +8,32 @@
 
 `Python 3.10+` 即可运行；为了后续继续扩展 Agent 相关能力，推荐优先使用 **Python 3.11**。
 
+## 0. 当前状态速览
+
+当前后端已经不是单一演示入口，而是具备以下主线能力：
+
+- `chat` 链路：支持普通聊天、测试命令和实验性的 coding 桥接
+- `runs` 链路：支持创建、执行、自动修复、日志查询、尝试记录查询
+- `messages` 链路：支持统一消息格式与增量轮询
+- `llm` 链路：支持 OpenAI-compatible 主模型和 fallback 模型
+- `safe tools`：对文件读写和命令执行做了 workspace 边界与危险命令拦截
+
+当前服务结构已经整理为“接口层 + 动作层”：
+
+- `backend/app/services/chat_interface.py`
+- `backend/app/services/chat_action/`
+- `backend/app/services/run_interface.py`
+- `backend/app/services/run_action/`
+
+当前后端已具备自动化测试护栏，覆盖方向包括：
+
+- `chat intent`
+- `llm client`
+- `logging config`
+- `message queue`
+- `run lifecycle`
+- `safe_fs / safe_execute_command`
+
 ## 1. 安装 uv
 
 uv 官方提供不同平台的安装方式，详情请参考 [uv 官方文档](https://astral.sh/uv/getting-started/installation)。
@@ -158,6 +184,7 @@ LLM_FALLBACK_API_KEY=
 补充可选项：
 
 ```text
+LOG_LEVEL=INFO
 LLM_TIMEOUT_SECONDS=30
 LLM_SYSTEM_PROMPT=You are a helpful AI assistant for an educational desktop AI project.
 RUN_REPAIR_MAX_ATTEMPTS=1
@@ -227,8 +254,22 @@ Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
 - `GET /runs/{run_id}/attempts/{attempt_number}/script`：读取该次尝试生成的脚本内容
 - `GET /runs/{run_id}/attempts/{attempt_number}/output`：按分页参数读取该次尝试的 `stdout` / `stderr` / `error`
 - `GET /runs/{run_id}/logs`：读取该任务的日志
+- `POST /runs/{run_id}/retry`：基于失败任务创建一个新的重试任务
+- `POST /runs/{run_id}/rerun`：基于已完成或已失败任务创建一个新的重新运行任务
+- `POST /runs/{run_id}/cancel`：取消一个排队中或执行中的任务
 
-其中 `POST /runs` 的返回通常会先是 `queued`，随后你可以通过 `GET /runs/{run_id}` 轮询它是否变成 `done` 或 `failed`。
+其中 `POST /runs` 的返回通常会先是 `queued`，随后你可以通过 `GET /runs/{run_id}` 轮询它是否变成 `running`、`done`、`failed` 或 `cancelled`。
+
+`retry` 和 `rerun` 的区别是：
+
+- `retry`：只允许对 `failed` 任务触发，语义上表示“沿着失败上下文再试一次”
+- `rerun`：允许对 `done` 或 `failed` 任务触发，语义上表示“重新跑一遍同样输入”
+- `cancel`：允许对 `queued` 或 `running` 任务触发；如果任务尚未开始，会直接标记为 `cancelled`，如果正在执行，会先把 `cancel_requested` 设为 `true`，然后尽快终止本地命令执行
+
+当前后端会在 follow-up run 中保留：
+
+- `source_run_id`
+- `trigger_mode`，可能为 `create`、`retry`、`rerun`
 
 如果你只需要展示任务列表，推荐优先使用：
 
@@ -249,6 +290,13 @@ GET /runs/summary?offset=0&limit=20
 
 当前保留原来的 `GET /runs`，是为了兼容现有联调流程；后续如果前端切换到摘要接口，列表轮询的压力会更小。
 
+当前 `cancel` 已经接入真实执行控制，而不是“只改状态”的假取消。后端会为每个运行中的 run 跟踪活跃进程和取消请求：
+
+- 如果任务还在 `queued`，调用 `cancel` 会直接结束该任务
+- 如果任务已经 `running`，调用 `cancel` 会先登记取消请求，再终止当前本地 Python 子进程
+- 任务最终会落为 `cancelled`
+- 对已经 `done`、`failed` 或 `cancelled` 的任务再次调用 `cancel`，会返回 `409`
+
 如果你已经配置了真实大模型，`/runs` 会优先尝试让模型生成 Python 脚本；如果没有配置，或模型返回内容无法解析为可执行 Python 代码，则会自动回退到本地 demo 模板。
 
 如果脚本首次执行失败，后端会在已配置 LLM 的前提下自动把原始脚本、执行命令、`stdout`、`stderr` 和错误信息发给模型进行修复，并按 `RUN_REPAIR_MAX_ATTEMPTS` 的设置继续重试。当前默认值是 `1`，也就是“失败后自动修一次”。
@@ -259,6 +307,9 @@ GET /runs/summary?offset=0&limit=20
 
 `GET /runs/{run_id}` 的返回里现在还会包含这些字段，便于你在后端调试阶段观察任务行为：
 
+- `source_run_id`：如果该任务由 `retry` 或 `rerun` 产生，这里会记录原始任务 ID
+- `trigger_mode`：当前任务来源，可能为 `create`、`retry`、`rerun`
+- `cancel_requested`：是否已经收到取消请求；对于运行中的取消，这个字段会先变成 `true`，随后任务状态再落为 `cancelled`
 - `attempt_count`：总执行次数
 - `repair_attempted`：是否触发过自动修复
 - `repair_count`：自动修复次数
@@ -269,7 +320,7 @@ GET /runs/summary?offset=0&limit=20
 - `attempt_number`：第几次执行
 - `generator`：本次脚本来源，例如 `template`、`llm`、`llm_repair`
 - `repair_round`：第几轮自动修复后产生的脚本，初次执行为 `0`
-- `status`：本次尝试的状态，可能为 `running`、`done`、`failed`
+- `status`：本次尝试的状态，可能为 `running`、`done`、`failed`、`cancelled`
 - `summary`：面向展示层的简短中文摘要，前端可以直接显示
 - `source_file_name`：生成阶段原始脚本名
 - `attempt_file_name`：真正落盘并执行的文件名
@@ -376,6 +427,30 @@ Invoke-RestMethod "http://127.0.0.1:8000/runs/<run_id>/attempts/1/output?stream=
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/runs/<run_id>/logs
+```
+
+对失败任务创建 retry：
+
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri http://127.0.0.1:8000/runs/<run_id>/retry
+```
+
+对已完成或失败任务创建 rerun：
+
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri http://127.0.0.1:8000/runs/<run_id>/rerun
+```
+
+取消一个排队中或运行中的任务：
+
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri http://127.0.0.1:8000/runs/<run_id>/cancel
 ```
 
 ## 7. 让 Electron 连接后端

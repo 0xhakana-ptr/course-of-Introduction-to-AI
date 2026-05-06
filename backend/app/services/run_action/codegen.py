@@ -2,6 +2,7 @@ import json
 import re
 from typing import Any
 
+from ...core.text_utils import build_preview
 from ...llm.client import call_llm_sync, llm_is_configured
 from .types import LLM_PREVIEW_LIMIT, ScriptGenerationResult
 
@@ -162,10 +163,7 @@ def extract_python_code(raw_text: str) -> str | None:
 
 
 def preview_text(text: str, limit: int = LLM_PREVIEW_LIMIT) -> str:
-    normalized = text.strip()
-    if len(normalized) <= limit:
-        return normalized
-    return f"{normalized[:limit]}..."
+    return build_preview(text, limit=limit, collapse_whitespace=False)
 
 
 def validate_python_script(file_name: str, script_content: str) -> str | None:

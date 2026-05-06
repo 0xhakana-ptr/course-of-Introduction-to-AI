@@ -1,14 +1,18 @@
-from typing import List, Dict, Any
+import logging
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 class MessageQueue:
     """消息队列，用于存储待发送的消息"""
     
     def __init__(self):
-        self.messages: List[Dict[str, Any]] = []
+        self.messages: list[dict[str, Any]] = []
         self.max_size = 1000
         self._lock = threading.RLock()
         self._counter = 0
@@ -28,7 +32,7 @@ class MessageQueue:
             if message.get("_id") is not None
         }
     
-    def add_message(self, message: Dict[str, Any]) -> str:
+    def add_message(self, message: dict[str, Any]) -> str:
         """添加消息到队列
         
         Args:
@@ -52,10 +56,15 @@ class MessageQueue:
 
             total = len(self.messages)
 
-        print(f"[MessageQueue] 添加消息: {message_id}, 类型: {message.get('type')}, 总数: {total}")
+        logger.debug(
+            "Message queued: id=%s type=%s total=%s",
+            message_id,
+            message.get("type"),
+            total,
+        )
         return message_id
     
-    def get_messages(self, since_id: str = None) -> List[Dict[str, Any]]:
+    def get_messages(self, since_id: str | None = None) -> list[dict[str, Any]]:
         """获取消息
         
         Args:
@@ -74,16 +83,16 @@ class MessageQueue:
 
             result = self.messages[index + 1:]
         if result:
-            print(f"[MessageQueue] 获取消息: {len(result)} 条, 从: {since_id}")
+            logger.debug("Messages fetched: count=%s since_id=%s", len(result), since_id)
         return result
     
-    def clear(self):
+    def clear(self) -> None:
         """清空队列"""
         with self._lock:
             count = len(self.messages)
             self.messages.clear()
             self._message_index.clear()
-        print(f"[MessageQueue] 清空队列: {count} 条消息")
+        logger.info("Message queue cleared: count=%s", count)
 
 
 # 全局消息队列实例
