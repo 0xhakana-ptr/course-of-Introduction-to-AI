@@ -27,6 +27,9 @@ class Settings:
         self.backend_root = backend_root
         self.workspace_dir = backend_root / "workspace"
         self.runs_dir = self.workspace_dir / "runs"
+        self.conversation_dir_name = (
+            os.getenv("CONVERSATION_DIR_NAME", "conversations").strip() or "conversations"
+        )
 
         self.llm_base_url = os.getenv("LLM_BASE_URL", "").strip()
         self.llm_api_key = os.getenv("LLM_API_KEY", "").strip()
@@ -66,6 +69,25 @@ class Settings:
         self.chat_context_max_chars = (
             int(chat_context_max_raw) if chat_context_max_raw.isdigit() else 6000
         )
+
+        cleanup_interval_raw = os.getenv("CONVERSATION_CLEANUP_INTERVAL_SECONDS", "60").strip()
+        self.conversation_cleanup_interval_seconds = (
+            int(cleanup_interval_raw) if cleanup_interval_raw.isdigit() else 60
+        )
+
+        session_ttl_raw = os.getenv("CONVERSATION_SESSION_TTL_SECONDS", "604800").strip()
+        self.conversation_session_ttl_seconds = (
+            int(session_ttl_raw) if session_ttl_raw.isdigit() else 604800
+        )
+
+        max_persisted_raw = os.getenv("CONVERSATION_MAX_PERSISTED_SESSIONS", "200").strip()
+        self.conversation_max_persisted_sessions = (
+            int(max_persisted_raw) if max_persisted_raw.isdigit() else 200
+        )
+
+    @property
+    def conversation_dir(self) -> Path:
+        return self.workspace_dir / self.conversation_dir_name
 
 
 settings = Settings()

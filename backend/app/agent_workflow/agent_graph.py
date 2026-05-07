@@ -3,10 +3,10 @@ from typing import TypedDict
 from langgraph.graph import END, StateGraph
 
 from ..llm.client import call_llm_sync
-from ..messaging.message_sender import message_sender
 from ..schemas import INTENT_TYPE
 from ..services.chat_action.intent import detect_intent
 from ..services.run_interface import create_run
+from .roleplay import emit_roleplay_chat
 
 
 class AgentState(TypedDict, total=False):
@@ -14,6 +14,7 @@ class AgentState(TypedDict, total=False):
     context: str | None
     session_id: str | None
     intent: INTENT_TYPE
+    emit_chat_message: bool
     output: str
     error: str | None
     run_id: str | None
@@ -104,13 +105,11 @@ def unknown_node(state: AgentState) -> AgentState:
 
 
 def roleplay_node(state: AgentState) -> AgentState:
-    output = (state.get("output") or "").strip()
-    if output:
-        message_sender.send_chat_message(
-            content=output,
-            is_partial=False,
-            node_name="agent_roleplay",
-        )
+    emit_roleplay_chat(
+        str(state.get("output") or ""),
+        node_name="agent_roleplay",
+        emit_chat_message=bool(state.get("emit_chat_message", True)),
+    )
     return state
 
 
@@ -152,11 +151,13 @@ def run_agent(
     *,
     session_id: str | None = None,
     intent: INTENT_TYPE | None = None,
+    emit_chat_message: bool = True,
 ) -> dict[str, object]:
     initial_state: AgentState = {
         "user_input": prompt,
         "context": context,
         "session_id": session_id,
+        "emit_chat_message": emit_chat_message,
         "output": "",
         "error": None,
         "run_id": None,

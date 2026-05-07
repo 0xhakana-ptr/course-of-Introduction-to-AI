@@ -25,6 +25,9 @@ def isolate_backend_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(settings, "llm_fallback_timeout_seconds", settings.llm_timeout_seconds)
     monkeypatch.setattr(settings, "conversation_history_max_messages", 20)
     monkeypatch.setattr(settings, "chat_context_max_chars", 6000)
+    monkeypatch.setattr(settings, "conversation_cleanup_interval_seconds", 0)
+    monkeypatch.setattr(settings, "conversation_session_ttl_seconds", 3600)
+    monkeypatch.setattr(settings, "conversation_max_persisted_sessions", 200)
     workspace_dir = tmp_path / "workspace"
     runs_dir = workspace_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)

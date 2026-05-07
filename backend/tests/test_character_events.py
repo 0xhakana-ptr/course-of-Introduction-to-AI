@@ -3,6 +3,7 @@ from backend.app.services.character_interface import (
     send_chat_started,
     send_task_done,
 )
+from backend.app.services.chat_action.types import ChatServiceResult
 from backend.app.services.run_interface import create_run, execute_run
 
 
@@ -66,6 +67,7 @@ def test_run_success_emits_task_lifecycle_events(client):
     assert response.status_code == 200
     messages = response.json()["messages"]
     status_messages = [message for message in messages if message["type"] == "status"]
+    chat_messages = [message for message in messages if message["type"] == "chat"]
     node_names = [message["node_name"] for message in status_messages]
     statuses = [message["status"] for message in status_messages]
 
@@ -73,3 +75,67 @@ def test_run_success_emits_task_lifecycle_events(client):
     assert "task_started" in node_names
     assert "task_done" in node_names
     assert statuses[-1] == "done"
+    assert len(chat_messages) == 1
+    assert chat_messages[0]["node_name"] == "task_done"
+    assert run.run_id in chat_messages[0]["content"]
+    assert f"GET /runs/{run.run_id}" in chat_messages[0]["content"]
+
+
+def test_chat_route_success_uses_status_events_without_queueing_duplicate_chat(
+    monkeypatch,
+    client,
+):
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        return ChatServiceResult(intent="chat", ok=True, output=f"reply to {prompt}")
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    response = client.post("/chat", json={"prompt": "hello", "context": None})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+
+    messages_response = client.get("/messages")
+    assert messages_response.status_code == 200
+    messages = messages_response.json()["messages"]
+    status_messages = [message for message in messages if message["type"] == "status"]
+    chat_messages = [message for message in messages if message["type"] == "chat"]
+
+    assert status_messages[0]["node_name"] == "chat"
+    assert status_messages[-1]["node_name"] == "chat_done"
+    assert status_messages[-1]["status"] == "done"
+    assert chat_messages == []
+
+
+def test_chat_coding_route_does_not_queue_duplicate_chat_message(client):
+    response = client.post("/chat", json={"prompt": "write python code", "context": None})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["intent"] == "coding"
+    assert payload["run_id"]
+
+    messages_response = client.get("/messages")
+    assert messages_response.status_code == 200
+    messages = messages_response.json()["messages"]
+    chat_messages = [message for message in messages if message["type"] == "chat"]
+    status_messages = [message for message in messages if message["type"] == "status"]
+
+    assert all(message["content"] != payload["output"] for message in chat_messages)
+    assert all(message["node_name"] != "agent_roleplay" for message in chat_messages)
+    assert any(
+        message["node_name"] in {"task_done", "task_failed", "task_cancelled"}
+        for message in chat_messages
+    )
+    assert any(message["node_name"] == "task_queued" for message in status_messages)

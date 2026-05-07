@@ -1,0 +1,83 @@
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Query
+
+from ..schemas import (
+    ATTEMPT_OUTPUT_STREAM,
+    RunAttemptListResponse,
+    RunAttemptOutputChunkResponse,
+    RunAttemptResponse,
+    RunAttemptScriptResponse,
+    RunLogResponse,
+    RunResponse,
+)
+from ..services.run_interface import (
+    get_run,
+    get_run_attempt,
+    get_run_attempt_output_chunk,
+    get_run_attempt_script,
+    get_run_attempts,
+    get_run_log,
+)
+
+
+def require_run(run_id: str) -> RunResponse:
+    run = get_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return run
+
+
+def require_run_attempts(run_id: str) -> RunAttemptListResponse:
+    attempts = get_run_attempts(run_id)
+    if attempts is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return attempts
+
+
+def require_run_attempt(run_id: str, attempt_number: int) -> RunAttemptResponse:
+    attempt = get_run_attempt(run_id, attempt_number)
+    if attempt is None:
+        raise HTTPException(status_code=404, detail="attempt not found")
+    return attempt
+
+
+def require_run_attempt_script(run_id: str, attempt_number: int) -> RunAttemptScriptResponse:
+    script = get_run_attempt_script(run_id, attempt_number)
+    if script is None:
+        raise HTTPException(status_code=404, detail="attempt script not found")
+    return script
+
+
+def require_run_attempt_output(
+    run_id: str,
+    attempt_number: int,
+    stream: ATTEMPT_OUTPUT_STREAM = Query(default="stdout"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=4000, ge=1, le=20000),
+) -> RunAttemptOutputChunkResponse:
+    output = get_run_attempt_output_chunk(
+        run_id=run_id,
+        attempt_number=attempt_number,
+        stream=stream,
+        offset=offset,
+        limit=limit,
+    )
+    if output is None:
+        raise HTTPException(status_code=404, detail="attempt output not found")
+    return output
+
+
+def require_run_log(run_id: str) -> RunLogResponse:
+    run_log = get_run_log(run_id)
+    if run_log is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return run_log
+
+
+RunDependency = Annotated[RunResponse, Depends(require_run)]
+RunAttemptsDependency = Annotated[RunAttemptListResponse, Depends(require_run_attempts)]
+RunAttemptDependency = Annotated[RunAttemptResponse, Depends(require_run_attempt)]
+RunAttemptScriptDependency = Annotated[RunAttemptScriptResponse, Depends(require_run_attempt_script)]
+RunAttemptOutputDependency = Annotated[RunAttemptOutputChunkResponse, Depends(require_run_attempt_output)]
+RunLogDependency = Annotated[RunLogResponse, Depends(require_run_log)]

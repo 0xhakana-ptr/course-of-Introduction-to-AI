@@ -2,7 +2,7 @@
 
 本项目推荐使用 `uv` 管理 Python、虚拟环境和后端依赖。
 
-当前最小后端入口文件是 `backend/app/main.py`。
+当前后端入口文件仍然是 `backend/app/main.py`，但它现在只负责创建 FastAPI app、注册 lifespan 和挂载路由。
 
 **下面所有命令都默认在项目根目录执行**。
 
@@ -14,7 +14,7 @@
 
 当前后端已经不是单一演示入口，而是具备以下主线能力：
 
-- `chat` 链路：支持普通聊天、测试命令和通过 LangGraph 进入 `/runs` 的 coding intent
+- `chat` 链路：支持普通聊天、测试命令，并通过最小 LangGraph Agent Brain 统一 chat / coding intent
 - `runs` 链路：支持创建、执行、自动修复、日志查询、尝试记录查询
 - `messages` 链路：支持统一消息格式与增量轮询
 - `llm` 链路：支持 OpenAI-compatible 主模型和 fallback 模型
@@ -23,6 +23,7 @@
 
 当前服务结构已经整理为“接口层 + 动作层”：
 
+- `backend/app/api/`
 - `backend/app/services/chat_interface.py`
 - `backend/app/services/chat_action/`
 - `backend/app/services/run_interface.py`
@@ -237,6 +238,10 @@ CHAT_CONTEXT_MAX_CHARS=6000
 
 - `CONVERSATION_HISTORY_MAX_MESSAGES`：每个会话最多保留多少条历史消息，默认 `20`
 - `CHAT_CONTEXT_MAX_CHARS`：拼给 LLM 的上下文最大字符数，默认 `6000`
+- `CONVERSATION_SESSION_TTL_SECONDS`：会话持久化文件的最长保留秒数，默认 `604800`（7 天）
+- `CONVERSATION_MAX_PERSISTED_SESSIONS`：workspace 中最多保留多少个持久化会话文件，默认 `200`
+- `CONVERSATION_CLEANUP_INTERVAL_SECONDS`：后端自动清理会话文件的最小间隔秒数，默认 `60`
+- 会话历史会持久化到 `backend/workspace/conversations/`，服务重启后仍可继续读取同一个 `session_id` 的最近消息
 
 安全提醒：
 
@@ -345,13 +350,14 @@ GET /runs/summary?offset=0&limit=20
 - 后端会保存同一会话最近若干轮消息，并在下一轮聊天时自动拼入上下文
 - 如果需要清空记忆，可以调用 `DELETE /chat/sessions/{session_id}`
 
-当前 `/chat` 的 coding intent 已经接入最小 LangGraph Agent Brain：
+当前 `/chat` 的普通聊天和 coding intent 都已经接入最小 LangGraph Agent Brain：
 
 - `LongCat` 等大模型仍然只是 LLM provider，负责生成和判断
-- `LangGraph` 负责 `router -> coding_node -> run_tool_node -> roleplay_node` 的状态流转
+- `LangGraph` 负责 `router -> chat_node -> roleplay_node` 和 `router -> coding_node -> run_tool_node -> roleplay_node` 的状态流转
 - `run_tool_node` 会复用现有 `/runs` 能力创建任务
 - `/chat` 响应体会在 coding intent 下返回 `run_id`
 - 创建出的 run 会继续通过后台任务执行，状态仍然通过 `/runs` 和 `/messages` 查询
+- 对于直接通过 `/chat` 返回的聊天正文，后端不会再额外向消息队列重复写入同一条 `agent:chat`，以避免聊天窗口重复显示
 
 当前 `cancel` 已经接入真实执行控制，而不是“只改状态”的假取消。后端会为每个运行中的 run 跟踪活跃进程和取消请求：
 

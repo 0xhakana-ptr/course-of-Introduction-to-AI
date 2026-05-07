@@ -40,6 +40,23 @@ def test_message_sender_queues_motion_message(monkeypatch):
     assert messages[0]["metadata"]["loop"] is False
 
 
+def test_message_sender_queues_chat_message_with_top_level_node_name(monkeypatch):
+    queue = MessageQueue()
+    message_sender_module = importlib.import_module("backend.app.messaging.message_sender")
+    monkeypatch.setattr(message_sender_module, "message_queue", queue)
+    sender = MessageSender()
+
+    ok = sender.send_chat_message("hello", node_name="agent_roleplay")
+
+    assert ok is True
+    messages = queue.get_messages()
+    assert len(messages) == 1
+    assert messages[0]["_channel"] == "agent:chat"
+    assert messages[0]["type"] == "chat"
+    assert messages[0]["node_name"] == "agent_roleplay"
+    assert messages[0]["metadata"]["node_name"] == "agent_roleplay"
+
+
 def test_messages_route_exposes_motion_protocol(client):
     message_queue.add_message(
         {

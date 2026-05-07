@@ -93,6 +93,81 @@ def build_attempt_summary(record: AttemptRecord) -> str:
     return f"{prefix}：执行失败{suffix}。错误摘要：{preview_single_line(failure_text)}"
 
 
+def build_attempt_record_snapshot(
+    *,
+    attempt_number: int,
+    generator: str,
+    repair_round: int,
+    result: CommandResult,
+) -> AttemptRecord:
+    status = "running"
+    if bool(result.get("cancelled")):
+        status = "cancelled"
+    elif bool(result.get("ok")):
+        status = "done"
+    else:
+        status = "failed"
+
+    return {
+        "attempt_number": attempt_number,
+        "generator": generator,
+        "repair_round": repair_round,
+        "status": status,
+        "source_file_name": result.get("source_file_name"),
+        "attempt_file_name": result.get("attempt_file_name"),
+        "script_rel_path": result.get("script_rel_path"),
+        "command": result.get("command"),
+        "cwd": result.get("cwd"),
+        "returncode": result.get("returncode"),
+        "stdout": result.get("stdout"),
+        "stderr": result.get("stderr"),
+        "error": result.get("error"),
+        "started_at": result.get("started_at"),
+        "finished_at": result.get("finished_at"),
+        "duration_ms": result.get("duration_ms"),
+    }
+
+
+def build_repair_retry_feedback_text(
+    *,
+    run_id: str,
+    attempt_summary: str,
+    analysis_note: str | None,
+    next_repair_round: int,
+) -> str:
+    analysis_text = preview_single_line(
+        str(analysis_note or "我已经拿到了这次失败的关键信息。"),
+        limit=200,
+    )
+    lines = [
+        "我先同步一下这次代码任务的进展。",
+        f"run_id: {run_id}",
+        f"当前结果: {attempt_summary}",
+        f"分析: {analysis_text}",
+        f"下一步: 我会继续进行第 {next_repair_round} 轮自动修复，然后再次尝试执行。",
+        f"查看完整结果: GET /runs/{run_id}",
+    ]
+    return "\n".join(lines)
+
+
+def build_retry_outcome_chat_text(
+    *,
+    run_id: str,
+    attempt_summary: str,
+    next_action: str,
+    summary_text: str | None = None,
+) -> str:
+    outcome_text = preview_single_line(summary_text or attempt_summary, limit=220)
+    lines = [
+        "我继续同步一下自动修复后的这轮结果。",
+        f"run_id: {run_id}",
+        f"本轮结果: {outcome_text}",
+        f"下一步: {next_action}",
+        f"查看完整结果: GET /runs/{run_id}",
+    ]
+    return "\n".join(lines)
+
+
 def to_run_attempt_response(record: AttemptRecord) -> RunAttemptResponse:
     stdout_value, stdout_length, stdout_truncated = clip_text(
         str(record.get("stdout")) if record.get("stdout") is not None else None,
@@ -200,6 +275,8 @@ def build_run_summary_text(record: RunRecord) -> str:
 
     if status == "cancelled":
         cancel_preview = preview_single_line(str(record.get("error") or "任务已取消"))
+        if attempt_count == 0:
+            return f"任务已取消，尚未开始执行。说明：{cancel_preview}"
         return (
             f"任务已取消，使用 {generator}，共尝试 {attempt_count} 次，"
             f"自动修复 {repair_count} 次。说明：{cancel_preview}"
@@ -210,6 +287,32 @@ def build_run_summary_text(record: RunRecord) -> str:
         f"任务执行失败，使用 {generator}，共尝试 {attempt_count} 次，"
         f"自动修复 {repair_count} 次。错误摘要：{error_preview}"
     )
+
+
+def build_run_completion_chat_text(
+    record: RunRecord,
+    *,
+    summary_text: str | None = None,
+) -> str:
+    run_id = str(record.get("run_id") or "").strip()
+    status = str(record.get("status") or "queued")
+    status_title = {
+        "done": "代码任务已经完成。",
+        "failed": "代码任务执行失败。",
+        "cancelled": "代码任务已经取消。",
+        "running": "代码任务仍在执行中。",
+        "queued": "代码任务还在排队中。",
+    }.get(status, "代码任务状态已更新。")
+
+    summary = preview_single_line(summary_text or build_run_summary_text(record), limit=240)
+    lines = [status_title]
+    if run_id:
+        lines.append(f"run_id: {run_id}")
+    lines.append(f"状态: {status}")
+    lines.append(f"摘要: {summary}")
+    if run_id:
+        lines.append(f"查看完整结果: GET /runs/{run_id}")
+    return "\n".join(lines)
 
 
 def to_run_summary_response(record: RunRecord) -> RunSummaryResponse:

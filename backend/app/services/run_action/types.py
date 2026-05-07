@@ -25,6 +25,41 @@ class ScriptGenerationResult:
 
 
 @dataclass(slots=True)
+class RepairAssessmentResult:
+    should_attempt_repair: bool
+    reason: str
+    analysis_note: str
+    analysis_source: str = "fallback"
+    failure_summary: str = ""
+
+
+@dataclass(slots=True)
+class RepairDecisionResult(RepairAssessmentResult):
+    pass
+
+
+@dataclass(slots=True)
+class RetryGuidance:
+    node_name: str
+    next_action: str
+
+
+@dataclass(slots=True)
+class RepairWorkflowResult(RepairAssessmentResult):
+    repaired_result: ScriptGenerationResult | None = None
+    feedback_text: str | None = None
+    retry_guidance: RetryGuidance | None = None
+
+    @property
+    def retry_next_action(self) -> str | None:
+        return self.retry_guidance.next_action if self.retry_guidance is not None else None
+
+    @property
+    def retry_node_name(self) -> str | None:
+        return self.retry_guidance.node_name if self.retry_guidance is not None else None
+
+
+@dataclass(slots=True)
 class StartupRecoveryResult:
     checked_at: str
     scanned_count: int

@@ -1,4 +1,5 @@
-from backend.app.llm.client import LLMCallResult
+from backend.app.services.chat_action.types import ChatServiceResult
+from backend.app.storage.conversation_store import ConversationStore
 
 
 def test_chat_response_returns_session_id_when_missing_llm(client):
@@ -13,13 +14,20 @@ def test_chat_response_returns_session_id_when_missing_llm(client):
 def test_chat_session_passes_stored_history_to_next_reply(monkeypatch, client):
     seen_contexts: list[str | None] = []
 
-    async def fake_build_chat_reply(prompt: str, context: str | None):
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
         seen_contexts.append(context)
-        return LLMCallResult(ok=True, output=f"reply to {prompt}")
+        return ChatServiceResult(intent="chat", ok=True, output=f"reply to {prompt}")
 
     monkeypatch.setattr(
-        "backend.app.services.chat_interface.build_chat_reply",
-        fake_build_chat_reply,
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
     )
 
     first_response = client.post("/chat", json={"prompt": "first hello", "context": None})
@@ -42,13 +50,20 @@ def test_chat_session_passes_stored_history_to_next_reply(monkeypatch, client):
 def test_clear_chat_session_endpoint_removes_history(monkeypatch, client):
     seen_contexts: list[str | None] = []
 
-    async def fake_build_chat_reply(prompt: str, context: str | None):
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
         seen_contexts.append(context)
-        return LLMCallResult(ok=True, output=f"reply to {prompt}")
+        return ChatServiceResult(intent="chat", ok=True, output=f"reply to {prompt}")
 
     monkeypatch.setattr(
-        "backend.app.services.chat_interface.build_chat_reply",
-        fake_build_chat_reply,
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
     )
 
     first_response = client.post("/chat", json={"prompt": "remember this", "context": None})
@@ -68,3 +83,31 @@ def test_clear_chat_session_endpoint_removes_history(monkeypatch, client):
 
     assert second_response.status_code == 200
     assert seen_contexts[-1] is None
+
+
+def test_chat_session_history_is_persisted_to_workspace(monkeypatch, client):
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        return ChatServiceResult(intent="chat", ok=True, output=f"reply to {prompt}")
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    response = client.post("/chat", json={"prompt": "persist this", "context": None})
+    assert response.status_code == 200
+    session_id = response.json()["session_id"]
+
+    reloaded_store = ConversationStore()
+    context = reloaded_store.build_context(session_id)
+
+    assert context is not None
+    assert "User: persist this" in context
+    assert "Assistant: reply to persist this" in context

@@ -105,14 +105,21 @@ class MessageSender:
         }
         return self._send_to_frontend('agent:motion', message)
     
-    def send_chat_message(self, content: str, is_partial: bool = False, 
-                         sequence_id: int = 0, total_parts: int = 1, node_name: str = '') -> bool:
+    def send_chat_message(
+        self,
+        content: str,
+        is_partial: bool = False,
+        sequence_id: int = 0,
+        total_parts: int = 1,
+        node_name: str = '',
+    ) -> bool:
         """发送 Chat 消息"""
         message = {
             'type': 'chat',
             'role': 'assistant',
             'content': content,
             'timestamp': self._get_timestamp(),
+            'node_name': node_name or None,
             'metadata': {
                 'is_partial': is_partial,
                 'sequence_id': sequence_id,

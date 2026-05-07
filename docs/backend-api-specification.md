@@ -40,13 +40,14 @@
 
 其中：
 
-- `chat` 会调用 OpenAI-compatible LLM 接口，并复用后端会话记忆。
+- `chat` 会进入最小 LangGraph Agent Brain，由 Chat Node 调用 OpenAI-compatible LLM 接口，并复用后端会话记忆。
 - `coding` 会进入最小 LangGraph Agent Brain，再由 Run Tool Node 创建 run。
 - `unknown` 会返回引导性回复。
 
 说明：
 
-- `coding` 分支已经不再直接走独立占位逻辑，而是通过 `agent_workflow` 进入 `router -> coding_node -> run_tool_node -> roleplay_node`。
+- 普通聊天和 coding 分支都已经不再绕开 `agent_workflow`，而是进入最小 LangGraph 图。
+- 当前主路径分别是 `router -> chat_node -> roleplay_node` 与 `router -> coding_node -> run_tool_node -> roleplay_node`。
 - `/chat` 命中 coding intent 时会返回 `run_id`，并通过 FastAPI 后台任务触发 `execute_run`。
 - 当前实现是最小 LangGraph Agent Brain，不等同于完整的多 Agent 公司化协同系统。
 - `agent_workflow` 通过 lazy import 暴露，缺少依赖时不会阻塞主服务启动。
@@ -214,6 +215,7 @@
 - 请求中的 `context` 仍然保留，用于兼容当前前端传入的临时上下文。
 - 当 `intent` 为 `coding` 时，`run_id` 会返回本次创建的任务 ID；普通聊天和 unknown intent 通常为 `null`。
 - coding 任务的执行状态继续通过 `GET /runs/{run_id}`、`GET /runs/{run_id}/attempts` 和 `GET /messages` 查询。
+- 对于直接通过 `/chat` 返回的聊天正文，后端不会再额外向消息队列重复写入同一条 `agent:chat`，以避免聊天窗口重复显示。
 
 ### 3.4 `DELETE /chat/sessions/{session_id}`
 

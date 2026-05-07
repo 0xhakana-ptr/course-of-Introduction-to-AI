@@ -13,3 +13,25 @@ def test_agent_graph_routes_coding_intent_to_run_tool():
     run = get_run(str(result["run_id"]))
     assert run is not None
     assert run.status == "queued"
+
+
+def test_agent_graph_routes_chat_intent_to_llm(monkeypatch):
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.call_llm_sync",
+        lambda prompt, context: type(
+            "FakeLLMResult",
+            (),
+            {
+                "ok": True,
+                "output": f"reply to {prompt}",
+                "error": None,
+            },
+        )(),
+    )
+
+    result = run_agent("hello", "ctx", intent="chat", emit_chat_message=False)
+
+    assert result["ok"] is True
+    assert result["intent"] == "chat"
+    assert result["output"] == "reply to hello"
+    assert result["run_id"] is None

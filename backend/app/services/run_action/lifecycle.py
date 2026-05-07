@@ -1,7 +1,9 @@
 import logging
 
 from ...core.config import settings
+from ...agent_workflow.roleplay import emit_roleplay_chat
 from ...llm.client import llm_is_configured
+from ...messaging.message_sender import message_sender
 from ...schemas import RunResponse
 from ..character_interface import (
     send_task_cancelled,
@@ -15,19 +17,46 @@ from .codegen import choose_demo_script, generate_script_with_llm, preview_text
 from .control import is_run_cancel_requested
 from .execution import append_execution_logs
 from .formatters import (
+    build_attempt_record_snapshot,
+    build_attempt_summary,
     build_cancelled_output,
+    build_run_completion_chat_text,
+    build_retry_outcome_chat_text,
     build_failure_output,
     build_success_output,
     to_run_response,
 )
 from .types import (
     CommandResult,
+    RunRecord,
     RunExecutionState,
+    RetryGuidance,
     ScriptGenerationResult,
 )
 
 
 logger = logging.getLogger(__name__)
+
+
+def emit_final_run_chat_message(record: RunRecord, *, node_name: str) -> None:
+    try:
+        from ...agent_workflow.run_summary_graph import summarize_run_record
+
+        summarize_run_record(
+            record,
+            node_name=node_name,
+            emit_chat_message=True,
+        )
+    except Exception:
+        logger.exception(
+            "Run summary graph failed; falling back to direct summary message: run_id=%s",
+            record.get("run_id"),
+        )
+        message_sender.send_chat_message(
+            content=build_run_completion_chat_text(record),
+            is_partial=False,
+            node_name=node_name,
+        )
 
 
 def missing_llm_result() -> ScriptGenerationResult:
@@ -149,17 +178,117 @@ def record_attempt_result(run_id: str, state: RunExecutionState, result: Command
     state.last_result = result
 
 
-def can_attempt_repair(state: RunExecutionState) -> bool:
-    return llm_is_configured() and state.repair_count < settings.run_repair_max_attempts
+def append_repair_analysis_log(
+    run_id: str,
+    analysis_note: str | None,
+    *,
+    analysis_source: str | None = None,
+) -> None:
+    if not analysis_note:
+        return
+    source = analysis_source or "fallback"
+    append_run_log(run_id, f"Repair analysis ({source}): {preview_text(analysis_note)}")
 
 
-def mark_repair_requested(run_id: str, state: RunExecutionState) -> None:
+def emit_repair_feedback_message(content: str | None, *, node_name: str = "task_repairing") -> None:
+    emit_roleplay_chat(
+        content or "",
+        node_name=node_name,
+        emit_chat_message=True,
+    )
+
+
+def is_repair_attempt(state: RunExecutionState) -> bool:
+    return state.current_generator == "llm_repair"
+
+
+def build_retry_attempt_summary(
+    *,
+    state: RunExecutionState,
+    result: CommandResult,
+) -> str:
+    attempt_record = build_attempt_record_snapshot(
+        attempt_number=state.attempt_count,
+        generator=state.current_generator,
+        repair_round=state.repair_count,
+        result=result,
+    )
+    return build_attempt_summary(attempt_record)
+
+
+def maybe_emit_retry_outcome_for_repair_attempt(
+    *,
+    run_id: str,
+    state: RunExecutionState,
+    result: CommandResult,
+    guidance: RetryGuidance,
+) -> None:
+    if not is_repair_attempt(state):
+        return
+
+    emit_retry_outcome_message(
+        run_id=run_id,
+        attempt_summary=build_retry_attempt_summary(state=state, result=result),
+        next_action=guidance.next_action,
+        node_name=guidance.node_name,
+    )
+
+
+def emit_retry_outcome_message(
+    *,
+    run_id: str,
+    attempt_summary: str,
+    next_action: str,
+    node_name: str,
+) -> None:
+    try:
+        from ...agent_workflow.attempt_summary_graph import summarize_retry_outcome
+
+        summarize_retry_outcome(
+            run_id=run_id,
+            attempt_summary=attempt_summary,
+            next_action=next_action,
+            node_name=node_name,
+            emit_chat_message=True,
+        )
+    except Exception:
+        logger.exception(
+            "Attempt summary graph failed; falling back to direct retry outcome message: run_id=%s",
+            run_id,
+        )
+        emit_roleplay_chat(
+            build_retry_outcome_chat_text(
+                run_id=run_id,
+                attempt_summary=attempt_summary,
+                next_action=next_action,
+            ),
+            node_name=node_name,
+            emit_chat_message=True,
+        )
+
+
+def repair_llm_is_available() -> bool:
+    return llm_is_configured()
+
+
+def mark_repair_requested(
+    run_id: str,
+    state: RunExecutionState,
+    *,
+    analysis_note: str | None = None,
+    analysis_source: str | None = None,
+) -> None:
     state.repair_attempted = True
     state.repair_count += 1
     update_run_record(
         run_id,
         repair_attempted=state.repair_attempted,
         repair_count=state.repair_count,
+    )
+    append_repair_analysis_log(
+        run_id,
+        analysis_note,
+        analysis_source=analysis_source,
     )
     append_run_log(
         run_id,
@@ -177,18 +306,32 @@ def mark_repair_requested(run_id: str, state: RunExecutionState) -> None:
     send_task_repairing()
 
 
-def block_repair(run_id: str, state: RunExecutionState) -> str:
-    if not llm_is_configured():
-        note = "未配置真实大模型，无法自动修复失败脚本。"
-    elif state.repair_count >= settings.run_repair_max_attempts:
-        note = "已达到自动修复最大次数限制。"
-    else:
-        note = "当前运行不满足自动修复条件。"
+def block_repair(
+    run_id: str,
+    state: RunExecutionState,
+    *,
+    note: str | None = None,
+    analysis_note: str | None = None,
+    analysis_source: str | None = None,
+) -> str:
+    resolved_note = note
+    if resolved_note is None:
+        if not llm_is_configured():
+            resolved_note = "未配置真实大模型，无法自动修复失败脚本。"
+        elif state.repair_count >= settings.run_repair_max_attempts:
+            resolved_note = "已达到自动修复最大次数限制。"
+        else:
+            resolved_note = "当前运行不满足自动修复条件。"
 
-    state.repair_note = note
-    append_run_log(run_id, note)
-    logger.warning("Run repair blocked: run_id=%s reason=%s", run_id, note)
-    return note
+    state.repair_note = resolved_note
+    append_repair_analysis_log(
+        run_id,
+        analysis_note,
+        analysis_source=analysis_source,
+    )
+    append_run_log(run_id, resolved_note)
+    logger.warning("Run repair blocked: run_id=%s reason=%s", run_id, resolved_note)
+    return resolved_note
 
 
 def apply_repaired_script(
@@ -255,6 +398,7 @@ def finalize_success(run_id: str, state: RunExecutionState, result: CommandResul
         log_path=state.log_path,
         artifacts=state.artifacts,
     )
+    emit_final_run_chat_message(final_record, node_name="task_done")
     return to_run_response(final_record)
 
 
@@ -297,6 +441,7 @@ def finalize_failure(run_id: str, state: RunExecutionState, result: CommandResul
         log_path=state.log_path,
         artifacts=state.artifacts,
     )
+    emit_final_run_chat_message(final_record, node_name="task_failed")
     return to_run_response(final_record)
 
 
@@ -350,6 +495,7 @@ def finalize_cancelled(
         log_path=state.log_path,
         artifacts=state.artifacts,
     )
+    emit_final_run_chat_message(final_record, node_name="task_cancelled")
     return to_run_response(final_record)
 
 
@@ -357,18 +503,18 @@ def finalize_exception(run_id: str, state: RunExecutionState, exc: Exception) ->
     append_run_log(run_id, f"Unhandled exception: {exc}")
     send_task_failed()
     logger.exception("Unhandled run exception: run_id=%s", run_id)
-    return to_run_response(
-        update_run_record(
-            run_id,
-            status="failed",
-            generator=state.current_generator,
-            attempt_count=state.attempt_count,
-            repair_attempted=state.repair_attempted,
-            repair_count=state.repair_count,
-            finished_at=utc_now_iso(),
-            output=f"任务执行过程中发生未处理异常：{exc}",
-            error=str(exc),
-            log_path=state.log_path,
-            artifacts=state.artifacts,
-        )
+    final_record = update_run_record(
+        run_id,
+        status="failed",
+        generator=state.current_generator,
+        attempt_count=state.attempt_count,
+        repair_attempted=state.repair_attempted,
+        repair_count=state.repair_count,
+        finished_at=utc_now_iso(),
+        output=f"任务执行过程中发生未处理异常：{exc}",
+        error=str(exc),
+        log_path=state.log_path,
+        artifacts=state.artifacts,
     )
+    emit_final_run_chat_message(final_record, node_name="task_failed")
+    return to_run_response(final_record)

@@ -150,6 +150,16 @@ def test_run_failure_without_llm_records_non_repairable_result(client):
     assert "未配置真实大模型，无法自动修复失败脚本。" in log_payload["content"]
     assert "Run failed." in log_payload["content"]
 
+    messages_response = client.get("/messages")
+    assert messages_response.status_code == 200
+    messages = messages_response.json()["messages"]
+    chat_messages = [message for message in messages if message["type"] == "chat"]
+
+    assert len(chat_messages) == 1
+    assert chat_messages[0]["node_name"] == "task_failed"
+    assert run.run_id in chat_messages[0]["content"]
+    assert "状态: failed" in chat_messages[0]["content"]
+
 
 def test_run_repair_flow_can_succeed_after_initial_failure(monkeypatch, client):
     monkeypatch.setattr(
@@ -164,7 +174,7 @@ def test_run_repair_flow_can_succeed_after_initial_failure(monkeypatch, client):
         ),
     )
     monkeypatch.setattr(
-        "backend.app.services.run_interface.generate_repaired_script_with_llm",
+        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
         lambda **kwargs: ScriptGenerationResult(
             ok=True,
             file_name="repaired_demo.py",
@@ -214,6 +224,19 @@ def test_run_repair_flow_can_succeed_after_initial_failure(monkeypatch, client):
     assert "Requesting LLM repair 1/1." in log_payload["content"]
     assert "Using LLM-repaired Python script for the next attempt." in log_payload["content"]
 
+    messages_response = client.get("/messages")
+    assert messages_response.status_code == 200
+    messages = messages_response.json()["messages"]
+    chat_messages = [message for message in messages if message["type"] == "chat"]
+
+    assert len(chat_messages) == 3
+    assert chat_messages[0]["node_name"] == "task_repairing"
+    assert run.run_id in chat_messages[0]["content"]
+    assert "下一步:" in chat_messages[0]["content"]
+    assert chat_messages[1]["node_name"] == "task_retry_done"
+    assert "本轮结果:" in chat_messages[1]["content"]
+    assert chat_messages[2]["node_name"] == "task_done"
+
 
 def test_run_repair_flow_fails_when_repaired_script_is_unusable(monkeypatch, client):
     monkeypatch.setattr(
@@ -228,7 +251,7 @@ def test_run_repair_flow_fails_when_repaired_script_is_unusable(monkeypatch, cli
         ),
     )
     monkeypatch.setattr(
-        "backend.app.services.run_interface.generate_repaired_script_with_llm",
+        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
         lambda **kwargs: ScriptGenerationResult(
             ok=False,
             error="simulated repair parse failure",
@@ -262,6 +285,102 @@ def test_run_repair_flow_fails_when_repaired_script_is_unusable(monkeypatch, cli
     assert "simulated repair parse failure" in log_payload["content"]
     assert "LLM repair raw preview: repair raw output that cannot be parsed" in log_payload["content"]
     assert "Run failed." in log_payload["content"]
+
+
+def test_run_repair_retry_failure_emits_retry_outcome_before_final_failure(
+    monkeypatch,
+    client,
+):
+    monkeypatch.setattr(
+        "backend.app.services.run_action.lifecycle.llm_is_configured",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_action.lifecycle.generate_script_with_llm",
+        lambda prompt, context: ScriptGenerationResult(
+            ok=False,
+            error="simulated initial generation failure",
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
+        lambda **kwargs: ScriptGenerationResult(
+            ok=True,
+            file_name="repaired_but_still_broken.py",
+            script_content='print("retry still fails")\nraise RuntimeError("retry failure")\n',
+            raw_output=(
+                "FILENAME: repaired_but_still_broken.py\n"
+                '```python\nprint("retry still fails")\nraise RuntimeError("retry failure")\n```'
+            ),
+        ),
+    )
+
+    run = create_run("please run a broken fail demo", None)
+
+    executed = execute_run(run.run_id)
+
+    assert executed is not None
+    assert executed.status == "failed"
+    assert executed.generator == "llm_repair"
+    assert executed.attempt_count == 2
+    assert executed.repair_attempted is True
+    assert executed.repair_count == 1
+
+    messages_response = client.get("/messages")
+    assert messages_response.status_code == 200
+    messages = messages_response.json()["messages"]
+    chat_messages = [message for message in messages if message["type"] == "chat"]
+
+    assert len(chat_messages) == 3
+    assert chat_messages[0]["node_name"] == "task_repairing"
+    assert chat_messages[1]["node_name"] == "task_retry_failed"
+    assert "下一步:" in chat_messages[1]["content"]
+    assert chat_messages[2]["node_name"] == "task_failed"
+
+
+def test_run_service_respects_repair_decision_graph(monkeypatch, client):
+    monkeypatch.setattr(
+        "backend.app.services.run_interface.repair_llm_is_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_action.lifecycle.generate_script_with_llm",
+        lambda prompt, context: ScriptGenerationResult(
+            ok=False,
+            error="simulated initial generation failure",
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.app.services.run_interface.run_repair_workflow",
+        lambda **kwargs: type(
+            "FakeRepairWorkflow",
+            (),
+            {
+                "should_attempt_repair": False,
+                "reason": "模拟的 QA 决策：本次失败不进入自动修复。",
+                "analysis_note": "检测到这是一个受控失败场景，直接结束更合适。",
+                "analysis_source": "test",
+                "failure_summary": "simulated failure summary",
+                "repaired_result": None,
+            },
+        )(),
+    )
+
+    run = create_run("please run a broken fail demo", None)
+
+    executed = execute_run(run.run_id)
+
+    assert executed is not None
+    assert executed.status == "failed"
+    assert executed.repair_attempted is False
+    assert executed.repair_count == 0
+    assert "模拟的 QA 决策：本次失败不进入自动修复。" in executed.output
+
+    log_response = client.get(f"/runs/{run.run_id}/logs")
+    assert log_response.status_code == 200
+    log_payload = log_response.json()
+    assert "Repair analysis (test):" in log_payload["content"]
+    assert "模拟的 QA 决策：本次失败不进入自动修复。" in log_payload["content"]
 
 
 def test_retry_route_creates_follow_up_run_for_failed_source(client):
@@ -392,6 +511,16 @@ def test_cancel_route_can_stop_running_run(monkeypatch, client):
     log_payload = log_response.json()
     assert "Cancellation requested during execution." in log_payload["content"]
     assert "Run cancelled." in log_payload["content"]
+
+    messages_response = client.get("/messages")
+    assert messages_response.status_code == 200
+    messages = messages_response.json()["messages"]
+    chat_messages = [message for message in messages if message["type"] == "chat"]
+
+    assert len(chat_messages) == 1
+    assert chat_messages[0]["node_name"] == "task_cancelled"
+    assert run.run_id in chat_messages[0]["content"]
+    assert "状态: cancelled" in chat_messages[0]["content"]
 
 
 def test_cancel_route_rejects_finished_run(client):
