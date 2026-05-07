@@ -10,6 +10,7 @@ from .message_queue import message_queue
 from .schemas import (
     ATTEMPT_OUTPUT_STREAM,
     ClearMessagesResponse,
+    ClearConversationResponse,
     ChatRequest,
     ChatResponse,
     LLMDiagnosticsResponse,
@@ -42,6 +43,7 @@ from .services.run_interface import (
     rerun_run,
     retry_run,
 )
+from .storage.conversation_store import conversation_store
 
 
 configure_logging()
@@ -117,16 +119,37 @@ async def llm_diagnostics_route(
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, background_tasks: BackgroundTasks):
     prompt = req.prompt.strip()
     context = (req.context or "").strip() or None
 
-    result = await generate_chat_response(prompt, context)
+    def schedule_run_execution(run_id: str) -> None:
+        background_tasks.add_task(execute_run, run_id)
+
+    result = await generate_chat_response(
+        prompt,
+        context,
+        req.session_id,
+        schedule_run=schedule_run_execution,
+    )
     return ChatResponse(
         ok=result.ok,
         intent=result.intent,
         output=result.output,
         error=result.error,
+        session_id=result.session_id,
+        run_id=result.run_id,
+    )
+
+
+@app.delete("/chat/sessions/{session_id}", response_model=ClearConversationResponse)
+async def clear_chat_session(session_id: str):
+    cleared = conversation_store.clear_session(session_id)
+    return ClearConversationResponse(
+        ok=True,
+        session_id=session_id,
+        cleared=cleared,
+        message="会话已清空。" if cleared else "会话不存在或已清空。",
     )
 
 

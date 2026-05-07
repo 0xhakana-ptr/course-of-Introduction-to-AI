@@ -7,6 +7,15 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(BACKEND_ROOT / ".env")
 
 
+DEFAULT_LLM_SYSTEM_PROMPT = """
+你是一个运行在 Live2D 桌宠中的 AI 伙伴。
+请优先使用自然、清楚、友好的中文回答。
+你可以有轻松的语气，但专业问题要认真、准确、分步骤说明。
+不要假装已经执行了你没有执行的操作。
+如果用户提出代码或工具任务，可以说明将通过后端任务流程处理。
+""".strip()
+
+
 class Settings:
     def __init__(self) -> None:
         backend_root = BACKEND_ROOT
@@ -24,7 +33,7 @@ class Settings:
         self.llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini").strip()
         self.llm_system_prompt = os.getenv(
             "LLM_SYSTEM_PROMPT",
-            "You are a helpful AI assistant for an educational desktop AI project.",
+            DEFAULT_LLM_SYSTEM_PROMPT,
         ).strip()
 
         llm_timeout_raw = os.getenv("LLM_TIMEOUT_SECONDS", "30").strip()
@@ -46,6 +55,16 @@ class Settings:
         repair_attempts_raw = os.getenv("RUN_REPAIR_MAX_ATTEMPTS", "1").strip()
         self.run_repair_max_attempts = (
             int(repair_attempts_raw) if repair_attempts_raw.isdigit() else 1
+        )
+
+        history_max_raw = os.getenv("CONVERSATION_HISTORY_MAX_MESSAGES", "20").strip()
+        self.conversation_history_max_messages = (
+            int(history_max_raw) if history_max_raw.isdigit() else 20
+        )
+
+        chat_context_max_raw = os.getenv("CHAT_CONTEXT_MAX_CHARS", "6000").strip()
+        self.chat_context_max_chars = (
+            int(chat_context_max_raw) if chat_context_max_raw.isdigit() else 6000
         )
 
 

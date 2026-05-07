@@ -17,7 +17,7 @@
 - pnpm
 - Windows / macOS / Linux（Electron）
 - uv（用于管理 Python 环境和后端依赖）
-- Python（建议 3.11+，用于后端 AI agent）
+- Python（后端推荐 3.11，3.12 也可）
 
 ## 快速开始
 
@@ -301,11 +301,18 @@ value 也支持简写：
 本项目使用 `uv` 管理 Python 后端环境。最小启动流程如下：
 
 ```powershell
-# 版本可自选，推荐 3.11+
+# 推荐正式切到 3.11；如果你更想用 3.12，把下面的 3.11 改成 3.12 即可
 uv python install 3.11
+if (Test-Path .venv) { Remove-Item -Recurse -Force .venv }
 uv venv --python 3.11 .venv
 uv pip install -r backend/requirements.txt
 uv run uvicorn backend.app.main:app --reload --port 8000
+```
+
+如果你只是想先验证后端在推荐版本下是否正常，也可以不重建 `.venv`，直接运行：
+
+```powershell
+uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
 ```
 
 然后在启动 Electron 前设置环境变量 `AI_AGENT_ENDPOINT` 指向你的 HTTP 服务：

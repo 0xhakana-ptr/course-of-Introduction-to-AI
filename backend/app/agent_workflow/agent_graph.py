@@ -1,211 +1,191 @@
-from typing import TypedDict, Annotated, Sequence
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_openai import ChatOpenAI
+from typing import TypedDict
 
+from langgraph.graph import END, StateGraph
+
+from ..llm.client import call_llm_sync
 from ..messaging.message_sender import message_sender
-from .node_mappings import get_node_quip_and_expression, should_send_chat_message
-from ..core.config import settings
+from ..schemas import INTENT_TYPE
+from ..services.chat_action.intent import detect_intent
+from ..services.run_interface import create_run
 
 
-class AgentState(TypedDict):
-    """Agent 状态定义"""
-    messages: Annotated[Sequence[BaseMessage], "消息历史"]
-    current_node: str
+class AgentState(TypedDict, total=False):
+    user_input: str
+    context: str | None
+    session_id: str | None
+    intent: INTENT_TYPE
     output: str
     error: str | None
+    run_id: str | None
+    run_status: str | None
+    ui_status: str | None
 
 
-def on_node_change(node_name: str):
-    """LangGraph 节点切换时的回调
-    
-    Args:
-        node_name: 新节点名称
-    """
-    # 获取节点对应的 Quip 和表情
-    quip_content, expression = get_node_quip_and_expression(node_name)
-    
-    # 发送 Quip
-    message_sender.send_quip(
-        content=quip_content,
-        node_name=node_name,
-        priority='medium',
-        duration=3000
-    )
-    
-    # 发送表情
-    message_sender.send_expression(
-        expression=expression,
-        node_name=node_name,
-        intensity=0.8,
-        duration=5000,
-        transition='smooth'
-    )
+def router_node(state: AgentState) -> AgentState:
+    prompt = state.get("user_input", "")
+    intent = state.get("intent") or detect_intent(prompt)
+    return {
+        **state,
+        "intent": intent,
+        "ui_status": "routed",
+    }
 
 
-def create_llm():
-    """创建 LLM 实例"""
-    if not settings.llm_base_url or not settings.llm_api_key:
-        return None
-    return ChatOpenAI(
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        model=settings.llm_model,
-        temperature=0.3
-    )
+def route_by_intent(state: AgentState) -> str:
+    intent = state.get("intent")
+    if intent == "coding":
+        return "coding_node"
+    if intent == "chat":
+        return "chat_node"
+    return "unknown_node"
 
 
-# ========== LangGraph 节点定义 ==========
-
-def start_node(state: AgentState) -> AgentState:
-    """开始节点"""
-    on_node_change('start')
-    message_sender.send_status('running', progress=0, node_name='start')
-    
-    return {**state, 'current_node': 'start'}
-
-
-def planning_node(state: AgentState) -> AgentState:
-    """规划节点"""
-    on_node_change('planning')
-    message_sender.send_status('running', progress=10, node_name='planning')
-    
-    return {**state, 'current_node': 'planning'}
+def chat_node(state: AgentState) -> AgentState:
+    prompt = state.get("user_input", "")
+    result = call_llm_sync(prompt, state.get("context"))
+    return {
+        **state,
+        "output": result.output,
+        "error": result.error if not result.ok else None,
+        "ui_status": "chat_done" if result.ok else "chat_failed",
+    }
 
 
 def coding_node(state: AgentState) -> AgentState:
-    """代码生成节点"""
-    on_node_change('coding')
-    message_sender.send_status('running', progress=30, node_name='coding')
-    
-    return {**state, 'current_node': 'coding'}
+    return {
+        **state,
+        "ui_status": "coding_requested",
+    }
 
 
-def executing_node(state: AgentState) -> AgentState:
-    """执行节点"""
-    on_node_change('executing')
-    message_sender.send_status('running', progress=60, node_name='executing')
-    
-    return {**state, 'current_node': 'executing'}
+def run_tool_node(state: AgentState) -> AgentState:
+    try:
+        run = create_run(
+            prompt=state.get("user_input", ""),
+            context=state.get("context"),
+        )
+    except Exception as exc:
+        return {
+            **state,
+            "output": f"代码任务创建失败：{exc}",
+            "error": str(exc),
+            "ui_status": "run_create_failed",
+        }
+
+    output = (
+        "已通过 LangGraph 创建代码任务，并交给 `/runs` 链路处理。\n\n"
+        f"run_id: {run.run_id}\n"
+        f"status: {run.status}\n\n"
+        f"你可以通过 `GET /runs/{run.run_id}` 查询任务状态，"
+        "也可以通过 `/messages` 接收桌宠状态反馈。"
+    )
+    return {
+        **state,
+        "output": output,
+        "run_id": run.run_id,
+        "run_status": run.status,
+        "error": None,
+        "ui_status": "run_queued",
+    }
 
 
-def analyzing_node(state: AgentState) -> AgentState:
-    """分析节点"""
-    on_node_change('analyzing')
-    message_sender.send_status('running', progress=80, node_name='analyzing')
-    
-    return {**state, 'current_node': 'analyzing'}
+def unknown_node(state: AgentState) -> AgentState:
+    prompt = state.get("user_input", "")
+    return {
+        **state,
+        "output": (
+            "抱歉，我暂时还不能很好地判断你的意图。\n\n"
+            f"你输入的内容是：{prompt}\n\n"
+            "你可以继续补充信息，或者明确说明你是想聊天还是想让我帮你处理代码任务。"
+        ),
+        "error": None,
+        "ui_status": "unknown_done",
+    }
 
 
-def done_node(state: AgentState) -> AgentState:
-    """完成节点"""
-    on_node_change('done')
-    message_sender.send_status('done', progress=100, node_name='done')
-    
-    # 发送最终结果到聊天窗口
-    output = state.get('output', '任务执行成功')
-    if should_send_chat_message(output, 'done'):
+def roleplay_node(state: AgentState) -> AgentState:
+    output = (state.get("output") or "").strip()
+    if output:
         message_sender.send_chat_message(
             content=output,
             is_partial=False,
-            node_name='done'
+            node_name="agent_roleplay",
         )
-    
-    return {**state, 'current_node': 'done'}
+    return state
 
-
-def error_node(state: AgentState) -> AgentState:
-    """错误节点"""
-    on_node_change('error')
-    message_sender.send_status('error', node_name='error')
-    
-    # 发送错误消息到聊天窗口
-    error_msg = state.get('error', '未知错误')
-    message_sender.send_error(
-        code='EXECUTION_FAILED',
-        message=error_msg,
-        node_name='error'
-    )
-    
-    return {**state, 'current_node': 'error'}
-
-
-# ========== 构建图 ==========
 
 def create_agent_graph():
-    """创建 Agent 图"""
     workflow = StateGraph(AgentState)
-    
-    # 添加节点
-    workflow.add_node("start", start_node)
-    workflow.add_node("planning", planning_node)
-    workflow.add_node("coding", coding_node)
-    workflow.add_node("executing", executing_node)
-    workflow.add_node("analyzing", analyzing_node)
-    workflow.add_node("done", done_node)
-    workflow.add_node("error", error_node)
-    
-    # 设置入口点
-    workflow.set_entry_point("start")
-    
-    # 添加边
-    workflow.add_edge("start", "planning")
-    workflow.add_edge("planning", "coding")
-    workflow.add_edge("coding", "executing")
-    workflow.add_edge("executing", "analyzing")
-    
-    # 条件边：根据分析结果决定是完成还是出错
-    def decide_next(state: AgentState) -> str:
-        if state.get('error'):
-            return "error"
-        return "done"
-    
+
+    workflow.add_node("router", router_node)
+    workflow.add_node("chat_node", chat_node)
+    workflow.add_node("coding_node", coding_node)
+    workflow.add_node("run_tool_node", run_tool_node)
+    workflow.add_node("unknown_node", unknown_node)
+    workflow.add_node("roleplay_node", roleplay_node)
+
+    workflow.set_entry_point("router")
     workflow.add_conditional_edges(
-        "analyzing",
-        decide_next,
+        "router",
+        route_by_intent,
         {
-            "done": "done",
-            "error": "error"
-        }
+            "chat_node": "chat_node",
+            "coding_node": "coding_node",
+            "unknown_node": "unknown_node",
+        },
     )
-    
-    workflow.add_edge("done", END)
-    workflow.add_edge("error", END)
-    
+    workflow.add_edge("chat_node", "roleplay_node")
+    workflow.add_edge("coding_node", "run_tool_node")
+    workflow.add_edge("run_tool_node", "roleplay_node")
+    workflow.add_edge("unknown_node", "roleplay_node")
+    workflow.add_edge("roleplay_node", END)
+
     return workflow.compile()
 
 
-# 全局图实例
 agent_graph = create_agent_graph()
 
 
-def run_agent(prompt: str, context: str | None = None) -> dict:
-    """运行 Agent
-    
-    Args:
-        prompt: 用户输入
-        context: 上下文
-        
-    Returns:
-        执行结果
-    """
+def run_agent(
+    prompt: str,
+    context: str | None = None,
+    *,
+    session_id: str | None = None,
+    intent: INTENT_TYPE | None = None,
+) -> dict[str, object]:
     initial_state: AgentState = {
-        'messages': [HumanMessage(content=prompt)],
-        'current_node': '',
-        'output': '',
-        'error': None
+        "user_input": prompt,
+        "context": context,
+        "session_id": session_id,
+        "output": "",
+        "error": None,
+        "run_id": None,
+        "run_status": None,
+        "ui_status": None,
     }
-    
+    if intent is not None:
+        initial_state["intent"] = intent
+
     try:
         result = agent_graph.invoke(initial_state)
+    except Exception as exc:
         return {
-            'ok': True,
-            'output': result.get('output', ''),
-            'state': result
+            "ok": False,
+            "intent": intent or "unknown",
+            "output": f"Agent 工作流执行失败：{exc}",
+            "error": str(exc),
+            "run_id": None,
+            "state": initial_state,
         }
-    except Exception as e:
-        return {
-            'ok': False,
-            'output': f'执行失败: {str(e)}',
-            'error': str(e)
-        }
+
+    error = result.get("error")
+    return {
+        "ok": error is None,
+        "intent": result.get("intent", intent or "unknown"),
+        "output": result.get("output", ""),
+        "error": error,
+        "run_id": result.get("run_id"),
+        "run_status": result.get("run_status"),
+        "ui_status": result.get("ui_status"),
+        "state": result,
+    }

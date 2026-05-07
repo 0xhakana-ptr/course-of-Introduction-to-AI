@@ -3,6 +3,13 @@ import logging
 from ...core.config import settings
 from ...llm.client import llm_is_configured
 from ...schemas import RunResponse
+from ..character_interface import (
+    send_task_cancelled,
+    send_task_done,
+    send_task_failed,
+    send_task_repairing,
+    send_task_started,
+)
 from ...storage.run_store import append_run_log, update_run_record, utc_now_iso
 from .codegen import choose_demo_script, generate_script_with_llm, preview_text
 from .control import is_run_cancel_requested
@@ -54,6 +61,7 @@ def mark_run_started(run_id: str, log_path: str) -> None:
     )
     logger.info("Run started: run_id=%s", run_id)
     append_run_log(run_id, "Status updated to running.")
+    send_task_started()
 
 
 def resolve_initial_script(run_id: str, prompt: str, context: str | None) -> tuple[str, str, str]:
@@ -166,6 +174,7 @@ def mark_repair_requested(run_id: str, state: RunExecutionState) -> None:
         state.attempt_count,
         state.repair_count,
     )
+    send_task_repairing()
 
 
 def block_repair(run_id: str, state: RunExecutionState) -> str:
@@ -215,6 +224,7 @@ def apply_repaired_script(
 
 def finalize_success(run_id: str, state: RunExecutionState, result: CommandResult) -> RunResponse:
     append_run_log(run_id, "Run finished successfully.")
+    send_task_done()
     logger.info(
         "Run finished successfully: run_id=%s attempts=%s repairs=%s",
         run_id,
@@ -250,6 +260,7 @@ def finalize_success(run_id: str, state: RunExecutionState, result: CommandResul
 
 def finalize_failure(run_id: str, state: RunExecutionState, result: CommandResult) -> RunResponse:
     append_run_log(run_id, "Run failed.")
+    send_task_failed()
     logger.warning(
         "Run finished with failure: run_id=%s attempts=%s repairs=%s",
         run_id,
@@ -297,6 +308,7 @@ def finalize_cancelled(
     reason: str = "用户取消了当前任务。",
 ) -> RunResponse:
     append_run_log(run_id, f"Run cancelled. reason={reason}")
+    send_task_cancelled()
     logger.warning(
         "Run cancelled: run_id=%s attempts=%s repairs=%s reason=%s",
         run_id,
@@ -343,6 +355,7 @@ def finalize_cancelled(
 
 def finalize_exception(run_id: str, state: RunExecutionState, exc: Exception) -> RunResponse:
     append_run_log(run_id, f"Unhandled exception: {exc}")
+    send_task_failed()
     logger.exception("Unhandled run exception: run_id=%s", run_id)
     return to_run_response(
         update_run_record(

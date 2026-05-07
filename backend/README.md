@@ -6,16 +6,19 @@
 
 **下面所有命令都默认在项目根目录执行**。
 
-`Python 3.10+` 即可运行；为了后续继续扩展 Agent 相关能力，推荐优先使用 **Python 3.11**。
+当前后端**推荐使用 `Python 3.11`**；`Python 3.12` 也可以。
+
+暂时**不建议使用 `Python 3.14`** 作为这个项目的后端运行环境，因为当前 `LangGraph` 相关依赖链在更高版本 Python 下可能出现兼容性问题。
 
 ## 0. 当前状态速览
 
 当前后端已经不是单一演示入口，而是具备以下主线能力：
 
-- `chat` 链路：支持普通聊天、测试命令和实验性的 coding 桥接
+- `chat` 链路：支持普通聊天、测试命令和通过 LangGraph 进入 `/runs` 的 coding intent
 - `runs` 链路：支持创建、执行、自动修复、日志查询、尝试记录查询
 - `messages` 链路：支持统一消息格式与增量轮询
 - `llm` 链路：支持 OpenAI-compatible 主模型和 fallback 模型
+- `agent_workflow` 链路：提供最小 LangGraph Agent Brain，用于组织 coding intent 和工具调用
 - `safe tools`：对文件读写和命令执行做了 workspace 边界与危险命令拦截
 
 当前服务结构已经整理为“接口层 + 动作层”：
@@ -24,6 +27,7 @@
 - `backend/app/services/chat_action/`
 - `backend/app/services/run_interface.py`
 - `backend/app/services/run_action/`
+- `backend/app/agent_workflow/`
 
 当前后端已具备自动化测试护栏，覆盖方向包括：
 
@@ -71,7 +75,13 @@ uv python list
 uv python install 3.11
 ```
 
-如果你已经有可用的 `Python 3.10+`，`uv` 也会自动复用它。
+如果你更想使用 `3.12`，也可以：
+
+```bash
+uv python install 3.12
+```
+
+如果你已经有可用的 `Python 3.11` 或 `3.12`，`uv` 也会自动复用它。
 
 ## 3. 创建虚拟环境
 
@@ -87,7 +97,28 @@ uv venv --python 3.11
 uv venv --python 3.11 .venv
 ```
 
-如果已经提前装好了其他的不低于 `3.10` 的版本也可使用。
+如果你想用 `3.12`，把上面的 `3.11` 改成 `3.12` 即可。
+
+### 3.1 从当前环境切换到 Python 3.11
+
+如果你当前项目的 `.venv` 是用 `Python 3.14` 或其他不推荐版本创建的，建议直接重建这个项目的虚拟环境。
+
+如果你当前终端已经激活了 `.venv`，先关闭这个终端，重新开一个新的 PowerShell，再执行：
+
+```powershell
+uv python install 3.11
+if (Test-Path .venv) { Remove-Item -Recurse -Force .venv }
+uv venv --python 3.11 .venv
+uv pip install -r backend/requirements.txt
+```
+
+如果你想改成 `Python 3.12`，把上面的 `3.11` 替换成 `3.12` 即可。
+
+如果你只是想**先验证**后端在推荐版本下是否正常，而不立刻重建 `.venv`，可以先直接运行：
+
+```powershell
+uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
+```
 
 ## 4. 安装后端依赖
 
@@ -124,6 +155,14 @@ http://127.0.0.1:8000/docs
 ```
 
 如果能看到 FastAPI 的接口文档页面，就说明后端已经正常运行。
+
+如果你想直接跑后端自动化测试，可以使用：
+
+```bash
+uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
+```
+
+说明：当前项目推荐 Python 3.11。若本机 `.venv` 使用了 `Python 3.14` 或其他更高版本，优先用上面的命令临时指定 Python 3.11 验证后端；确认无误后，再按上面的步骤重建 `.venv`。
 
 ## 6.0 配置真实大模型
 
@@ -186,11 +225,18 @@ LLM_FALLBACK_API_KEY=
 ```text
 LOG_LEVEL=INFO
 LLM_TIMEOUT_SECONDS=30
-LLM_SYSTEM_PROMPT=You are a helpful AI assistant for an educational desktop AI project.
+LLM_SYSTEM_PROMPT=你是一个运行在 Live2D 桌宠中的 AI 伙伴。请优先使用自然、清楚、友好的中文回答。
 RUN_REPAIR_MAX_ATTEMPTS=1
+CONVERSATION_HISTORY_MAX_MESSAGES=20
+CHAT_CONTEXT_MAX_CHARS=6000
 ```
 
 如果没有配置这些变量，`/chat` 会自动回退为占位回复，不会直接崩溃。
+
+聊天记忆相关配置：
+
+- `CONVERSATION_HISTORY_MAX_MESSAGES`：每个会话最多保留多少条历史消息，默认 `20`
+- `CHAT_CONTEXT_MAX_CHARS`：拼给 LLM 的上下文最大字符数，默认 `6000`
 
 安全提醒：
 
@@ -245,6 +291,7 @@ Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
 当前后端除了 `/health` 和 `/chat` 之外，还提供了最小任务流接口：
 
 - `GET /llm/diagnostics`：检查当前 LLM 配置和可选的远程连通性
+- `DELETE /chat/sessions/{session_id}`：清空指定聊天会话的后端记忆
 - `POST /runs`：创建一个任务，并在后台执行 coding task
 - `GET /runs/summary`：读取轻量的 run 摘要列表，适合前端列表页或轮询
 - `GET /runs`：列出历史任务
@@ -289,6 +336,22 @@ GET /runs/summary?offset=0&limit=20
 - `latest_attempt_summary`
 
 当前保留原来的 `GET /runs`，是为了兼容现有联调流程；后续如果前端切换到摘要接口，列表轮询的压力会更小。
+
+当前 `/chat` 已经支持轻量会话记忆：
+
+- 请求体可以传 `session_id`
+- 如果不传，后端会自动创建新会话
+- 响应体会返回 `session_id`
+- 后端会保存同一会话最近若干轮消息，并在下一轮聊天时自动拼入上下文
+- 如果需要清空记忆，可以调用 `DELETE /chat/sessions/{session_id}`
+
+当前 `/chat` 的 coding intent 已经接入最小 LangGraph Agent Brain：
+
+- `LongCat` 等大模型仍然只是 LLM provider，负责生成和判断
+- `LangGraph` 负责 `router -> coding_node -> run_tool_node -> roleplay_node` 的状态流转
+- `run_tool_node` 会复用现有 `/runs` 能力创建任务
+- `/chat` 响应体会在 coding intent 下返回 `run_id`
+- 创建出的 run 会继续通过后台任务执行，状态仍然通过 `/runs` 和 `/messages` 查询
 
 当前 `cancel` 已经接入真实执行控制，而不是“只改状态”的假取消。后端会为每个运行中的 run 跟踪活跃进程和取消请求：
 
@@ -369,6 +432,46 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 
 ```powershell
 Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
+```
+
+发送一条聊天消息，并让后端自动创建会话：
+
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri http://127.0.0.1:8000/chat `
+  -ContentType "application/json" `
+  -Body '{"prompt":"你好","context":null,"session_id":null}'
+```
+
+发送一条 coding intent 消息，让后端通过 LangGraph 创建并执行 run：
+
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri http://127.0.0.1:8000/chat `
+  -ContentType "application/json" `
+  -Body '{"prompt":"write a calculator script","context":null,"session_id":null}'
+```
+
+返回体中的 `run_id` 就是后续查询 `/runs/{run_id}`、`/runs/{run_id}/attempts` 和 `/messages` 的任务 ID。
+
+继续同一个会话时，把上一步返回的 `session_id` 填进去：
+
+```powershell
+Invoke-RestMethod `
+  -Method POST `
+  -Uri http://127.0.0.1:8000/chat `
+  -ContentType "application/json" `
+  -Body '{"prompt":"还记得我刚才说了什么吗？","context":null,"session_id":"<session_id>"}'
+```
+
+清空指定会话记忆：
+
+```powershell
+Invoke-RestMethod `
+  -Method DELETE `
+  -Uri http://127.0.0.1:8000/chat/sessions/<session_id>
 ```
 
 创建一个 run：
@@ -498,5 +601,5 @@ Set-ExecutionPolicy -Scope Process Bypass
 ## 说明
 
 - 本项目推荐优先使用 `uv run` 和 `uv pip`，而不是直接使用 `pip` 或全局 `uvicorn`。
-- 如果执行 `python` 时跳转到 Microsoft Store，也不必先纠结系统 `PATH`，可以直接用 `uv python install 3.11` 安装并管理 Python。这里的 Python 版本只要不低于 `3.10` 即可。
+- 如果执行 `python` 时跳转到 Microsoft Store，也不必先纠结系统 `PATH`，可以直接用 `uv python install 3.11` 安装并管理 Python。对当前项目来说，优先推荐 `3.11`，其次是 `3.12`。
 - 如果你只想确认当前最小后端是否可用，最直接的检查方式就是访问 `http://127.0.0.1:8000/docs`。

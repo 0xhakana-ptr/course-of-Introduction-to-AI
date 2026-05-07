@@ -33,6 +33,7 @@ def test_chat_route_gracefully_degrades_without_llm(client):
     assert payload["intent"] == "chat"
     assert payload["ok"] is False
     assert "LLM_BASE_URL" in payload["output"]
+    assert payload["session_id"]
 
 
 def test_chat_test_command_keeps_response_contract(client):
@@ -43,6 +44,7 @@ def test_chat_test_command_keeps_response_contract(client):
     assert payload["intent"] == "chat"
     assert payload["ok"] is True
     assert "测试成功" in payload["output"]
+    assert payload["session_id"]
 
     queue_response = client.get("/messages")
     assert queue_response.status_code == 200
@@ -61,3 +63,9 @@ def test_chat_coding_branch_keeps_response_contract(client):
     assert payload["intent"] == "coding"
     assert isinstance(payload["ok"], bool)
     assert isinstance(payload["output"], str)
+    assert payload["session_id"]
+    assert payload["run_id"]
+
+    run_response = client.get(f"/runs/{payload['run_id']}")
+    assert run_response.status_code == 200
+    assert run_response.json()["status"] in {"queued", "running", "done", "failed", "cancelled"}

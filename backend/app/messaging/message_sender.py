@@ -61,12 +61,20 @@ class MessageSender:
         }
         return self._send_to_frontend('agent:quip', message)
     
-    def send_expression(self, expression: str, node_name: str, intensity: float = 0.8, 
-                        duration: int = 5000, transition: str = 'smooth') -> bool:
+    def send_expression(
+        self,
+        expression: str,
+        node_name: str,
+        intensity: float = 0.8,
+        duration: int = 5000,
+        transition: str = 'smooth',
+        mode: str = 'set',
+    ) -> bool:
         """发送表情消息"""
         message = {
             'type': 'expression',
             'expression': expression,
+            'mode': mode,
             'intensity': intensity,
             'node_name': node_name,
             'timestamp': self._get_timestamp(),
@@ -76,6 +84,26 @@ class MessageSender:
             }
         }
         return self._send_to_frontend('agent:expression', message)
+
+    def send_motion(
+        self,
+        motion: str,
+        node_name: str,
+        duration: int | None = None,
+        loop: bool = False,
+    ) -> bool:
+        """发送动作消息"""
+        metadata: dict[str, Any] = {'loop': loop}
+        if duration is not None:
+            metadata['duration'] = duration
+        message = {
+            'type': 'motion',
+            'motion': motion,
+            'node_name': node_name,
+            'timestamp': self._get_timestamp(),
+            'metadata': metadata,
+        }
+        return self._send_to_frontend('agent:motion', message)
     
     def send_chat_message(self, content: str, is_partial: bool = False, 
                          sequence_id: int = 0, total_parts: int = 1, node_name: str = '') -> bool:

@@ -9,3 +9,5 @@ class ChatServiceResult:
     ok: bool
     output: str
     error: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None

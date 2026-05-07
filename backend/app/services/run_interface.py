@@ -6,6 +6,7 @@ from ..storage.run_store import (
     update_run_record,
     utc_now_iso,
 )
+from .character_interface import send_task_cancelled, send_task_queued
 from .run_action.codegen import generate_repaired_script_with_llm
 from .run_action.control import clear_run_control, ensure_run_control, request_run_cancel
 from .run_action.execution import execute_script_attempt
@@ -50,6 +51,7 @@ def create_run(prompt: str, context: str | None) -> RunResponse:
     log_path = f"runs/{run_id}/log.txt"
     record = update_run_record(run_id, log_path=log_path)
     append_run_log(run_id, "Run queued.")
+    send_task_queued()
     return to_run_response(record)
 
 
@@ -89,6 +91,7 @@ def _create_follow_up_run(
     record = update_run_record(run_id, log_path=log_path)
     append_run_log(run_id, f"Run queued via {trigger_mode}. Source run: {source_run_id}")
     append_run_log(source_run_id, f"{trigger_mode} requested. Created follow-up run: {run_id}")
+    send_task_queued()
     return to_run_response(record)
 
 
@@ -134,6 +137,7 @@ def cancel_run(run_id: str) -> RunResponse:
             finished_at=utc_now_iso(),
         )
         clear_run_control(run_id)
+        send_task_cancelled()
         return to_run_response(cancelled_record)
 
     request_run_cancel(run_id)

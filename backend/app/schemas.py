@@ -6,12 +6,24 @@ INTENT_TYPE = Literal["chat", "coding", "unknown"]
 RUN_STATUS = Literal["queued", "running", "done", "failed", "cancelled"]
 ATTEMPT_STATUS = Literal["running", "done", "failed", "cancelled"]
 ATTEMPT_OUTPUT_STREAM = Literal["stdout", "stderr", "error"]
-MESSAGE_TYPE = Literal["quip", "expression", "chat", "error", "status"]
+MESSAGE_TYPE = Literal["quip", "expression", "motion", "chat", "error", "status"]
+MESSAGE_CHANNEL = Literal[
+    "agent:quip",
+    "agent:expression",
+    "agent:motion",
+    "agent:chat",
+    "agent:error",
+    "agent:status",
+]
+MESSAGE_ROLE = Literal["user", "assistant", "system"]
+MESSAGE_STATUS = Literal["idle", "running", "paused", "done", "error", "cancelled"]
+EXPRESSION_MODE = Literal["set", "add"]
 
 
 class ChatRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="用户输入")
     context: str | None = Field(default=None, description="对话上下文")
+    session_id: str | None = Field(default=None, description="会话 ID；不传则由后端创建")
     
 
 class ChatResponse(BaseModel):
@@ -19,6 +31,15 @@ class ChatResponse(BaseModel):
     intent: INTENT_TYPE
     output: str
     error: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+
+
+class ClearConversationResponse(BaseModel):
+    ok: bool = True
+    session_id: str
+    cleared: bool
+    message: str
 
 
 class MessageEnvelope(BaseModel):
@@ -26,19 +47,21 @@ class MessageEnvelope(BaseModel):
 
     message_id: str | None = Field(default=None, alias="_id")
     queue_timestamp: str | None = Field(default=None, alias="_timestamp")
-    channel: str | None = Field(default=None, alias="_channel")
+    channel: MESSAGE_CHANNEL | None = Field(default=None, alias="_channel")
     type: MESSAGE_TYPE
     timestamp: str | None = None
     node_name: str | None = None
     metadata: dict[str, Any] | None = None
     content: str | None = None
-    role: Literal["user", "assistant", "system"] | None = None
+    role: MESSAGE_ROLE | None = None
     expression: str | None = None
+    motion: str | None = None
+    mode: EXPRESSION_MODE | None = None
     intensity: float | None = None
     code: str | None = None
     message: str | None = None
     details: Any | None = None
-    status: str | None = None
+    status: MESSAGE_STATUS | None = None
     progress: int | None = None
 
 
