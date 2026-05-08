@@ -15,6 +15,7 @@ from ..schemas import (
     RunAttemptScriptResponse,
     RunLogResponse,
     RunResponse,
+    RunStateSnapshotResponse,
 )
 from ..services.run_interface import (
     get_run,
@@ -23,6 +24,7 @@ from ..services.run_interface import (
     get_run_attempt_script,
     get_run_attempts,
     get_run_log,
+    get_run_snapshot,
 )
 
 
@@ -88,9 +90,17 @@ def require_run_log(run_id: str) -> RunLogResponse:
     return run_log
 
 
+def require_run_snapshot(run_id: str) -> RunStateSnapshotResponse:
+    snapshot = get_run_snapshot(run_id)
+    if snapshot is None:
+        raise_api_http_error(404, message="run not found", code="run_not_found")
+    return snapshot
+
+
 RunDependency = Annotated[RunResponse, Depends(require_run)]
 RunAttemptsDependency = Annotated[RunAttemptListResponse, Depends(require_run_attempts)]
 RunAttemptDependency = Annotated[RunAttemptResponse, Depends(require_run_attempt)]
 RunAttemptScriptDependency = Annotated[RunAttemptScriptResponse, Depends(require_run_attempt_script)]
 RunAttemptOutputDependency = Annotated[RunAttemptOutputChunkResponse, Depends(require_run_attempt_output)]
 RunLogDependency = Annotated[RunLogResponse, Depends(require_run_log)]
+RunSnapshotDependency = Annotated[RunStateSnapshotResponse, Depends(require_run_snapshot)]

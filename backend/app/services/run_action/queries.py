@@ -6,6 +6,7 @@ from ...schemas import (
     RunAttemptScriptResponse,
     RunLogResponse,
     RunResponse,
+    RunStateSnapshotResponse,
     RunSummaryListResponse,
 )
 from ...storage.run_store import list_run_records, load_run_record, read_run_log
@@ -15,6 +16,7 @@ from .formatters import (
     get_attempt_records,
     to_run_attempt_response,
     to_run_response,
+    to_run_state_snapshot_response,
     to_run_summary_response,
 )
 from .types import (
@@ -45,6 +47,13 @@ def get_run(run_id: str) -> RunResponse | None:
     if record is None:
         return None
     return to_run_response(record)
+
+
+def get_run_snapshot(run_id: str) -> RunStateSnapshotResponse | None:
+    record = _load_run_record_for_query(run_id)
+    if record is None:
+        return None
+    return to_run_state_snapshot_response(record)
 
 
 def get_run_attempts(run_id: str) -> RunAttemptListResponse | None:

@@ -48,6 +48,7 @@
 
 - 普通聊天和 coding 分支都已经不再绕开 `agent_workflow`，而是进入最小 LangGraph 图。
 - 当前主路径分别是 `router -> chat_node -> roleplay_node` 与 `router -> coding_node -> run_tool_node -> roleplay_node`。
+- `agent_workflow` 当前已经开始记录统一的 `workflow_trace`，用于后续 diagnostics/debug 观察节点路由、阶段状态与 run action 决策。
 - `/chat` 命中 coding intent 时会返回 `run_id`，并通过 FastAPI 后台任务触发 `execute_run`。
 - 当前实现是最小 LangGraph Agent Brain，不等同于完整的多 Agent 公司化协同系统。
 - `agent_workflow` 通过 lazy import 暴露，缺少依赖时不会阻塞主服务启动。
@@ -110,6 +111,10 @@
 - `GET /messages`
 - `DELETE /messages`
 
+当前同时提供正式 WebSocket 消息流入口：
+
+- `WS /messages/ws`
+
 消息队列特性：
 
 - 自动生成 `_id`
@@ -118,6 +123,7 @@
 - 线程安全
 - 队列上限 `1000`
 - 支持桌宠消息类型：`quip`、`expression`、`motion`、`chat`、`error`、`status`
+- WebSocket 连接建立后会先发送一次当前快照，此后再持续推送增量消息批次
 
 ### 2.5 LLM 能力
 
@@ -182,6 +188,91 @@
 - `provider_used`
 - `fallback_used`
 
+### 3.2.1 `POST /agent/diagnostics/preview`
+
+请求体：
+
+```json
+{
+  "prompt": "请取消 run_id 123e4567-e89b-12d3-a456-426614174000",
+  "context": null,
+  "intent": null
+}
+```
+
+用途：
+
+- 以无副作用方式预览当前输入会如何进入 `agent_workflow`
+- 观察当前会命中的 `intent`、`run_action`、`workspace tool` 规划结果与预期节点路径
+- 调试为什么某条输入会被判定为 `chat / coding / unknown`
+
+说明：
+
+- 该接口不会真正创建 run，也不会真的执行 `retry / rerun / cancel`
+- 该接口主要面向开发期调试与联调，不用于前端正式主链路
+
+返回字段包括：
+
+- `intent`
+- `selected_route`
+- `run_action`
+- `target_run_id`
+- `workspace_tool_name`
+- `workspace_tool_reason`
+- `workspace_tool_plan`
+- `ui_status`
+- `planned_nodes`
+- `notes`
+- `workflow_trace`
+
+返回体示例：
+
+```json
+{
+  "ok": true,
+  "prompt": "请取消 run_id 123e4567-e89b-12d3-a456-426614174000",
+  "intent": "coding",
+  "selected_route": "coding_node",
+  "run_action": "cancel",
+  "target_run_id": "123e4567-e89b-12d3-a456-426614174000",
+  "workspace_tool_name": null,
+  "workspace_tool_reason": null,
+  "workspace_tool_plan": null,
+  "ui_status": "coding_requested",
+  "planned_nodes": [
+    "router",
+    "coding_node",
+    "run_control_node",
+    "roleplay_node"
+  ],
+  "notes": [
+    "该输入会进入 coding_node，并对已有 run 执行 `cancel` 控制动作。"
+  ],
+  "workflow_trace": [
+    {
+      "step": 1,
+      "node": "router",
+      "event": "intent_routed",
+      "ui_status": "routed",
+      "details": {
+        "intent": "coding"
+      }
+    },
+    {
+      "step": 2,
+      "node": "coding_node",
+      "event": "coding_request_prepared",
+      "ui_status": "coding_requested",
+      "details": {
+        "run_action": "cancel",
+        "target_run_id": "123e4567-e89b-12d3-a456-426614174000",
+        "workspace_tool_name": null
+      }
+    }
+  ]
+}
+```
+
 ### 3.3 `POST /chat`
 
 请求体：
@@ -215,8 +306,9 @@
 - 如果请求传入已有 `session_id`，后端会把该会话最近消息作为上下文传给 LLM。
 - 请求中的 `context` 仍然保留，用于兼容当前前端传入的临时上下文。
 - 当 `intent` 为 `coding` 时，`run_id` 会返回本次创建的任务 ID；普通聊天和 unknown intent 通常为 `null`。
-- coding 任务的执行状态继续通过 `GET /runs/{run_id}`、`GET /runs/{run_id}/attempts` 和 `GET /messages` 查询。
+- coding 任务的执行状态继续通过 `GET /runs/{run_id}`、`GET /runs/{run_id}/snapshot`、`GET /runs/{run_id}/attempts` 和 `GET /messages` 查询。
 - 对于直接通过 `/chat` 返回的聊天正文，后端不会再额外向消息队列重复写入同一条 `agent:chat`，以避免聊天窗口重复显示。
+- 如果 coding 请求中包含合法 `run_id` 且语义更接近“查看状态 / 快照 / 日志 / 进度”，LangGraph 会直接读取已有 run 的 snapshot 并返回，而不是再次创建新任务。
 
 ### 3.4.1 `GET /chat/sessions`
 
@@ -342,25 +434,52 @@
 
 - 获取单个任务完整状态
 
-### 3.9 `GET /runs/{run_id}/attempts`
+### 3.9 `GET /runs/{run_id}/snapshot`
+
+用途：
+
+- 获取面向 Agent / 前端状态展示的结构化任务快照
+- 用更轻量的方式观察任务当前是否仍在进行、最近一次 attempt 的摘要，以及推荐的下一步动作
+
+返回体示例：
+
+```json
+{
+  "run_id": "run_demo_1",
+  "status": "running",
+  "summary": "任务正在执行中。最近一次尝试：第 1 次尝试（本地模板）：正在执行。",
+  "next_action": "继续轮询任务状态；如需定位问题，可查看最近一次尝试的输出或日志。",
+  "terminal": false,
+  "in_progress": true,
+  "cancel_requested": false,
+  "attempt_count": 1,
+  "repair_count": 0,
+  "latest_attempt_number": 1,
+  "latest_attempt_status": "running",
+  "latest_attempt_summary": "第 1 次尝试（本地模板）：正在执行。",
+  "updated_at": "2026-05-08T08:00:00+00:00"
+}
+```
+
+### 3.10 `GET /runs/{run_id}/attempts`
 
 用途：
 
 - 获取该任务的尝试列表
 
-### 3.10 `GET /runs/{run_id}/attempts/{attempt_number}`
+### 3.11 `GET /runs/{run_id}/attempts/{attempt_number}`
 
 用途：
 
 - 获取单次尝试详情
 
-### 3.11 `GET /runs/{run_id}/attempts/{attempt_number}/script`
+### 3.12 `GET /runs/{run_id}/attempts/{attempt_number}/script`
 
 用途：
 
 - 获取某次尝试生成的脚本内容
 
-### 3.12 `GET /runs/{run_id}/attempts/{attempt_number}/output`
+### 3.13 `GET /runs/{run_id}/attempts/{attempt_number}/output`
 
 查询参数：
 
@@ -372,7 +491,7 @@
 
 - 分块读取单次尝试输出
 
-### 3.13 `GET /runs/{run_id}/logs`
+### 3.14 `GET /runs/{run_id}/logs`
 
 用途：
 
@@ -402,7 +521,43 @@
 }
 ```
 
-### 3.15 `DELETE /messages`
+### 3.15 `WS /messages/ws`
+
+查询参数：
+
+- `since_id` 可选
+
+用途：
+
+- 建立正式的消息流订阅连接
+- 连接建立后先返回一批当前快照消息
+- 之后持续推送自上次消息 ID 之后产生的增量消息
+
+首批返回体示例：
+
+```json
+{
+  "ok": true,
+  "messages": [
+    {
+      "_id": "msg_168xxxx",
+      "_timestamp": "2026-05-08T08:00:00Z",
+      "_channel": "agent:chat",
+      "type": "chat",
+      "content": "hello"
+    }
+  ],
+  "count": 1
+}
+```
+
+说明：
+
+- 如果连接时消息队列为空，首批快照会返回空数组。
+- 如果带上 `since_id`，首批快照只会返回该消息之后的增量内容。
+- 当前 WebSocket 推送的数据结构与 `GET /messages` 保持一致，便于前端复用解析逻辑。
+
+### 3.16 `DELETE /messages`
 
 用途：
 
@@ -417,7 +572,7 @@
 }
 ```
 
-### 3.16 `POST /runs/{run_id}/retry`
+### 3.17 `POST /runs/{run_id}/retry`
 
 用途：
 
@@ -431,7 +586,7 @@
 - 新 run 会记录 `source_run_id`
 - 新 run 会记录 `trigger_mode=retry`
 
-### 3.17 `POST /runs/{run_id}/rerun`
+### 3.18 `POST /runs/{run_id}/rerun`
 
 用途：
 
@@ -445,7 +600,7 @@
 - 新 run 会记录 `source_run_id`
 - 新 run 会记录 `trigger_mode=rerun`
 
-### 3.18 `POST /runs/{run_id}/cancel`
+### 3.19 `POST /runs/{run_id}/cancel`
 
 用途：
 

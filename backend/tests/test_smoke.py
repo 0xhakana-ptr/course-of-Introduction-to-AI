@@ -1,4 +1,5 @@
 from backend.app.main import app
+from backend.app.services.run_interface import create_run
 
 
 def test_main_module_imports():
@@ -69,3 +70,49 @@ def test_chat_coding_branch_keeps_response_contract(client):
     run_response = client.get(f"/runs/{payload['run_id']}")
     assert run_response.status_code == 200
     assert run_response.json()["status"] in {"queued", "running", "done", "failed", "cancelled"}
+
+
+def test_chat_can_inspect_existing_run_snapshot(client):
+    create_response = client.post(
+        "/chat",
+        json={"prompt": "write python code", "context": None},
+    )
+    assert create_response.status_code == 200
+    run_id = create_response.json()["run_id"]
+    assert run_id
+
+    inspect_response = client.post(
+        "/chat",
+        json={"prompt": f"请查看 run_id {run_id} 的状态", "context": None},
+    )
+    assert inspect_response.status_code == 200
+    inspect_payload = inspect_response.json()
+    assert inspect_payload["intent"] == "coding"
+    assert inspect_payload["ok"] is True
+    assert inspect_payload["run_id"] == run_id
+    assert (
+        "当前快照:" in inspect_payload["output"]
+        or "摘要:" in inspect_payload["output"]
+        or "最终总结:" in inspect_payload["output"]
+    )
+    assert "下一步:" in inspect_payload["output"] or "查看完整结果:" in inspect_payload["output"]
+
+
+def test_chat_can_cancel_existing_run(client):
+    run = create_run("write python code", None)
+    run_id = run.run_id
+    assert run_id
+
+    cancel_response = client.post(
+        "/chat",
+        json={"prompt": f"请取消 run_id {run_id}", "context": None},
+    )
+    assert cancel_response.status_code == 200
+    cancel_payload = cancel_response.json()
+    assert cancel_payload["intent"] == "coding"
+    assert cancel_payload["run_id"] == run_id
+    assert "取消请求" in cancel_payload["output"]
+
+    run_response = client.get(f"/runs/{run_id}")
+    assert run_response.status_code == 200
+    assert run_response.json()["status"] == "cancelled"

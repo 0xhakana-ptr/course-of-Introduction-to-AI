@@ -18,7 +18,9 @@ AGENT_RESULT_FIELDS = (
     "error",
     "run_id",
     "run_status",
+    "run_action",
     "ui_status",
+    "workflow_trace",
 )
 REPAIR_RESULT_FIELDS = (
     "ok",
@@ -204,7 +206,9 @@ class WorkflowAgentResult(WorkflowGraphResult):
     error: str | None = None
     run_id: str | None = None
     run_status: str | None = None
+    run_action: str | None = None
     ui_status: str | None = None
+    workflow_trace: list[dict[str, object]] = field(default_factory=list)
 
     @classmethod
     def _from_normalized_state(
@@ -214,6 +218,7 @@ class WorkflowAgentResult(WorkflowGraphResult):
         ok: bool,
         default_intent: str = "unknown",
     ) -> "WorkflowAgentResult":
+        workflow_trace = state.get("workflow_trace")
         return cls(
             ok=ok,
             output=_coerce_mapping_str(state, "output"),
@@ -221,7 +226,13 @@ class WorkflowAgentResult(WorkflowGraphResult):
             error=_coerce_mapping_text(state, "error"),
             run_id=_coerce_mapping_text(state, "run_id"),
             run_status=_coerce_mapping_text(state, "run_status"),
+            run_action=_coerce_mapping_text(state, "run_action"),
             ui_status=_coerce_mapping_text(state, "ui_status"),
+            workflow_trace=[
+                dict(item)
+                for item in workflow_trace
+                if isinstance(workflow_trace, list) and isinstance(item, Mapping)
+            ] if isinstance(workflow_trace, list) else [],
             state=dict(state),
         )
 
@@ -254,7 +265,9 @@ class WorkflowAgentResult(WorkflowGraphResult):
             error=str(exc),
             run_id=None,
             run_status=None,
+            run_action=None,
             ui_status=None,
+            workflow_trace=[],
             state=dict(state),
         )
 
@@ -284,7 +297,9 @@ class WorkflowAgentResult(WorkflowGraphResult):
                 "error": self.error,
                 "run_id": self.run_id,
                 "run_status": self.run_status,
+                "run_action": self.run_action,
                 "ui_status": self.ui_status,
+                "workflow_trace": list(self.workflow_trace),
             }
         )
         return payload
@@ -317,6 +332,9 @@ class WorkflowAgentResult(WorkflowGraphResult):
 
     def run_payload(self) -> tuple[str | None, str | None]:
         return self.run_id, self.run_status
+
+    def run_action_name(self) -> str | None:
+        return self.run_action
 
 
 def _coerce_attr_text(value: object, attr_name: str) -> str | None:

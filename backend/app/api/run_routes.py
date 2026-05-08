@@ -10,6 +10,7 @@ from .run_dependencies import (
     RunAttemptScriptDependency,
     RunDependency,
     RunLogDependency,
+    RunSnapshotDependency,
 )
 from ..schemas import (
     RunAttemptListResponse,
@@ -19,6 +20,7 @@ from ..schemas import (
     RunCreateRequest,
     RunLogResponse,
     RunResponse,
+    RunStateSnapshotResponse,
     RunSummaryListResponse,
 )
 from ..services.run_interface import (
@@ -62,6 +64,11 @@ async def list_run_summaries_route(
 @router.get("/{run_id}", response_model=RunResponse)
 async def get_run_route(run: RunDependency):
     return run
+
+
+@router.get("/{run_id}/snapshot", response_model=RunStateSnapshotResponse)
+async def get_run_snapshot_route(snapshot: RunSnapshotDependency):
+    return snapshot
 
 
 @router.get("/{run_id}/attempts", response_model=RunAttemptListResponse)

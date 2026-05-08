@@ -372,6 +372,7 @@ def test_generate_chat_response_marks_coding_schedule_failure(monkeypatch):
                 "run_id: run-1"
             ),
             run_id="run-1",
+            run_action="create",
         )
 
     monkeypatch.setattr(
@@ -400,3 +401,160 @@ def test_generate_chat_response_marks_coding_schedule_failure(monkeypatch):
     assert len(stored_messages) == 1
     assert stored_messages[0]["role"] == "user"
     assert stored_messages[0]["content"] == "write python code"
+
+
+def test_generate_chat_response_schedules_retry_and_rerun_actions(monkeypatch):
+    scheduled_run_ids: list[str] = []
+
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        if "retry" in prompt:
+            return ChatServiceResult(
+                intent="coding",
+                ok=True,
+                output=(
+                    "我已为这个代码任务创建重试任务。\n\n"
+                    "source_run_id: run-source-1\n"
+                    "run_id: run-retry-1"
+                ),
+                run_id="run-retry-1",
+                run_action="retry",
+            )
+        return ChatServiceResult(
+            intent="coding",
+            ok=True,
+            output=(
+                "我已为这个代码任务创建重新运行任务。\n\n"
+                "source_run_id: run-source-2\n"
+                "run_id: run-rerun-1"
+            ),
+            run_id="run-rerun-1",
+            run_action="rerun",
+        )
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    def remember_schedule(run_id: str) -> None:
+        scheduled_run_ids.append(run_id)
+
+    retry_result = asyncio.run(
+        generate_chat_response(
+            "请 retry run_id run-source-1",
+            None,
+            schedule_run=remember_schedule,
+        )
+    )
+    rerun_result = asyncio.run(
+        generate_chat_response(
+            "请重新运行 run_id run-source-2",
+            None,
+            schedule_run=remember_schedule,
+        )
+    )
+
+    assert scheduled_run_ids == ["run-retry-1", "run-rerun-1"]
+    assert "并开始后台执行" in retry_result.output
+    assert "并开始后台执行" in rerun_result.output
+
+
+def test_generate_chat_response_does_not_schedule_run_snapshot_inspection(monkeypatch):
+    scheduled_run_ids: list[str] = []
+
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        return ChatServiceResult(
+            intent="coding",
+            ok=True,
+            output=(
+                "我读取了这个代码任务的当前状态。\n\n"
+                "run_id: run-1\n"
+                "status: running\n"
+                "当前快照: 任务正在执行中。\n"
+                "下一步: 继续轮询任务状态。"
+            ),
+            run_id="run-1",
+            run_action="inspect",
+        )
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    def remember_schedule(run_id: str) -> None:
+        scheduled_run_ids.append(run_id)
+
+    result = asyncio.run(
+        generate_chat_response(
+            "请查看 run_id run-1 的状态",
+            None,
+            schedule_run=remember_schedule,
+        )
+    )
+
+    assert result.ok is True
+    assert result.run_id == "run-1"
+    assert result.run_action == "inspect"
+    assert scheduled_run_ids == []
+
+
+def test_generate_chat_response_does_not_schedule_cancel_action(monkeypatch):
+    scheduled_run_ids: list[str] = []
+
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        return ChatServiceResult(
+            intent="coding",
+            ok=True,
+            output=(
+                "我已处理这个代码任务的取消请求。\n\n"
+                "run_id: run-1\n"
+                "status: running\n"
+                "当前快照: 任务已收到取消请求，正在结束执行。\n"
+                "下一步: 等待当前执行结束并确认最终取消结果。"
+            ),
+            run_id="run-1",
+            run_action="cancel",
+        )
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    def remember_schedule(run_id: str) -> None:
+        scheduled_run_ids.append(run_id)
+
+    result = asyncio.run(
+        generate_chat_response(
+            "请取消 run_id run-1",
+            None,
+            schedule_run=remember_schedule,
+        )
+    )
+
+    assert result.ok is True
+    assert result.run_id == "run-1"
+    assert result.run_action == "cancel"
+    assert scheduled_run_ids == []

@@ -8,8 +8,35 @@ from .character_interface import send_chat_done, send_chat_failed, send_chat_sta
 from ..storage.conversation_store import conversation_store
 
 RunScheduler = Callable[[str], None]
-QUEUED_CODING_OUTPUT = "已通过 LangGraph 创建代码任务，并交给 `/runs` 链路处理。"
-SCHEDULED_CODING_OUTPUT = "已通过 LangGraph 创建代码任务，并开始后台执行。"
+SCHEDULABLE_RUN_ACTIONS = {"create", "retry", "rerun"}
+SCHEDULED_OUTPUT_REPLACEMENTS = {
+    "create": (
+        "已通过 LangGraph 创建代码任务，并交给 `/runs` 链路处理。",
+        "已通过 LangGraph 创建代码任务，并开始后台执行。",
+    ),
+    "retry": (
+        "我已为这个代码任务创建重试任务。",
+        "我已为这个代码任务创建重试任务，并开始后台执行。",
+    ),
+    "rerun": (
+        "我已为这个代码任务创建重新运行任务。",
+        "我已为这个代码任务创建重新运行任务，并开始后台执行。",
+    ),
+}
+
+
+def _apply_scheduled_output(result: ChatServiceResult) -> ChatServiceResult:
+    replacement = SCHEDULED_OUTPUT_REPLACEMENTS.get(str(result.run_action or "").strip())
+    if replacement is None:
+        return result
+
+    queued_output, scheduled_output = replacement
+    if queued_output not in result.output:
+        return result
+
+    return result.with_updates(
+        output=result.output.replace(queued_output, scheduled_output),
+    )
 
 
 def _schedule_coding_run_if_needed(
@@ -17,7 +44,13 @@ def _schedule_coding_run_if_needed(
     *,
     schedule_run: RunScheduler | None,
 ) -> ChatServiceResult:
-    if not result.is_intent("coding") or not result.ok or not result.run_id or schedule_run is None:
+    if (
+        not result.is_intent("coding")
+        or not result.ok
+        or result.run_action not in SCHEDULABLE_RUN_ACTIONS
+        or not result.run_id
+        or schedule_run is None
+    ):
         return result
 
     try:
@@ -29,12 +62,7 @@ def _schedule_coding_run_if_needed(
             error=str(exc),
         )
 
-    return result.with_updates(
-        output=result.output.replace(
-            QUEUED_CODING_OUTPUT,
-            SCHEDULED_CODING_OUTPUT,
-        )
-    )
+    return _apply_scheduled_output(result)
 
 
 def _persist_result_to_conversation(

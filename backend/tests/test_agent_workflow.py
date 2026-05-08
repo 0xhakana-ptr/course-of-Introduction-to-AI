@@ -3,21 +3,30 @@ from backend.app.agent_workflow.agent_support import (
     build_agent_initial_state,
     build_chat_result_state,
     build_coding_requested_state,
+    build_run_control_failure_state,
+    build_run_control_success_state,
     build_run_creation_failure_state,
     build_run_creation_success_state,
+    build_run_snapshot_failure_state,
+    build_run_snapshot_progress_state,
+    build_run_snapshot_success_state,
+    build_run_terminal_summary_state,
     build_unknown_intent_output,
     build_unknown_intent_state,
+    build_workspace_tool_state,
     emit_agent_roleplay_state,
     merge_context_sections,
     merge_agent_state,
+    select_coding_next_node,
     select_agent_next_node,
 )
 from backend.app.agent_workflow.roleplay import emit_roleplay_message, emit_roleplay_state
 from backend.app.agent_workflow.workflow_results import WorkflowAgentResult
 from backend.app.message_queue import message_queue
+from backend.app.services.chat_action.intent import detect_intent, detect_run_action, extract_run_reference
 from backend.app.services.chat_action.types import ChatServiceResult
 from backend.app.services.run_action.types import WorkflowChatMessage
-from backend.app.services.run_interface import get_run
+from backend.app.services.run_interface import create_run, get_run
 
 
 def test_agent_graph_routes_coding_intent_to_run_tool():
@@ -28,10 +37,157 @@ def test_agent_graph_routes_coding_intent_to_run_tool():
     assert result.run_id
     assert result.run_status == "queued"
     assert result.as_dict()["intent"] == "coding"
+    assert len(result.workflow_trace) >= 4
+    assert result.workflow_trace[0]["node"] == "router"
+    assert result.workflow_trace[-1]["node"] == "roleplay_node"
 
     run = get_run(str(result.run_id))
     assert run is not None
     assert run.status == "queued"
+
+
+def test_agent_graph_can_inspect_existing_run_snapshot():
+    run = create_run("build a calculator demo", None)
+
+    result = run_agent(
+        f"请查看 run_id {run.run_id} 的状态",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+    )
+
+    assert result.ok is True
+    assert result.intent == "coding"
+    assert result.run_id == run.run_id
+    assert result.run_status == "queued"
+    assert result.run_action == "inspect"
+    assert result.state["target_run_id"] == run.run_id
+    assert "我读取了这个代码任务的中间状态，当前还在排队。" in result.output
+    assert "当前快照:" in result.output
+    assert "下一步:" in result.output
+
+
+def test_agent_graph_can_inspect_terminal_run_and_return_summary(monkeypatch):
+    run_id = "123e4567-e89b-12d3-a456-426614174000"
+
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.get_run_snapshot",
+        lambda target_run_id: type(
+            "FakeRunSnapshot",
+            (),
+            {
+                "status": "done",
+                "summary": "任务执行成功。",
+                "next_action": "任务已完成，可查看最终结果、产物或执行日志。",
+                "terminal": True,
+                "latest_attempt_summary": "第 1 次尝试（本地模板）：执行成功。",
+                "cancel_requested": False,
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.get_run",
+        lambda target_run_id: type(
+            "FakeRunResponse",
+            (),
+            {
+                "model_dump": lambda self=None: {
+                    "run_id": run_id,
+                    "status": "done",
+                    "output": "任务已完成。",
+                    "error": None,
+                    "attempt_count": 1,
+                    "repair_count": 0,
+                    "generator": "template",
+                    "prompt": "build demo",
+                    "attempts": [],
+                },
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.summarize_run_record",
+        lambda record, emit_chat_message=False: type(
+            "FakeSummaryResult",
+            (),
+            {
+                "ok": True,
+                "output": (
+                    "代码任务已经完成。\n"
+                    f"run_id: {run_id}\n"
+                    "状态: done\n"
+                    "摘要: 最终输出已经生成。"
+                ),
+                "summary_text": "最终输出已经生成。",
+            },
+        )(),
+    )
+
+    result = run_agent(
+        f"请查看 run_id {run_id} 的状态",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id == run_id
+    assert result.run_status == "done"
+    assert result.run_action == "inspect"
+    assert result.state["ui_status"] == "run_snapshot_terminal"
+    assert "代码任务已经完成。" in result.output
+    assert "摘要: 最终输出已经生成。" in result.output
+
+
+def test_agent_graph_can_retry_existing_run(monkeypatch):
+    source_run_id = "123e4567-e89b-12d3-a456-426614174000"
+    captured: dict[str, object] = {}
+
+    def fake_retry_run(run_id: str):
+        captured["run_id"] = run_id
+        return type(
+            "FakeRun",
+            (),
+            {
+                "run_id": "retry-run-1",
+                "status": "queued",
+                "output": "重试任务已创建，等待后台执行。",
+            },
+        )()
+
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.retry_run",
+        fake_retry_run,
+    )
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.get_run_snapshot",
+        lambda run_id: type(
+            "FakeRunSnapshot",
+            (),
+            {
+                "status": "queued",
+                "summary": "任务已创建，等待后台执行。",
+                "next_action": "等待后台开始执行，然后继续查询任务状态。",
+            },
+        )(),
+    )
+
+    result = run_agent(
+        f"请 retry run_id {source_run_id}",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+    )
+
+    assert captured["run_id"] == source_run_id
+    assert result.ok is True
+    assert result.intent == "coding"
+    assert result.run_id == "retry-run-1"
+    assert result.run_status == "queued"
+    assert result.run_action == "retry"
+    assert "source_run_id: 123e4567-e89b-12d3-a456-426614174000" in result.output
+    assert "当前快照:" in result.output
+    assert "下一步:" in result.output
 
 
 def test_agent_graph_routes_chat_intent_to_llm(monkeypatch):
@@ -55,14 +211,19 @@ def test_agent_graph_routes_chat_intent_to_llm(monkeypatch):
     assert result.output == "reply to hello"
     assert result.run_id is None
     assert result.as_dict()["output"] == "reply to hello"
+    assert [item["node"] for item in result.workflow_trace] == [
+        "router",
+        "chat_node",
+        "roleplay_node",
+    ]
 
 
 def test_agent_graph_routes_coding_intent_with_workspace_tool_context(monkeypatch):
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_support.build_workspace_overview",
-        lambda: "Workspace top-level entries:\n- [file] README.md",
+        "backend.app.tools.workspace_tools.build_workspace_overview",
+        lambda **kwargs: "Workspace top-level entries:\n- [file] README.md",
     )
 
     def fake_create_run(prompt: str, context: str | None):
@@ -74,12 +235,29 @@ def test_agent_graph_routes_coding_intent_with_workspace_tool_context(monkeypatc
         "backend.app.agent_workflow.agent_graph.create_run",
         fake_create_run,
     )
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.get_run_snapshot",
+        lambda run_id: type(
+            "FakeRunSnapshot",
+            (),
+            {
+                "status": "queued",
+                "summary": "任务已创建，等待后台执行。",
+                "next_action": "等待后台开始执行，然后继续查询任务状态。",
+            },
+        )(),
+    )
 
     result = run_agent("write python code", "client ctx", intent="coding")
 
     assert result.ok is True
     assert result.intent == "coding"
     assert result.run_id == "run-tool-1"
+    assert result.state["workspace_tool_name"] == "build_workspace_overview"
+    assert result.state["run_summary"] is not None
+    assert result.state["run_next_action"] is not None
+    assert "当前快照:" in result.output
+    assert "下一步:" in result.output
     assert captured["prompt"] == "write python code"
     assert captured["context"] == (
         "client ctx\n\n"
@@ -118,10 +296,31 @@ def test_agent_support_selects_route_and_builds_unknown_output():
     assert "聊天还是想让我帮你处理代码任务" in output
 
 
-def test_agent_support_merges_context_sections_and_coding_tool_context(monkeypatch):
+def test_intent_detection_can_identify_run_inspection_prompt():
+    run_id = "123e4567-e89b-12d3-a456-426614174000"
+
+    assert extract_run_reference(f"请查看 run_id {run_id} 的状态") == run_id
+    assert detect_run_action(f"请查看 run_id {run_id} 的状态") == "inspect"
+    assert detect_intent(f"请查看 run_id {run_id} 的状态") == "coding"
+
+
+def test_intent_detection_can_identify_run_control_prompts():
+    run_id = "123e4567-e89b-12d3-a456-426614174000"
+
+    assert detect_run_action(f"请 retry run_id {run_id}") == "retry"
+    assert detect_run_action(f"请重新运行 run_id {run_id}") == "rerun"
+    assert detect_run_action(f"请取消 run_id {run_id}") == "cancel"
+    assert detect_intent(f"请取消 run_id {run_id}") == "coding"
+
+
+def test_agent_support_merges_context_sections_and_builds_tool_plan(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_support.build_workspace_overview",
-        lambda: "Workspace top-level entries:\n- [file] README.md",
+        "backend.app.agent_workflow.agent_support.plan_workspace_tool",
+        lambda prompt: {
+            "tool_name": "read_workspace_text",
+            "tool_input": {"rel_path": "backend/app/demo.txt"},
+            "reason": "Prompt references a workspace file path.",
+        },
     )
 
     merged_context = merge_context_sections("client ctx", None, "tool ctx")
@@ -135,9 +334,205 @@ def test_agent_support_merges_context_sections_and_coding_tool_context(monkeypat
     )
 
     assert merged_context == "client ctx\n\ntool ctx"
-    assert "Workspace overview for the coding task:" in str(state["context"])
-    assert "client ctx" in str(state["context"])
+    assert state["context"] == "client ctx"
+    assert state["workspace_tool_name"] == "read_workspace_text"
+    assert state["workspace_tool_plan"] == {
+        "tool_name": "read_workspace_text",
+        "tool_input": {"rel_path": "backend/app/demo.txt"},
+        "reason": "Prompt references a workspace file path.",
+    }
     assert state["ui_status"] == "coding_requested"
+
+
+def test_agent_support_builds_run_inspection_request_without_workspace_tool():
+    run_id = "123e4567-e89b-12d3-a456-426614174000"
+    state = build_coding_requested_state(
+        build_agent_initial_state(
+            prompt=f"请查看 run_id {run_id} 的状态",
+            context="client ctx",
+            session_id=None,
+            emit_chat_message=False,
+        )
+    )
+
+    assert state["run_action"] == "inspect"
+    assert state["target_run_id"] == run_id
+    assert state["workspace_tool_plan"] is None
+    assert state["workspace_tool_name"] is None
+    assert select_coding_next_node(state) == "run_snapshot_node"
+
+
+def test_agent_support_builds_run_control_request_without_workspace_tool():
+    run_id = "123e4567-e89b-12d3-a456-426614174000"
+    state = build_coding_requested_state(
+        build_agent_initial_state(
+            prompt=f"请 retry run_id {run_id}",
+            context="client ctx",
+            session_id=None,
+            emit_chat_message=False,
+        )
+    )
+
+    assert state["run_action"] == "retry"
+    assert state["target_run_id"] == run_id
+    assert state["workspace_tool_plan"] is None
+    assert state["workspace_tool_name"] is None
+    assert select_coding_next_node(state) == "run_control_node"
+
+
+def test_agent_support_builds_workspace_tool_state_and_merges_context(monkeypatch):
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_support.execute_workspace_tool_plan",
+        lambda plan: {
+            "tool_name": "build_workspace_overview",
+            "reason": "Provide a compact workspace overview before creating the run.",
+            "summary": "Workspace overview for the coding task:\n- [file] README.md",
+        },
+    )
+    base_state = build_agent_initial_state(
+        prompt="write code",
+        context="client ctx",
+        session_id=None,
+        emit_chat_message=False,
+    )
+    base_state["workspace_tool_plan"] = {
+        "tool_name": "build_workspace_overview",
+        "tool_input": {"rel_path": "."},
+        "reason": "Provide a compact workspace overview before creating the run.",
+    }
+
+    state = build_workspace_tool_state(base_state)
+
+    assert state["workspace_tool_name"] == "build_workspace_overview"
+    assert state["workspace_tool_error"] is None
+    assert state["workspace_tool_context"] is not None
+    assert "client ctx" in str(state["context"])
+    assert "Workspace overview for the coding task:" in str(state["context"])
+    assert state["ui_status"] == "workspace_tool_ready"
+
+
+def test_agent_support_keeps_original_context_when_workspace_tool_fails(monkeypatch):
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_support.execute_workspace_tool_plan",
+        lambda plan: {
+            "tool_name": "read_workspace_text",
+            "reason": "Prompt references a workspace file path.",
+            "summary": "Workspace tool `read_workspace_text` failed: boom",
+            "error": "boom",
+        },
+    )
+    base_state = build_agent_initial_state(
+        prompt="write code",
+        context="client ctx",
+        session_id=None,
+        emit_chat_message=False,
+    )
+    base_state["workspace_tool_plan"] = {
+        "tool_name": "read_workspace_text",
+        "tool_input": {"rel_path": "backend/app/demo.txt"},
+        "reason": "Prompt references a workspace file path.",
+    }
+
+    state = build_workspace_tool_state(base_state)
+
+    assert state["context"] == "client ctx"
+    assert state["workspace_tool_error"] == "boom"
+    assert state["ui_status"] == "workspace_tool_failed"
+
+
+def test_agent_support_builds_run_snapshot_states():
+    base_state = build_agent_initial_state(
+        prompt="inspect run",
+        context=None,
+        session_id=None,
+        emit_chat_message=False,
+    )
+    success_state = build_run_snapshot_success_state(
+        base_state,
+        run_id="run-1",
+        status="running",
+        snapshot_summary="任务正在执行中。",
+        next_action="继续轮询任务状态。",
+    )
+    failure_state = build_run_snapshot_failure_state(
+        base_state,
+        run_id="run-2",
+        error="未找到对应的代码任务。",
+    )
+
+    assert success_state["run_id"] == "run-1"
+    assert success_state["run_action"] == "inspect"
+    assert success_state["ui_status"] == "run_snapshot_ready"
+    assert "我读取了这个代码任务的当前状态。" in success_state["output"]
+    assert failure_state["run_id"] == "run-2"
+    assert failure_state["run_action"] == "inspect"
+    assert failure_state["ui_status"] == "run_snapshot_failed"
+    assert "未找到对应的代码任务。" in failure_state["output"]
+
+
+def test_agent_support_builds_run_snapshot_progress_and_terminal_states():
+    base_state = build_agent_initial_state(
+        prompt="inspect run",
+        context=None,
+        session_id=None,
+        emit_chat_message=False,
+    )
+    progress_state = build_run_snapshot_progress_state(
+        base_state,
+        run_id="run-1",
+        status="running",
+        snapshot_summary="任务正在执行中。",
+        next_action="继续轮询任务状态。",
+        latest_attempt_summary="第 1 次尝试（本地模板）：正在执行。",
+        cancel_requested=False,
+    )
+    terminal_state = build_run_terminal_summary_state(
+        base_state,
+        run_id="run-2",
+        status="done",
+        summary_text="最终输出已经生成。",
+        next_action="任务已完成，可查看最终结果、产物或执行日志。",
+    )
+
+    assert progress_state["run_id"] == "run-1"
+    assert progress_state["ui_status"] == "run_snapshot_in_progress"
+    assert "最近一次尝试:" in progress_state["output"]
+    assert terminal_state["run_id"] == "run-2"
+    assert terminal_state["ui_status"] == "run_snapshot_terminal"
+    assert "最终总结: 最终输出已经生成。" in terminal_state["output"]
+
+
+def test_agent_support_builds_run_control_states():
+    base_state = build_agent_initial_state(
+        prompt="retry run",
+        context=None,
+        session_id=None,
+        emit_chat_message=False,
+    )
+    success_state = build_run_control_success_state(
+        base_state,
+        action="retry",
+        source_run_id="run-source-1",
+        run_id="run-1",
+        status="queued",
+        snapshot_summary="任务已创建，等待后台执行。",
+        next_action="等待后台开始执行，然后继续查询任务状态。",
+    )
+    failure_state = build_run_control_failure_state(
+        base_state,
+        action="cancel",
+        run_id="run-2",
+        error="run with status 'done' does not support cancel",
+    )
+
+    assert success_state["run_id"] == "run-1"
+    assert success_state["run_action"] == "retry"
+    assert success_state["ui_status"] == "run_control_done"
+    assert "source_run_id: run-source-1" in success_state["output"]
+    assert failure_state["run_id"] == "run-2"
+    assert failure_state["run_action"] == "cancel"
+    assert failure_state["ui_status"] == "run_control_failed"
+    assert "取消操作" in failure_state["output"]
 
 
 def test_agent_support_merges_state_and_builds_node_results():
@@ -155,6 +550,8 @@ def test_agent_support_merges_state_and_builds_node_results():
         base_state,
         run_id="run-1",
         status="queued",
+        snapshot_summary="任务已创建，等待后台执行。",
+        next_action="等待后台开始执行，然后继续查询任务状态。",
     )
     unknown_state = build_unknown_intent_state(base_state, prompt="???")
 
@@ -166,6 +563,9 @@ def test_agent_support_merges_state_and_builds_node_results():
     assert "代码任务创建失败" in failed_run_state["output"]
     assert queued_run_state["ui_status"] == "run_queued"
     assert queued_run_state["run_id"] == "run-1"
+    assert queued_run_state["run_summary"] == "任务已创建，等待后台执行。"
+    assert queued_run_state["run_next_action"] == "等待后台开始执行，然后继续查询任务状态。"
+    assert "当前快照: 任务已创建，等待后台执行。" in queued_run_state["output"]
     assert unknown_state["ui_status"] == "unknown_done"
 
 
@@ -226,6 +626,7 @@ def test_chat_service_result_can_normalize_agent_result_and_apply_updates():
             "output": "   ",
             "error": None,
             "run_id": " run-1 ",
+            "run_action": " inspect ",
         },
     )()
 
@@ -240,6 +641,7 @@ def test_chat_service_result_can_normalize_agent_result_and_apply_updates():
     assert result.is_intent("unknown") is True
     assert result.output == "fallback::unknown"
     assert result.run_id == "run-1"
+    assert result.run_action == "inspect"
     assert updated.session_id == "session-1"
     assert updated.error == "boom"
     assert result.session_id is None
@@ -256,7 +658,9 @@ def test_workflow_agent_result_can_normalize_generic_object_fields():
             "error": None,
             "run_id": " run-2 ",
             "run_status": " queued ",
+            "run_action": " create ",
             "ui_status": " run_queued ",
+            "workflow_trace": [{"step": 1, "node": "router", "event": "intent_routed"}],
         },
     )()
 
@@ -270,7 +674,9 @@ def test_workflow_agent_result_can_normalize_generic_object_fields():
     assert result.intent == "coding"
     assert result.run_id == "run-2"
     assert result.run_status == "queued"
+    assert result.run_action == "create"
     assert result.ui_status == "run_queued"
+    assert result.workflow_trace[0]["node"] == "router"
 
 
 def test_workflow_agent_result_exposes_consumption_helpers():

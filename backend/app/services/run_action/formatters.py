@@ -2,6 +2,7 @@ from ...core.text_utils import build_preview, clip_text
 from ...schemas import (
     RunAttemptResponse,
     RunResponse,
+    RunStateSnapshotResponse,
     RunSummaryResponse,
 )
 from .types import (
@@ -328,6 +329,61 @@ def build_run_completion_chat_text(
             ("状态", status),
             ("摘要", summary),
         ],
+    )
+
+
+def build_run_snapshot_next_action(record: RunRecord) -> str:
+    status = str(record.get("status") or "queued")
+    cancel_requested = bool(record.get("cancel_requested", False))
+    attempt_count = int(record.get("attempt_count") or 0)
+
+    if status == "queued":
+        return "等待后台开始执行，然后继续查询任务状态。"
+
+    if status == "running":
+        if cancel_requested:
+            return "等待当前执行结束并确认最终取消结果。"
+        if attempt_count > 0:
+            return "继续轮询任务状态；如需定位问题，可查看最近一次尝试的输出或日志。"
+        return "继续轮询任务状态，等待首次执行尝试开始。"
+
+    if status == "done":
+        return "任务已完成，可查看最终结果、产物或执行日志。"
+
+    if status == "cancelled":
+        return "任务已取消；如需继续，可重新创建任务或执行 rerun。"
+
+    return "任务已失败；可查看日志和尝试输出，或决定是否 retry / rerun。"
+
+
+def to_run_state_snapshot_response(record: RunRecord) -> RunStateSnapshotResponse:
+    attempts = get_attempt_records(record)
+    latest_attempt = attempts[-1] if attempts else None
+    status = str(record.get("status") or "queued")
+    return RunStateSnapshotResponse(
+        run_id=str(record["run_id"]),
+        status=status,
+        summary=build_run_summary_text(record),
+        next_action=build_run_snapshot_next_action(record),
+        terminal=status in {"done", "failed", "cancelled"},
+        in_progress=status in {"queued", "running"},
+        cancel_requested=bool(record.get("cancel_requested", False)),
+        attempt_count=int(record.get("attempt_count") or 0),
+        repair_count=int(record.get("repair_count") or 0),
+        latest_attempt_number=(
+            int(latest_attempt["attempt_number"])
+            if latest_attempt is not None and latest_attempt.get("attempt_number") is not None
+            else None
+        ),
+        latest_attempt_status=(
+            str(latest_attempt["status"])
+            if latest_attempt is not None and latest_attempt.get("status") is not None
+            else None
+        ),
+        latest_attempt_summary=(
+            build_attempt_summary(latest_attempt) if latest_attempt is not None else None
+        ),
+        updated_at=str(record["updated_at"]) if record.get("updated_at") is not None else None,
     )
 
 

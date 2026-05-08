@@ -8,7 +8,13 @@ from backend.app.services.run_action.formatters import (
 )
 from backend.app.services.run_action.recovery import recover_interrupted_runs
 from backend.app.services.run_action.types import ScriptGenerationResult
-from backend.app.services.run_interface import create_run, execute_run, get_run, get_run_attempt
+from backend.app.services.run_interface import (
+    create_run,
+    execute_run,
+    get_run,
+    get_run_attempt,
+    get_run_snapshot,
+)
 from backend.app.storage.run_store import append_run_attempt, update_run_record, utc_now_iso
 
 
@@ -114,6 +120,38 @@ def test_run_endpoints_expose_attempt_script_output_and_logs(client):
     summary_payload = summary_response.json()
     assert summary_payload["total"] == 1
     assert summary_payload["items"][0]["run_id"] == run.run_id
+
+
+def test_run_snapshot_exposes_structured_intermediate_and_terminal_view(client):
+    queued_run = create_run("build a calculator demo", None)
+
+    queued_snapshot = get_run_snapshot(queued_run.run_id)
+    assert queued_snapshot is not None
+    assert queued_snapshot.status == "queued"
+    assert queued_snapshot.in_progress is True
+    assert queued_snapshot.terminal is False
+    assert "等待后台开始执行" in queued_snapshot.next_action
+
+    queued_response = client.get(f"/runs/{queued_run.run_id}/snapshot")
+    assert queued_response.status_code == 200
+    queued_payload = queued_response.json()
+    assert queued_payload["status"] == "queued"
+    assert queued_payload["latest_attempt_summary"] is None
+
+    executed = execute_run(queued_run.run_id)
+    assert executed is not None
+    assert executed.status == "done"
+
+    done_response = client.get(f"/runs/{queued_run.run_id}/snapshot")
+    assert done_response.status_code == 200
+    done_payload = done_response.json()
+    assert done_payload["status"] == "done"
+    assert done_payload["terminal"] is True
+    assert done_payload["in_progress"] is False
+    assert done_payload["latest_attempt_number"] == 1
+    assert done_payload["latest_attempt_status"] == "done"
+    assert done_payload["latest_attempt_summary"] is not None
+    assert "任务已完成" in done_payload["next_action"]
 
 
 def test_recover_interrupted_runs_marks_running_attempts_failed():

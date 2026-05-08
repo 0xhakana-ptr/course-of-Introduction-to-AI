@@ -151,6 +151,36 @@ class LLMDiagnosticsResponse(BaseModel):
     fallback_used: bool = False
 
 
+class AgentDiagnosticsRequest(BaseModel):
+    prompt: str = Field(..., min_length=1, description="待诊断的用户输入")
+    context: str | None = Field(default=None, description="可选上下文")
+    intent: INTENT_TYPE | None = Field(default=None, description="可选意图提示")
+
+
+class AgentWorkflowTraceEntry(BaseModel):
+    step: int
+    node: str
+    event: str
+    ui_status: str | None = None
+    details: dict[str, Any] | None = None
+
+
+class AgentDiagnosticsResponse(BaseModel):
+    ok: bool = True
+    prompt: str
+    intent: INTENT_TYPE
+    selected_route: str
+    run_action: str | None = None
+    target_run_id: str | None = None
+    workspace_tool_name: str | None = None
+    workspace_tool_reason: str | None = None
+    workspace_tool_plan: dict[str, Any] | None = None
+    ui_status: str | None = None
+    planned_nodes: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    workflow_trace: list[AgentWorkflowTraceEntry] = Field(default_factory=list)
+
+
 class RunCreateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="任务输入")
     context: str | None = Field(default=None, description="任务上下文")
@@ -215,6 +245,22 @@ class RunResponse(BaseModel):
     log_path: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     attempts: list[RunAttemptResponse] = Field(default_factory=list)
+
+
+class RunStateSnapshotResponse(BaseModel):
+    run_id: str
+    status: RUN_STATUS
+    summary: str
+    next_action: str
+    terminal: bool = False
+    in_progress: bool = False
+    cancel_requested: bool = False
+    attempt_count: int = 0
+    repair_count: int = 0
+    latest_attempt_number: int | None = None
+    latest_attempt_status: ATTEMPT_STATUS | None = None
+    latest_attempt_summary: str | None = None
+    updated_at: str | None = None
 
 
 class RunSummaryResponse(BaseModel):

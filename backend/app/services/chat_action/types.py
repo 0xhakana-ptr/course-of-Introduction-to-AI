@@ -23,6 +23,7 @@ class ChatServiceResult:
     error: str | None = None
     session_id: str | None = None
     run_id: str | None = None
+    run_action: str | None = None
 
     def with_updates(self, **updates: object) -> "ChatServiceResult":
         return replace(self, **updates)
@@ -63,4 +64,5 @@ class ChatServiceResult:
             output=output,
             error=_normalize_optional_str(normalized_result.error),
             run_id=_normalize_optional_str(run_id),
+            run_action=_normalize_optional_str(normalized_result.run_action_name()),
         )

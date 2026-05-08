@@ -34,6 +34,7 @@ from .run_action.queries import (
     get_run_attempt_script,
     get_run_attempts,
     get_run_log,
+    get_run_snapshot,
     list_run_summaries,
     list_runs,
 )
@@ -283,6 +284,7 @@ __all__ = [
     "get_run_attempt_script",
     "get_run_attempts",
     "get_run_log",
+    "get_run_snapshot",
     "list_run_summaries",
     "list_runs",
     "rerun_run",

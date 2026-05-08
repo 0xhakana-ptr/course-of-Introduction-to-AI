@@ -16,6 +16,18 @@ def test_run_dependency_not_found_uses_standard_error_shape(client):
     assert payload["error"]["path"] == "/runs/not-found"
 
 
+def test_run_snapshot_dependency_not_found_uses_standard_error_shape(client):
+    response = client.get("/runs/not-found/snapshot")
+
+    assert response.status_code == 404
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["detail"] == "run not found"
+    assert payload["error"]["code"] == "run_not_found"
+    assert payload["error"]["message"] == "run not found"
+    assert payload["error"]["path"] == "/runs/not-found/snapshot"
+
+
 def test_run_conflict_uses_standard_error_shape(client):
     run = create_run("build a calculator demo", None)
     executed = execute_run(run.run_id)

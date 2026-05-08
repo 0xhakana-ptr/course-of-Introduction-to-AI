@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import chat_router, health_router, llm_router, message_router, run_router
+from .api import agent_router, chat_router, health_router, llm_router, message_router, run_router
 from .api.error_handlers import register_exception_handlers
 from .core.config import settings
 from .core.logging_config import configure_logging
@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health_router)
     app.include_router(llm_router)
+    app.include_router(agent_router)
     app.include_router(chat_router)
     app.include_router(run_router)
     app.include_router(message_router)
