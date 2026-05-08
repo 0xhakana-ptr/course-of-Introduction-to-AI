@@ -229,6 +229,8 @@ LLM_TIMEOUT_SECONDS=30
 LLM_SYSTEM_PROMPT=你是一个运行在 Live2D 桌宠中的 AI 伙伴。请优先使用自然、清楚、友好的中文回答。
 RUN_REPAIR_MAX_ATTEMPTS=1
 CONVERSATION_HISTORY_MAX_MESSAGES=20
+CONVERSATION_CONTEXT_RECENT_MESSAGES=8
+CONVERSATION_SUMMARY_MAX_CHARS=1200
 CHAT_CONTEXT_MAX_CHARS=6000
 ```
 
@@ -237,11 +239,15 @@ CHAT_CONTEXT_MAX_CHARS=6000
 聊天记忆相关配置：
 
 - `CONVERSATION_HISTORY_MAX_MESSAGES`：每个会话最多保留多少条历史消息，默认 `20`
+- `CONVERSATION_CONTEXT_RECENT_MESSAGES`：构建聊天上下文时，最近多少条消息保持原样，默认 `8`
+- `CONVERSATION_SUMMARY_MAX_CHARS`：对更早历史做压缩摘要时，摘要文本最多保留多少字符，默认 `1200`
 - `CHAT_CONTEXT_MAX_CHARS`：拼给 LLM 的上下文最大字符数，默认 `6000`
 - `CONVERSATION_SESSION_TTL_SECONDS`：会话持久化文件的最长保留秒数，默认 `604800`（7 天）
 - `CONVERSATION_MAX_PERSISTED_SESSIONS`：workspace 中最多保留多少个持久化会话文件，默认 `200`
 - `CONVERSATION_CLEANUP_INTERVAL_SECONDS`：后端自动清理会话文件的最小间隔秒数，默认 `60`
 - 会话历史会持久化到 `backend/workspace/conversations/`，服务重启后仍可继续读取同一个 `session_id` 的最近消息
+- 当会话历史较长时，后端会自动把更早的消息压缩成一段确定性摘要，并优先保留最近若干条消息的原始内容，以减少上下文膨胀
+- 长会话压缩后生成的摘要会写入会话 `metadata` 作为 summary cache；当 `CONVERSATION_CONTEXT_RECENT_MESSAGES`、`CONVERSATION_SUMMARY_MAX_CHARS` 等上下文策略配置未变化时，服务重启后会优先复用这份缓存，配置变化时则自动重建
 
 安全提醒：
 
@@ -296,6 +302,9 @@ Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
 当前后端除了 `/health` 和 `/chat` 之外，还提供了最小任务流接口：
 
 - `GET /llm/diagnostics`：检查当前 LLM 配置和可选的远程连通性
+- `GET /chat/sessions`：分页查看最近持久化的聊天会话元信息，适合后端调试或后续管理面板
+- `GET /chat/sessions/{session_id}`：查看指定会话的后端记忆元信息，例如消息数量和是否触发上下文压缩
+- 该接口当前还会返回 `has_summary_cache` 和 `context_strategy_version`，方便确认持久化摘要缓存是否已生成，以及当前会话使用的是哪一版上下文压缩策略
 - `DELETE /chat/sessions/{session_id}`：清空指定聊天会话的后端记忆
 - `POST /runs`：创建一个任务，并在后台执行 coding task
 - `GET /runs/summary`：读取轻量的 run 摘要列表，适合前端列表页或轮询
@@ -348,6 +357,7 @@ GET /runs/summary?offset=0&limit=20
 - 如果不传，后端会自动创建新会话
 - 响应体会返回 `session_id`
 - 后端会保存同一会话最近若干轮消息，并在下一轮聊天时自动拼入上下文
+- 可以通过 `GET /chat/sessions/{session_id}` 查看当前会话的消息数量、最近保留数量、压缩摘要预览、是否已生成摘要缓存，以及当前上下文策略版本
 - 如果需要清空记忆，可以调用 `DELETE /chat/sessions/{session_id}`
 
 当前 `/chat` 的普通聊天和 coding intent 都已经接入最小 LangGraph Agent Brain：
@@ -478,6 +488,18 @@ Invoke-RestMethod `
 Invoke-RestMethod `
   -Method DELETE `
   -Uri http://127.0.0.1:8000/chat/sessions/<session_id>
+```
+
+查看指定会话的元信息：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/chat/sessions/<session_id>
+```
+
+分页查看最近会话列表：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8000/chat/sessions?offset=0&limit=20"
 ```
 
 创建一个 run：

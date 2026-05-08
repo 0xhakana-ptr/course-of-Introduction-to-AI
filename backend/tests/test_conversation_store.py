@@ -1,5 +1,6 @@
 import os
 import time
+import json
 
 from backend.app.core.config import settings
 from backend.app.storage.conversation_store import ConversationStore
@@ -24,6 +25,207 @@ def test_conversation_store_builds_context_with_external_context():
     assert "Assistant: hi there" in context
 
 
+def test_conversation_store_compresses_older_history_in_context(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_context_recent_messages", 2)
+    monkeypatch.setattr(settings, "conversation_summary_max_chars", 300)
+    session_id = store.get_or_create_session_id("session-compress-demo")
+
+    store.append_exchange(
+        session_id,
+        user_prompt="first question with some extra words",
+        assistant_output="first answer with some extra words",
+    )
+    store.append_exchange(
+        session_id,
+        user_prompt="second question with some extra words",
+        assistant_output="second answer with some extra words",
+    )
+    store.append_exchange(
+        session_id,
+        user_prompt="third question should stay recent",
+        assistant_output="third answer should stay recent",
+    )
+
+    context = store.build_context(session_id)
+
+    assert context is not None
+    assert "Compressed earlier conversation summary:" in context
+    assert "(covering 4 earlier messages)" in context
+    assert "Recent stored conversation history:" in context
+    assert "User: third question should stay recent" in context
+    assert "Assistant: third answer should stay recent" in context
+    assert "User: first question with some extra words" in context
+    assert "Assistant: first answer with some extra words" in context
+
+
+def test_conversation_store_limits_summary_length_for_older_history(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_context_recent_messages", 2)
+    monkeypatch.setattr(settings, "conversation_summary_max_chars", 80)
+    session_id = store.get_or_create_session_id("session-summary-limit-demo")
+
+    for index in range(1, 6):
+        store.append_exchange(
+            session_id,
+            user_prompt=f"user message {index} " + ("x" * 40),
+            assistant_output=f"assistant reply {index} " + ("y" * 40),
+        )
+
+    context = store.build_context(session_id)
+
+    assert context is not None
+    assert "Compressed earlier conversation summary:" in context
+    assert "earlier messages omitted" in context
+    assert "Recent stored conversation history:" in context
+
+
+def test_conversation_store_persists_session_metadata(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_context_recent_messages", 2)
+    session_id = store.get_or_create_session_id("session-metadata-demo")
+    store.append_exchange(
+        session_id,
+        user_prompt="first question with extra words",
+        assistant_output="first answer with extra words",
+    )
+    store.append_exchange(
+        session_id,
+        user_prompt="second question with extra words",
+        assistant_output="second answer with extra words",
+    )
+
+    metadata = store.get_session_metadata(session_id)
+    session_payload = json.loads(store._get_session_path(session_id).read_text(encoding="utf-8"))
+
+    assert metadata is not None
+    assert metadata["message_count"] == 4
+    assert metadata["recent_message_count"] == 2
+    assert metadata["compressed_message_count"] == 2
+    assert metadata["has_compressed_context"] is True
+    assert metadata["compressed_summary"] is not None
+    assert metadata["context_strategy_version"] == 1
+    assert session_payload["metadata"]["message_count"] == 4
+    assert session_payload["metadata"]["compressed_message_count"] == 2
+    assert session_payload["metadata"]["compressed_summary"] is not None
+    assert session_payload["metadata"]["context_strategy_version"] == 1
+    assert session_payload["metadata"]["updated_at"] is not None
+
+
+def test_conversation_store_reuses_persisted_summary_cache_on_reload(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_context_recent_messages", 2)
+    session_id = store.get_or_create_session_id("session-summary-cache-demo")
+    store.append_exchange(
+        session_id,
+        user_prompt="first question with extra words",
+        assistant_output="first answer with extra words",
+    )
+    store.append_exchange(
+        session_id,
+        user_prompt="second question with extra words",
+        assistant_output="second answer with extra words",
+    )
+    store.append_exchange(
+        session_id,
+        user_prompt="third question with extra words",
+        assistant_output="third answer with extra words",
+    )
+
+    reloaded_store = ConversationStore()
+    monkeypatch.setattr(
+        reloaded_store,
+        "_build_history_summary",
+        lambda messages: (_ for _ in ()).throw(RuntimeError("summary should be reused from cache")),
+    )
+
+    context = reloaded_store.build_context(session_id)
+
+    assert context is not None
+    assert "Compressed earlier conversation summary:" in context
+    assert "Recent stored conversation history:" in context
+
+
+def test_conversation_store_rebuilds_summary_cache_when_context_config_changes(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_context_recent_messages", 2)
+    session_id = store.get_or_create_session_id("session-summary-rebuild-demo")
+    store.append_exchange(
+        session_id,
+        user_prompt="first question with extra words",
+        assistant_output="first answer with extra words",
+    )
+    store.append_exchange(
+        session_id,
+        user_prompt="second question with extra words",
+        assistant_output="second answer with extra words",
+    )
+    store.append_exchange(
+        session_id,
+        user_prompt="third question with extra words",
+        assistant_output="third answer with extra words",
+    )
+
+    reloaded_store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_context_recent_messages", 3)
+    original_build_history_summary = reloaded_store._build_history_summary
+    call_counter = {"count": 0}
+
+    def tracked_build_history_summary(messages):
+        call_counter["count"] += 1
+        return original_build_history_summary(messages)
+
+    monkeypatch.setattr(
+        reloaded_store,
+        "_build_history_summary",
+        tracked_build_history_summary,
+    )
+
+    context = reloaded_store.build_context(session_id)
+    metadata = reloaded_store.get_session_metadata(session_id)
+
+    assert context is not None
+    assert call_counter["count"] >= 1
+    assert metadata is not None
+    assert metadata["context_recent_messages_limit"] == 3
+
+
+def test_conversation_store_lists_sessions_with_metadata(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_context_recent_messages", 2)
+
+    store.append_exchange(
+        "session-list-1",
+        user_prompt="first prompt",
+        assistant_output="first reply",
+    )
+    store.append_exchange(
+        "session-list-2",
+        user_prompt="second prompt",
+        assistant_output="second reply",
+    )
+    store.append_exchange(
+        "session-list-2",
+        user_prompt="second prompt again",
+        assistant_output="second reply again",
+    )
+
+    total, items = store.list_sessions(offset=0, limit=10)
+    page_total, page_items = store.list_sessions(offset=1, limit=1)
+
+    assert total == 2
+    assert len(items) == 2
+    assert items[0]["session_id"] == "session-list-2"
+    assert items[0]["message_count"] == 4
+    assert items[0]["has_summary_cache"] is True
+    assert items[0]["context_strategy_version"] == 1
+    assert items[1]["session_id"] == "session-list-1"
+    assert items[1]["has_summary_cache"] is False
+    assert page_total == 2
+    assert len(page_items) == 1
+    assert page_items[0]["session_id"] == "session-list-1"
+
+
 def test_conversation_store_clear_session_returns_state():
     store = ConversationStore()
     session_id = store.get_or_create_session_id()
@@ -32,6 +234,7 @@ def test_conversation_store_clear_session_returns_state():
     assert store.clear_session(session_id) is True
     assert store.clear_session(session_id) is False
     assert store.get_messages(session_id) == []
+    assert store.get_session_metadata(session_id) is None
 
 
 def test_conversation_store_persists_messages_to_workspace():

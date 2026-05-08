@@ -14,10 +14,11 @@ def test_summarize_run_record_uses_fallback_summary_without_llm():
 
     result = summarize_run_record(record, emit_chat_message=False)
 
-    assert result["ok"] is True
-    assert result["summary_source"] == "fallback"
-    assert "run_id:" in str(result["output"])
-    assert "状态: done" in str(result["output"])
+    assert result.ok is True
+    assert result.summary_source == "fallback"
+    assert "run_id:" in result.output
+    assert "状态: done" in result.output
+    assert result.as_dict()["summary_source"] == "fallback"
 
 
 def test_summarize_run_record_uses_llm_summary_when_available(monkeypatch):
@@ -48,10 +49,10 @@ def test_summarize_run_record_uses_llm_summary_when_available(monkeypatch):
 
     result = summarize_run_record(record, emit_chat_message=False)
 
-    assert result["ok"] is True
-    assert result["summary_source"] == "llm"
-    assert result["summary_text"] == "任务已经顺利完成，结果看起来正常。"
-    assert "摘要: 任务已经顺利完成，结果看起来正常。" in str(result["output"])
+    assert result.ok is True
+    assert result.summary_source == "llm"
+    assert result.summary_text == "任务已经顺利完成，结果看起来正常。"
+    assert "摘要: 任务已经顺利完成，结果看起来正常。" in result.output
 
 
 def test_run_completion_message_uses_run_summary_graph_when_llm_summary_available(

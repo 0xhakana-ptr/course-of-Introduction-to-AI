@@ -1,10 +1,14 @@
 from fastapi import APIRouter, Request
 
+from .error_responses import COMMON_ERROR_RESPONSES
 from ..core.config import settings
 from ..services.run_interface import StartupRecoveryResult
 
 
-router = APIRouter()
+router = APIRouter(
+    tags=["health"],
+    responses=COMMON_ERROR_RESPONSES,
+)
 
 
 def serialize_startup_recovery(result: StartupRecoveryResult | None) -> dict[str, object] | None:

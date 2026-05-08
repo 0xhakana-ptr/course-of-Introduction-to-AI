@@ -1,7 +1,8 @@
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import Depends, Query
 
+from .error_responses import raise_api_http_error
 from ..schemas import (
     ATTEMPT_OUTPUT_STREAM,
     RunAttemptListResponse,
@@ -24,28 +25,32 @@ from ..services.run_interface import (
 def require_run(run_id: str) -> RunResponse:
     run = get_run(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="run not found")
+        raise_api_http_error(404, message="run not found", code="run_not_found")
     return run
 
 
 def require_run_attempts(run_id: str) -> RunAttemptListResponse:
     attempts = get_run_attempts(run_id)
     if attempts is None:
-        raise HTTPException(status_code=404, detail="run not found")
+        raise_api_http_error(404, message="run not found", code="run_not_found")
     return attempts
 
 
 def require_run_attempt(run_id: str, attempt_number: int) -> RunAttemptResponse:
     attempt = get_run_attempt(run_id, attempt_number)
     if attempt is None:
-        raise HTTPException(status_code=404, detail="attempt not found")
+        raise_api_http_error(404, message="attempt not found", code="attempt_not_found")
     return attempt
 
 
 def require_run_attempt_script(run_id: str, attempt_number: int) -> RunAttemptScriptResponse:
     script = get_run_attempt_script(run_id, attempt_number)
     if script is None:
-        raise HTTPException(status_code=404, detail="attempt script not found")
+        raise_api_http_error(
+            404,
+            message="attempt script not found",
+            code="attempt_script_not_found",
+        )
     return script
 
 
@@ -64,14 +69,18 @@ def require_run_attempt_output(
         limit=limit,
     )
     if output is None:
-        raise HTTPException(status_code=404, detail="attempt output not found")
+        raise_api_http_error(
+            404,
+            message="attempt output not found",
+            code="attempt_output_not_found",
+        )
     return output
 
 
 def require_run_log(run_id: str) -> RunLogResponse:
     run_log = get_run_log(run_id)
     if run_log is None:
-        raise HTTPException(status_code=404, detail="run not found")
+        raise_api_http_error(404, message="run not found", code="run_not_found")
     return run_log
 
 

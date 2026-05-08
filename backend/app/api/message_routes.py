@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Query
 
+from .error_responses import COMMON_ERROR_RESPONSES
 from ..message_queue import message_queue
 from ..schemas import ClearMessagesResponse, MessagesResponse
 
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/messages",
+    tags=["messages"],
+    responses=COMMON_ERROR_RESPONSES,
+)
 
 
-@router.get("/messages", response_model=MessagesResponse)
+@router.get("", response_model=MessagesResponse)
 async def get_messages(since_id: str | None = Query(default=None)):
     messages = message_queue.get_messages(since_id)
     return MessagesResponse(
@@ -17,7 +22,7 @@ async def get_messages(since_id: str | None = Query(default=None)):
     )
 
 
-@router.delete("/messages", response_model=ClearMessagesResponse)
+@router.delete("", response_model=ClearMessagesResponse)
 async def clear_messages():
     message_queue.clear()
     return ClearMessagesResponse(

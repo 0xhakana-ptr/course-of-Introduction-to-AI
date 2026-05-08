@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Query
 
+from .error_responses import COMMON_ERROR_RESPONSES
 from ..llm.client import diagnose_llm
 from ..schemas import LLMDiagnosticsResponse
 
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/llm",
+    tags=["llm"],
+    responses=COMMON_ERROR_RESPONSES,
+)
 
 
-@router.get("/llm/diagnostics", response_model=LLMDiagnosticsResponse)
+@router.get("/diagnostics", response_model=LLMDiagnosticsResponse)
 async def llm_diagnostics_route(
     check_remote: bool = Query(default=False),
 ):

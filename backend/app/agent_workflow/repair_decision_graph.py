@@ -5,19 +5,22 @@ from langgraph.graph import END, StateGraph
 from ..core.text_utils import build_preview
 from ..llm.client import call_llm_sync, llm_is_configured
 from ..services.run_action.codegen import generate_repaired_script_with_llm
-from ..services.run_action.formatters import (
-    build_attempt_record_snapshot,
-    build_attempt_summary,
-    build_repair_retry_feedback_text,
-)
 from ..services.run_action.types import (
     CommandResult,
-    RepairDecisionResult,
-    RepairWorkflowResult,
     RetryGuidance,
     ScriptGenerationResult,
+    WorkflowChatMessage,
 )
-from .summary_support import resolve_summary_text
+from .repair_support import (
+    REPAIR_DECISION_ONLY_MODE,
+    REPAIR_EXECUTION_MODE,
+    build_repair_feedback_message,
+    invoke_repair_graph,
+    select_repair_graph_next_step,
+)
+from .retry_guidance import maybe_build_retry_guidance_for_repair_decision
+from .summary_support import apply_text_resolution, build_prompt_text, resolve_summary_text
+from .workflow_results import WorkflowRepairResult
 
 
 REPAIR_ANALYSIS_SYSTEM_PROMPT = """你是 LangGraph 中负责失败分析的 QA 节点。
@@ -56,7 +59,7 @@ class RepairDecisionState(TypedDict, total=False):
     should_attempt_repair: bool
     generate_repair_script: bool
     generate_feedback: bool
-    feedback_text: str | None
+    feedback_message: WorkflowChatMessage | None
     retry_guidance: RetryGuidance | None
     repaired_result: ScriptGenerationResult | None
 
@@ -88,7 +91,7 @@ def build_repair_analysis_prompt(state: RepairDecisionState) -> str:
         str(state.get("script_content") or ""),
         limit=SCRIPT_PREVIEW_LIMIT,
     ) or "(empty)"
-    return "\n".join(
+    return build_prompt_text(
         [
             "请分析下面这次脚本执行失败，并给出一条简短的中文修复分析。",
             f"用户任务: {state.get('prompt') or '(none)'}",
@@ -139,26 +142,6 @@ def route_by_eligibility(state: RepairDecisionState) -> str:
     return "qa_node" if bool(state.get("eligible")) else "decision_node"
 
 
-def build_retry_guidance(
-    *,
-    current_generator: str,
-    should_attempt_repair: bool,
-) -> RetryGuidance | None:
-    if current_generator != "llm_repair":
-        return None
-
-    if should_attempt_repair:
-        return RetryGuidance(
-            node_name="task_retry_repairing",
-            next_action="我会继续分析这次失败，并决定是否进入下一轮自动修复。",
-        )
-
-    return RetryGuidance(
-        node_name="task_retry_failed",
-        next_action="这轮自动修复后的尝试仍未成功，我会结束当前任务并整理失败原因。",
-    )
-
-
 def qa_node(state: RepairDecisionState) -> RepairDecisionState:
     if not bool(state.get("eligible")):
         return state
@@ -171,11 +154,12 @@ def qa_node(state: RepairDecisionState) -> RepairDecisionState:
         llm_is_configured_fn=llm_is_configured,
         call_llm_sync_fn=call_llm_sync,
     )
-    return {
-        **state,
-        "analysis_note": resolution.text,
-        "analysis_source": resolution.source,
-    }
+    return apply_text_resolution(
+        state,
+        resolution=resolution,
+        text_key="analysis_note",
+        source_key="analysis_source",
+    )
 
 
 def decision_node(state: RepairDecisionState) -> RepairDecisionState:
@@ -187,7 +171,7 @@ def decision_node(state: RepairDecisionState) -> RepairDecisionState:
         return {
             **state,
             "should_attempt_repair": False,
-            "retry_guidance": build_retry_guidance(
+            "retry_guidance": maybe_build_retry_guidance_for_repair_decision(
                 current_generator=current_generator,
                 should_attempt_repair=False,
             ),
@@ -200,7 +184,7 @@ def decision_node(state: RepairDecisionState) -> RepairDecisionState:
             "失败分析已完成，准备尝试自动修复"
             f"（{repair_count + 1}/{max_repair_attempts}）。"
         ),
-        "retry_guidance": build_retry_guidance(
+        "retry_guidance": maybe_build_retry_guidance_for_repair_decision(
             current_generator=current_generator,
             should_attempt_repair=True,
         ),
@@ -208,39 +192,27 @@ def decision_node(state: RepairDecisionState) -> RepairDecisionState:
 
 
 def route_after_decision(state: RepairDecisionState) -> str:
-    if not bool(state.get("should_attempt_repair")):
-        return "end"
-    if bool(state.get("generate_feedback", False)):
-        return "compose_feedback_node"
-    if bool(state.get("generate_repair_script", False)):
-        return "repair_codegen_node"
-    return "end"
+    return select_repair_graph_next_step(state)
 
 
 def compose_feedback_node(state: RepairDecisionState) -> RepairDecisionState:
-    attempt_record = build_attempt_record_snapshot(
-        attempt_number=int(state.get("attempt_number") or 0),
-        generator=str(state.get("current_generator") or "unknown"),
-        repair_round=int(state.get("repair_count") or 0),
-        result=state["failure_result"],
-    )
-    attempt_summary = build_attempt_summary(attempt_record)
-    feedback_text = build_repair_retry_feedback_text(
-        run_id=str(state.get("run_id") or ""),
-        attempt_summary=attempt_summary,
-        analysis_note=state.get("analysis_note"),
-        next_repair_round=int(state.get("repair_count") or 0) + 1,
-    )
     return {
         **state,
-        "feedback_text": feedback_text,
+        "feedback_message": build_repair_feedback_message(
+            run_id=str(state.get("run_id") or ""),
+            attempt_number=int(state.get("attempt_number") or 0),
+            current_generator=str(state.get("current_generator") or "unknown"),
+            repair_count=int(state.get("repair_count") or 0),
+            failure_result=state["failure_result"],
+            analysis_note=(
+                str(state.get("analysis_note") or "").strip() or None
+            ),
+        ),
     }
 
 
 def route_after_feedback(state: RepairDecisionState) -> str:
-    if bool(state.get("generate_repair_script", False)):
-        return "repair_codegen_node"
-    return "end"
+    return select_repair_graph_next_step(state, after_feedback=True)
 
 
 def repair_codegen_node(state: RepairDecisionState) -> RepairDecisionState:
@@ -255,79 +227,6 @@ def repair_codegen_node(state: RepairDecisionState) -> RepairDecisionState:
         **state,
         "repaired_result": repaired_result,
     }
-
-
-def build_repair_initial_state(
-    *,
-    run_id: str,
-    prompt: str,
-    context: str | None,
-    file_name: str,
-    script_content: str,
-    failure_result: CommandResult,
-    attempt_number: int,
-    current_generator: str,
-    repair_count: int,
-    max_repair_attempts: int,
-    llm_configured: bool,
-    generate_repair_script: bool,
-    generate_feedback: bool,
-) -> RepairDecisionState:
-    return {
-        "run_id": run_id,
-        "prompt": prompt,
-        "context": context,
-        "file_name": file_name,
-        "script_content": script_content,
-        "failure_result": failure_result,
-        "attempt_number": attempt_number,
-        "current_generator": current_generator,
-        "repair_count": repair_count,
-        "max_repair_attempts": max_repair_attempts,
-        "llm_configured": llm_configured,
-        "eligible": False,
-        "failure_summary": "",
-        "analysis_note": "",
-        "analysis_source": "fallback",
-        "decision_reason": "",
-        "should_attempt_repair": False,
-        "generate_repair_script": generate_repair_script,
-        "generate_feedback": generate_feedback,
-        "feedback_text": None,
-        "retry_guidance": None,
-        "repaired_result": None,
-    }
-
-
-def _build_repair_result_kwargs(result: RepairDecisionState) -> dict[str, object]:
-    return {
-        "should_attempt_repair": bool(result.get("should_attempt_repair", False)),
-        "reason": str(result.get("decision_reason") or "当前运行不满足自动修复条件。"),
-        "analysis_note": str(result.get("analysis_note") or result.get("failure_summary") or ""),
-        "analysis_source": str(result.get("analysis_source") or "fallback"),
-        "failure_summary": str(result.get("failure_summary") or ""),
-    }
-
-
-def _to_repair_decision_result(result: RepairDecisionState) -> RepairDecisionResult:
-    return RepairDecisionResult(**_build_repair_result_kwargs(result))
-
-
-def _to_repair_workflow_result(result: RepairDecisionState) -> RepairWorkflowResult:
-    return RepairWorkflowResult(
-        **_build_repair_result_kwargs(result),
-        repaired_result=result.get("repaired_result"),
-        feedback_text=(
-            str(result.get("feedback_text"))
-            if result.get("feedback_text") is not None
-            else None
-        ),
-        retry_guidance=(
-            result.get("retry_guidance")
-            if isinstance(result.get("retry_guidance"), RetryGuidance)
-            else None
-        ),
-    )
 
 
 def create_repair_decision_graph():
@@ -383,8 +282,10 @@ def evaluate_repair_decision(
     repair_count: int,
     max_repair_attempts: int,
     llm_configured: bool,
-) -> RepairDecisionResult:
-    initial_state = build_repair_initial_state(
+) -> WorkflowRepairResult:
+    return invoke_repair_graph(
+        repair_decision_graph,
+        workflow_mode=REPAIR_DECISION_ONLY_MODE,
         run_id="",
         prompt=prompt,
         context=context,
@@ -396,12 +297,7 @@ def evaluate_repair_decision(
         repair_count=repair_count,
         max_repair_attempts=max_repair_attempts,
         llm_configured=llm_configured,
-        generate_repair_script=False,
-        generate_feedback=False,
     )
-
-    result = repair_decision_graph.invoke(initial_state)
-    return _to_repair_decision_result(result)
 
 
 def run_repair_workflow(
@@ -417,8 +313,10 @@ def run_repair_workflow(
     repair_count: int,
     max_repair_attempts: int,
     llm_configured: bool,
-) -> RepairWorkflowResult:
-    initial_state = build_repair_initial_state(
+) -> WorkflowRepairResult:
+    return invoke_repair_graph(
+        repair_decision_graph,
+        workflow_mode=REPAIR_EXECUTION_MODE,
         run_id=run_id,
         prompt=prompt,
         context=context,
@@ -430,9 +328,4 @@ def run_repair_workflow(
         repair_count=repair_count,
         max_repair_attempts=max_repair_attempts,
         llm_configured=llm_configured,
-        generate_repair_script=True,
-        generate_feedback=True,
     )
-
-    result = repair_decision_graph.invoke(initial_state)
-    return _to_repair_workflow_result(result)

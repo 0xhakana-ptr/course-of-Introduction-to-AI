@@ -53,17 +53,17 @@ async def build_agent_reply(
             error=str(exc),
         )
 
-    resolved_intent = result.get("intent", intent or "unknown")
+    resolved_intent = result.intent or intent or "unknown"
     if resolved_intent not in {"chat", "coding", "unknown"}:
         resolved_intent = "unknown"
 
-    output = str(result.get("output") or "").strip() or _fallback_output(resolved_intent)
-    error = str(result.get("error")) if result.get("error") is not None else None
+    output = result.output.strip() or _fallback_output(resolved_intent)
+    error = str(result.error) if result.error is not None else None
 
     return ChatServiceResult(
         intent=resolved_intent,
-        ok=bool(result.get("ok", True)),
+        ok=result.ok,
         output=output,
         error=error,
-        run_id=str(result.get("run_id")) if result.get("run_id") is not None else None,
+        run_id=str(result.run_id) if result.run_id is not None else None,
     )

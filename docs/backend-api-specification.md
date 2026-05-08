@@ -53,6 +53,7 @@
 - `agent_workflow` 通过 lazy import 暴露，缺少依赖时不会阻塞主服务启动。
 - `/chat` 支持轻量会话记忆。请求可传 `session_id`，响应会返回 `session_id`。
 - 后端会保存同一会话中的最近若干轮消息，并在下一次聊天时自动拼入上下文。
+- 会话元信息当前可以通过 `GET /chat/sessions` 和 `GET /chat/sessions/{session_id}` 直接观察；其中会暴露 `has_summary_cache` 与 `context_strategy_version`，便于排查长会话压缩和摘要缓存是否生效。
 
 ### 2.2 任务执行链路
 
@@ -217,7 +218,70 @@
 - coding 任务的执行状态继续通过 `GET /runs/{run_id}`、`GET /runs/{run_id}/attempts` 和 `GET /messages` 查询。
 - 对于直接通过 `/chat` 返回的聊天正文，后端不会再额外向消息队列重复写入同一条 `agent:chat`，以避免聊天窗口重复显示。
 
-### 3.4 `DELETE /chat/sessions/{session_id}`
+### 3.4.1 `GET /chat/sessions`
+
+查询参数：
+
+- `offset`
+- `limit`
+
+用途：
+
+- 分页查看最近持久化的聊天会话元信息
+- 观察哪些会话已经触发上下文压缩或生成摘要缓存
+
+返回体示例：
+
+```json
+{
+  "ok": true,
+  "total": 2,
+  "offset": 0,
+  "limit": 20,
+  "items": [
+    {
+      "session_id": "session id",
+      "message_count": 4,
+      "recent_message_count": 2,
+      "compressed_message_count": 2,
+      "has_compressed_context": true,
+      "has_summary_cache": true,
+      "summary_preview": "User: hello...",
+      "context_strategy_version": 1,
+      "last_message_at": "2026-05-08T08:00:00+00:00",
+      "updated_at": "2026-05-08T08:00:00+00:00"
+    }
+  ]
+}
+```
+
+### 3.4.2 `GET /chat/sessions/{session_id}`
+
+用途：
+
+- 查看单个会话的后端记忆元信息
+- 确认当前会话是否已经触发长历史压缩或摘要缓存
+
+返回体示例：
+
+```json
+{
+  "ok": true,
+  "session_id": "session id",
+  "exists": true,
+  "message_count": 6,
+  "recent_message_count": 2,
+  "compressed_message_count": 4,
+  "has_compressed_context": true,
+  "has_summary_cache": true,
+  "summary_preview": "User: first hello...",
+  "context_strategy_version": 1,
+  "last_message_at": "2026-05-08T08:00:00+00:00",
+  "updated_at": "2026-05-08T08:00:00+00:00"
+}
+```
+
+### 3.4.3 `DELETE /chat/sessions/{session_id}`
 
 用途：
 

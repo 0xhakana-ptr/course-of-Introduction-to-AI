@@ -2,6 +2,12 @@ from backend.app.agent_workflow.repair_decision_graph import (
     evaluate_repair_decision,
     run_repair_workflow,
 )
+from backend.app.agent_workflow.retry_guidance import build_retry_guidance
+from backend.app.agent_workflow.repair_support import (
+    build_repair_feedback_message,
+    select_repair_graph_next_step,
+)
+from backend.app.agent_workflow.workflow_results import WorkflowRepairResult
 from backend.app.services.run_action.types import ScriptGenerationResult
 
 
@@ -26,6 +32,8 @@ def test_repair_decision_graph_blocks_when_llm_is_unavailable():
     assert decision.should_attempt_repair is False
     assert decision.reason == "未配置真实大模型，无法自动修复失败脚本。"
     assert "RuntimeError" in decision.analysis_note
+    assert decision.output == decision.reason
+    assert decision.as_dict()["reason"] == decision.reason
 
 
 def test_repair_decision_graph_allows_repair_when_budget_remains():
@@ -49,6 +57,7 @@ def test_repair_decision_graph_allows_repair_when_budget_remains():
     assert decision.should_attempt_repair is True
     assert "准备尝试自动修复" in decision.reason
     assert decision.analysis_source in {"fallback", "llm"}
+    assert decision.state["should_attempt_repair"] is True
 
 
 def test_repair_decision_graph_uses_llm_analysis_when_available(monkeypatch):
@@ -89,6 +98,7 @@ def test_repair_decision_graph_uses_llm_analysis_when_available(monkeypatch):
     assert decision.should_attempt_repair is True
     assert decision.analysis_source == "llm"
     assert "建议针对报错位置修正逻辑后再重试" in decision.analysis_note
+    assert decision.as_dict()["analysis_source"] == "llm"
 
 
 def test_repair_workflow_graph_returns_generated_script(monkeypatch):
@@ -127,10 +137,14 @@ def test_repair_workflow_graph_returns_generated_script(monkeypatch):
     assert result.repaired_result is not None
     assert result.repaired_result.ok is True
     assert result.repaired_result.file_name == "repaired_demo.py"
+    assert result.feedback_message is not None
+    assert result.feedback_message.node_name == "task_repairing"
     assert result.feedback_text is not None
     assert result.retry_guidance is None
     assert result.retry_next_action is None
     assert result.retry_node_name is None
+    assert result.output == result.feedback_text
+    assert result.as_dict()["feedback_text"] == result.feedback_text
     assert "run_id: run_demo_1" in result.feedback_text
     assert "下一步:" in result.feedback_text
 
@@ -170,10 +184,12 @@ def test_repair_workflow_graph_skips_generation_when_repair_is_blocked(monkeypat
 
     assert result.should_attempt_repair is False
     assert result.repaired_result is None
+    assert result.feedback_message is None
     assert result.feedback_text is None
     assert result.retry_guidance is None
     assert result.retry_next_action is None
     assert result.retry_node_name is None
+    assert result.output == result.reason
     assert called["value"] is False
 
 
@@ -206,3 +222,88 @@ def test_repair_workflow_graph_returns_retry_guidance_for_failed_repair_attempt(
     assert result.retry_node_name == "task_retry_repairing"
     assert result.retry_next_action is not None
     assert "继续分析这次失败" in result.retry_next_action
+    assert result.as_dict()["retry_node_name"] == "task_retry_repairing"
+
+
+def test_workflow_repair_result_can_normalize_generic_object_fields():
+    fake_repair_workflow = type(
+        "FakeRepairWorkflow",
+        (),
+        {
+            "should_attempt_repair": False,
+            "reason": "模拟的 QA 决策：这次不继续自动修复。",
+            "analysis_note": "这是一个受控失败场景，直接结束更合适。",
+            "analysis_source": "test",
+            "failure_summary": "simulated failure summary",
+            "feedback_text": "我已经分析完这次失败了。",
+            "feedback_node_name": "task_repairing",
+            "retry_node_name": "task_retry_failed",
+            "retry_next_action": "我会结束当前任务并整理失败原因。",
+        },
+    )()
+
+    result = WorkflowRepairResult.from_value(fake_repair_workflow)
+
+    assert result.should_attempt_repair is False
+    assert result.reason == "模拟的 QA 决策：这次不继续自动修复。"
+    assert result.analysis_note == "这是一个受控失败场景，直接结束更合适。"
+    assert result.feedback_text == "我已经分析完这次失败了。"
+    assert result.feedback_node_name == "task_repairing"
+    assert result.retry_node_name == "task_retry_failed"
+    assert result.retry_next_action == "我会结束当前任务并整理失败原因。"
+    assert result.output == "我已经分析完这次失败了。"
+    assert result.as_dict()["feedback_node_name"] == "task_repairing"
+
+
+def test_repair_support_selects_next_step_consistently():
+    assert select_repair_graph_next_step({"should_attempt_repair": False}) == "end"
+    assert (
+        select_repair_graph_next_step(
+            {
+                "should_attempt_repair": True,
+                "generate_feedback": True,
+                "generate_repair_script": True,
+            }
+        )
+        == "compose_feedback_node"
+    )
+    assert (
+        select_repair_graph_next_step(
+            {
+                "should_attempt_repair": True,
+                "generate_feedback": True,
+                "generate_repair_script": True,
+            },
+            after_feedback=True,
+        )
+        == "repair_codegen_node"
+    )
+
+
+def test_repair_support_builds_feedback_message():
+    message = build_repair_feedback_message(
+        run_id="run_demo_4",
+        attempt_number=2,
+        current_generator="llm_repair",
+        repair_count=1,
+        failure_result={
+            "command": "python broken_demo.py",
+            "returncode": 1,
+            "stderr": "Traceback ... RuntimeError: retry failure",
+            "stdout": "retry still fails",
+            "error": "RuntimeError: retry failure",
+        },
+        analysis_note="这次自动修复后的脚本仍然在运行时报错。",
+    )
+
+    assert message.node_name == "task_repairing"
+    assert "run_id: run_demo_4" in message.content
+    assert "分析:" in message.content
+    assert "下一步:" in message.content
+
+
+def test_retry_guidance_builder_returns_expected_mapping():
+    guidance = build_retry_guidance("task_retry_done")
+
+    assert guidance.node_name == "task_retry_done"
+    assert "整理最终结果" in guidance.next_action

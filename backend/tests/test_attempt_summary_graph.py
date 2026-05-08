@@ -10,10 +10,11 @@ def test_attempt_summary_graph_uses_fallback_summary_without_llm():
         emit_chat_message=False,
     )
 
-    assert result["ok"] is True
-    assert result["summary_source"] == "fallback"
-    assert "run_id: run_demo_1" in str(result["output"])
-    assert "下一步:" in str(result["output"])
+    assert result.ok is True
+    assert result.summary_source == "fallback"
+    assert "run_id: run_demo_1" in result.output
+    assert "下一步:" in result.output
+    assert result.as_dict()["summary_text"] == result.summary_text
 
 
 def test_attempt_summary_graph_uses_llm_summary_when_available(monkeypatch):
@@ -42,7 +43,7 @@ def test_attempt_summary_graph_uses_llm_summary_when_available(monkeypatch):
         emit_chat_message=False,
     )
 
-    assert result["ok"] is True
-    assert result["summary_source"] == "llm"
-    assert "摘要" not in str(result["summary_text"])
-    assert "自动修复后的这轮尝试已经成功" in str(result["output"])
+    assert result.ok is True
+    assert result.summary_source == "llm"
+    assert "摘要" not in result.summary_text
+    assert "自动修复后的这轮尝试已经成功" in result.output

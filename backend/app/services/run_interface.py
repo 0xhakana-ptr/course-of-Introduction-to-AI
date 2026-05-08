@@ -13,18 +13,15 @@ from .run_action.control import clear_run_control, ensure_run_control, request_r
 from .run_action.execution import execute_script_attempt
 from .run_action.formatters import to_run_response
 from .run_action.lifecycle import (
+    advance_repair_phase,
     apply_repaired_script,
     begin_attempt,
-    block_repair,
     emit_final_run_chat_message,
-    emit_repair_feedback_message,
+    finalize_attempt_terminal_result,
     finalize_exception,
     finalize_cancelled,
     finalize_failure,
-    finalize_success,
     initialize_run_execution,
-    mark_repair_requested,
-    maybe_emit_retry_outcome_for_repair_attempt,
     record_attempt_result,
     repair_llm_is_available,
     run_cancel_requested,
@@ -40,8 +37,7 @@ from .run_action.queries import (
     list_runs,
 )
 from .run_action.recovery import recover_interrupted_runs
-from .run_action.types import RunActionError, ScriptGenerationResult, StartupRecoveryResult
-from .run_action.types import RetryGuidance
+from .run_action.types import RunActionError, StartupRecoveryResult
 
 
 def _finalize_queued_run(
@@ -84,18 +80,27 @@ def _create_follow_up_run(
 ) -> RunResponse:
     source_record = load_run_record(source_run_id, allow_invalid=True)
     if source_record is None:
-        raise RunActionError("source run not found", status_code=404)
+        raise RunActionError(
+            "source run not found",
+            status_code=404,
+            code="source_run_not_found",
+        )
 
     source_status = str(source_record.get("status") or "")
     if source_status not in allowed_statuses:
         raise RunActionError(
             f"run with status '{source_status}' does not support {trigger_mode}",
             status_code=409,
+            code=f"run_cannot_{trigger_mode}",
         )
 
     prompt = str(source_record.get("prompt") or "").strip()
     if not prompt:
-        raise RunActionError("source run prompt is empty", status_code=400)
+        raise RunActionError(
+            "source run prompt is empty",
+            status_code=400,
+            code="source_run_prompt_empty",
+        )
 
     context = str(source_record.get("context")) if source_record.get("context") is not None else None
     record = create_run_record(
@@ -136,13 +141,14 @@ def rerun_run(source_run_id: str) -> RunResponse:
 def cancel_run(run_id: str) -> RunResponse:
     record = load_run_record(run_id)
     if record is None:
-        raise RunActionError("run not found", status_code=404)
+        raise RunActionError("run not found", status_code=404, code="run_not_found")
 
     status = str(record.get("status") or "")
     if status in {"done", "failed", "cancelled"}:
         raise RunActionError(
             f"run with status '{status}' does not support cancel",
             status_code=409,
+            code="run_cannot_cancel",
         )
 
     if status == "queued":
@@ -206,46 +212,14 @@ def execute_run(run_id: str) -> RunResponse | None:
             )
             record_attempt_result(run_id, state, result)
 
-            if bool(result.get("cancelled")):
-                maybe_emit_retry_outcome_for_repair_attempt(
-                    run_id=run_id,
-                    state=state,
-                    result=result,
-                    guidance=RetryGuidance(
-                        node_name="task_retry_cancelled",
-                        next_action="这轮自动修复后的尝试已取消，我会停止后续执行并整理当前状态。",
-                    ),
-                )
-                return finalize_cancelled(
-                    run_id,
-                    state,
-                    result=result,
-                    reason=str(result.get("error") or "用户取消了当前任务。"),
-                )
-
-            if bool(result.get("ok")):
-                maybe_emit_retry_outcome_for_repair_attempt(
-                    run_id=run_id,
-                    state=state,
-                    result=result,
-                    guidance=RetryGuidance(
-                        node_name="task_retry_done",
-                        next_action="这轮自动修复后的尝试已经成功，我会整理最终结果。",
-                    ),
-                )
-                return finalize_success(run_id, state, result)
-
-            if run_cancel_requested(run_id):
-                maybe_emit_retry_outcome_for_repair_attempt(
-                    run_id=run_id,
-                    state=state,
-                    result=result,
-                    guidance=RetryGuidance(
-                        node_name="task_retry_cancelled",
-                        next_action="系统已收到取消请求，我会停止后续修复并整理当前状态。",
-                    ),
-                )
-                return finalize_cancelled(run_id, state, result=result)
+            terminal_response = finalize_attempt_terminal_result(
+                run_id,
+                state,
+                result,
+                cancel_requested=run_cancel_requested(run_id),
+            )
+            if terminal_response is not None:
+                return terminal_response
 
             repair_workflow = run_repair_workflow(
                 run_id=run_id,
@@ -261,64 +235,29 @@ def execute_run(run_id: str) -> RunResponse | None:
                 llm_configured=repair_llm_is_available(),
             )
 
-            maybe_emit_retry_outcome_for_repair_attempt(
+            repair_phase = advance_repair_phase(
                 run_id=run_id,
                 state=state,
                 result=result,
-                guidance=(
-                    getattr(repair_workflow, "retry_guidance", None)
-                    or RetryGuidance(
-                        node_name=(
-                            getattr(repair_workflow, "retry_node_name", None)
-                            or (
-                                "task_retry_repairing"
-                                if repair_workflow.should_attempt_repair
-                                else "task_retry_failed"
-                            )
-                        ),
-                        next_action=(
-                            getattr(repair_workflow, "retry_next_action", None)
-                            or (
-                                "我会继续分析这次失败，并决定是否进入下一轮自动修复。"
-                                if repair_workflow.should_attempt_repair
-                                else "这轮自动修复后的尝试仍未成功，我会结束当前任务并整理失败原因。"
-                            )
-                        ),
-                    )
-                ),
+                repair_workflow=repair_workflow,
             )
 
-            if not repair_workflow.should_attempt_repair:
-                block_repair(
-                    run_id,
-                    state,
-                    note=repair_workflow.reason,
-                    analysis_note=repair_workflow.analysis_note,
-                    analysis_source=repair_workflow.analysis_source,
-                )
-                break
-
-            mark_repair_requested(
-                run_id,
-                state,
-                analysis_note=repair_workflow.analysis_note,
-                analysis_source=repair_workflow.analysis_source,
-            )
-            emit_repair_feedback_message(repair_workflow.feedback_text)
-            if run_cancel_requested(run_id):
-                return finalize_cancelled(run_id, state, result=result)
-            repaired_result = repair_workflow.repaired_result or ScriptGenerationResult(
-                ok=False,
-                error="自动修复工作流未返回修复脚本。",
-            )
-            if run_cancel_requested(run_id):
+            if repair_phase.outcome == "cancel":
                 return finalize_cancelled(
                     run_id,
                     state,
                     result=result,
-                    reason="用户在自动修复阶段取消了当前任务。",
+                    reason=repair_phase.cancel_reason or "用户在自动修复阶段取消了当前任务。",
                 )
-            if not apply_repaired_script(run_id, state, repaired_result):
+
+            if repair_phase.outcome == "stop":
+                break
+
+            if not apply_repaired_script(
+                run_id,
+                state,
+                repair_phase.require_repaired_result(),
+            ):
                 break
 
         if state.last_result is None:

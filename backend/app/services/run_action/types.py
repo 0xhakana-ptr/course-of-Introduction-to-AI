@@ -1,5 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
+
+from ...agent_workflow.workflow_results import WorkflowRepairResult
 
 
 LLM_PREVIEW_LIMIT = 400
@@ -25,38 +27,44 @@ class ScriptGenerationResult:
 
 
 @dataclass(slots=True)
-class RepairAssessmentResult:
-    should_attempt_repair: bool
-    reason: str
-    analysis_note: str
-    analysis_source: str = "fallback"
-    failure_summary: str = ""
-
-
-@dataclass(slots=True)
-class RepairDecisionResult(RepairAssessmentResult):
-    pass
-
-
-@dataclass(slots=True)
 class RetryGuidance:
     node_name: str
     next_action: str
 
 
 @dataclass(slots=True)
-class RepairWorkflowResult(RepairAssessmentResult):
+class WorkflowChatMessage:
+    node_name: str
+    content: str
+
+
+RepairAssessmentResult = WorkflowRepairResult
+RepairDecisionResult = WorkflowRepairResult
+RepairWorkflowResult = WorkflowRepairResult
+
+
+@dataclass(slots=True)
+class RepairPhaseResolution:
+    outcome: Literal["retry", "stop", "cancel"]
     repaired_result: ScriptGenerationResult | None = None
-    feedback_text: str | None = None
-    retry_guidance: RetryGuidance | None = None
+    cancel_reason: str | None = None
 
-    @property
-    def retry_next_action(self) -> str | None:
-        return self.retry_guidance.next_action if self.retry_guidance is not None else None
+    @classmethod
+    def retry(cls, repaired_result: ScriptGenerationResult) -> "RepairPhaseResolution":
+        return cls(outcome="retry", repaired_result=repaired_result)
 
-    @property
-    def retry_node_name(self) -> str | None:
-        return self.retry_guidance.node_name if self.retry_guidance is not None else None
+    @classmethod
+    def stop(cls) -> "RepairPhaseResolution":
+        return cls(outcome="stop")
+
+    @classmethod
+    def cancel(cls, reason: str) -> "RepairPhaseResolution":
+        return cls(outcome="cancel", cancel_reason=reason)
+
+    def require_repaired_result(self) -> ScriptGenerationResult:
+        if self.repaired_result is None:
+            raise RuntimeError("repair phase did not produce a repaired script")
+        return self.repaired_result
 
 
 @dataclass(slots=True)
@@ -68,10 +76,17 @@ class StartupRecoveryResult:
 
 
 class RunActionError(Exception):
-    def __init__(self, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 400,
+        *,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.status_code = status_code
+        self.code = code
 
 
 @dataclass(slots=True)

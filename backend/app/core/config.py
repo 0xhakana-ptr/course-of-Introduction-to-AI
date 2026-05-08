@@ -15,6 +15,9 @@ DEFAULT_LLM_SYSTEM_PROMPT = """
 如果用户提出代码或工具任务，可以说明将通过后端任务流程处理。
 """.strip()
 
+DEFAULT_CONVERSATION_CONTEXT_RECENT_MESSAGES = 8
+DEFAULT_CONVERSATION_SUMMARY_MAX_CHARS = 1200
+
 
 class Settings:
     def __init__(self) -> None:
@@ -63,6 +66,26 @@ class Settings:
         history_max_raw = os.getenv("CONVERSATION_HISTORY_MAX_MESSAGES", "20").strip()
         self.conversation_history_max_messages = (
             int(history_max_raw) if history_max_raw.isdigit() else 20
+        )
+
+        recent_messages_raw = os.getenv(
+            "CONVERSATION_CONTEXT_RECENT_MESSAGES",
+            str(DEFAULT_CONVERSATION_CONTEXT_RECENT_MESSAGES),
+        ).strip()
+        self.conversation_context_recent_messages = (
+            int(recent_messages_raw)
+            if recent_messages_raw.isdigit()
+            else DEFAULT_CONVERSATION_CONTEXT_RECENT_MESSAGES
+        )
+
+        summary_max_raw = os.getenv(
+            "CONVERSATION_SUMMARY_MAX_CHARS",
+            str(DEFAULT_CONVERSATION_SUMMARY_MAX_CHARS),
+        ).strip()
+        self.conversation_summary_max_chars = (
+            int(summary_max_raw)
+            if summary_max_raw.isdigit()
+            else DEFAULT_CONVERSATION_SUMMARY_MAX_CHARS
         )
 
         chat_context_max_raw = os.getenv("CHAT_CONTEXT_MAX_CHARS", "6000").strip()

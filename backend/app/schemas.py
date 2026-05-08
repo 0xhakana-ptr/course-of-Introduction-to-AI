@@ -42,6 +42,32 @@ class ClearConversationResponse(BaseModel):
     message: str
 
 
+class ConversationSessionInfo(BaseModel):
+    session_id: str
+    message_count: int = 0
+    recent_message_count: int = 0
+    compressed_message_count: int = 0
+    has_compressed_context: bool = False
+    has_summary_cache: bool = False
+    summary_preview: str | None = None
+    context_strategy_version: int | None = None
+    last_message_at: str | None = None
+    updated_at: str | None = None
+
+
+class ConversationSessionMetadataResponse(ConversationSessionInfo):
+    ok: bool = True
+    exists: bool
+
+
+class ConversationSessionListResponse(BaseModel):
+    ok: bool = True
+    total: int = 0
+    offset: int = 0
+    limit: int = 0
+    items: list[ConversationSessionInfo] = Field(default_factory=list)
+
+
 class MessageEnvelope(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -74,6 +100,19 @@ class MessagesResponse(BaseModel):
 class ClearMessagesResponse(BaseModel):
     ok: bool = True
     message: str
+
+
+class ApiErrorInfo(BaseModel):
+    code: str
+    message: str
+    path: str | None = None
+    details: Any | None = None
+
+
+class ApiErrorResponse(BaseModel):
+    ok: Literal[False] = False
+    error: ApiErrorInfo
+    detail: str
 
 
 class LLMDiagnosticsResponse(BaseModel):

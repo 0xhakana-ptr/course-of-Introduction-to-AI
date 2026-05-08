@@ -10,13 +10,13 @@ from ..services.run_action.formatters import (
 )
 from ..services.run_action.types import RunRecord
 from .summary_support import (
-    apply_summary_resolution,
-    build_summary_graph_result,
-    build_summary_initial_state,
+    build_prompt_text,
     compile_summary_graph,
     emit_summary_roleplay,
-    resolve_summary_text,
+    resolve_summary_node_state,
+    run_summary_graph_workflow,
 )
+from .workflow_results import WorkflowSummaryResult
 
 
 RUN_SUMMARY_SYSTEM_PROMPT = """你是本地 AI 桌宠后端中的总结节点。
@@ -54,37 +54,36 @@ def build_run_summary_prompt(record: RunRecord) -> str:
         build_attempt_summary(latest_attempt) if latest_attempt is not None else "(none)"
     )
 
-    lines = [
-        "请根据下面的 run 信息，生成一条面向用户的简短中文总结。",
-        f"run_id: {run_id or '(none)'}",
-        f"status: {status}",
-        f"attempt_count: {int(record.get('attempt_count') or 0)}",
-        f"repair_count: {int(record.get('repair_count') or 0)}",
-        f"generator: {str(record.get('generator') or 'unknown')}",
-        f"prompt_preview: {prompt_preview}",
-        f"summary: {build_run_summary_text(record)}",
-        f"latest_attempt_summary: {latest_attempt_summary}",
-        f"output_preview: {output_preview}",
-        f"error_preview: {error_preview}",
-    ]
-    return "\n".join(lines)
+    return build_prompt_text(
+        [
+            "请根据下面的 run 信息，生成一条面向用户的简短中文总结。",
+            f"run_id: {run_id or '(none)'}",
+            f"status: {status}",
+            f"attempt_count: {int(record.get('attempt_count') or 0)}",
+            f"repair_count: {int(record.get('repair_count') or 0)}",
+            f"generator: {str(record.get('generator') or 'unknown')}",
+            f"prompt_preview: {prompt_preview}",
+            f"summary: {build_run_summary_text(record)}",
+            f"latest_attempt_summary: {latest_attempt_summary}",
+            f"output_preview: {output_preview}",
+            f"error_preview: {error_preview}",
+        ]
+    )
 
 
 def summary_node(state: RunSummaryState) -> RunSummaryState:
     record = state["run_record"]
-    resolution = resolve_summary_text(
+    return resolve_summary_node_state(
+        state,
         fallback_text=build_run_summary_text(record),
         prompt=build_run_summary_prompt(record),
         system_prompt=RUN_SUMMARY_SYSTEM_PROMPT,
-        temperature=0.2,
         llm_is_configured_fn=llm_is_configured,
         call_llm_sync_fn=call_llm_sync,
-    )
-
-    return apply_summary_resolution(
-        state,
-        resolution=resolution,
-        output=build_run_completion_chat_text(record, summary_text=resolution.text),
+        output_builder=lambda resolution: build_run_completion_chat_text(
+            record,
+            summary_text=resolution.text,
+        ),
     )
 
 
@@ -111,12 +110,10 @@ def summarize_run_record(
     *,
     node_name: str = "task_done",
     emit_chat_message: bool = False,
-) -> dict[str, object]:
-    initial_state: RunSummaryState = build_summary_initial_state(
+) -> WorkflowSummaryResult:
+    return run_summary_graph_workflow(
+        run_summary_graph,
         run_record=record,
         node_name=node_name,
         emit_chat_message=emit_chat_message,
     )
-
-    result = run_summary_graph.invoke(initial_state)
-    return build_summary_graph_result(result)

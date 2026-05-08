@@ -1,5 +1,6 @@
 from fastapi import APIRouter, BackgroundTasks, Query
 
+from .error_responses import COMMON_ERROR_RESPONSES
 from .run_dependencies import (
     RunAttemptDependency,
     RunAttemptOutputDependency,
@@ -29,10 +30,14 @@ from ..services.run_interface import (
 )
 
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/runs",
+    tags=["runs"],
+    responses=COMMON_ERROR_RESPONSES,
+)
 
 
-@router.post("/runs", response_model=RunResponse)
+@router.post("", response_model=RunResponse)
 async def create_run_route(req: RunCreateRequest, background_tasks: BackgroundTasks):
     prompt = req.prompt.strip()
     context = (req.context or "").strip() or None
@@ -41,12 +46,12 @@ async def create_run_route(req: RunCreateRequest, background_tasks: BackgroundTa
     return run
 
 
-@router.get("/runs", response_model=list[RunResponse])
+@router.get("", response_model=list[RunResponse])
 async def list_runs_route():
     return list_runs()
 
 
-@router.get("/runs/summary", response_model=RunSummaryListResponse)
+@router.get("/summary", response_model=RunSummaryListResponse)
 async def list_run_summaries_route(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
@@ -54,50 +59,50 @@ async def list_run_summaries_route(
     return list_run_summaries(offset=offset, limit=limit)
 
 
-@router.get("/runs/{run_id}", response_model=RunResponse)
+@router.get("/{run_id}", response_model=RunResponse)
 async def get_run_route(run: RunDependency):
     return run
 
 
-@router.get("/runs/{run_id}/attempts", response_model=RunAttemptListResponse)
+@router.get("/{run_id}/attempts", response_model=RunAttemptListResponse)
 async def get_run_attempts_route(attempts: RunAttemptsDependency):
     return attempts
 
 
-@router.get("/runs/{run_id}/attempts/{attempt_number}", response_model=RunAttemptResponse)
+@router.get("/{run_id}/attempts/{attempt_number}", response_model=RunAttemptResponse)
 async def get_run_attempt_route(attempt: RunAttemptDependency):
     return attempt
 
 
-@router.get("/runs/{run_id}/attempts/{attempt_number}/script", response_model=RunAttemptScriptResponse)
+@router.get("/{run_id}/attempts/{attempt_number}/script", response_model=RunAttemptScriptResponse)
 async def get_run_attempt_script_route(script: RunAttemptScriptDependency):
     return script
 
 
-@router.get("/runs/{run_id}/attempts/{attempt_number}/output", response_model=RunAttemptOutputChunkResponse)
+@router.get("/{run_id}/attempts/{attempt_number}/output", response_model=RunAttemptOutputChunkResponse)
 async def get_run_attempt_output_route(output: RunAttemptOutputDependency):
     return output
 
 
-@router.get("/runs/{run_id}/logs", response_model=RunLogResponse)
+@router.get("/{run_id}/logs", response_model=RunLogResponse)
 async def get_run_log_route(run_log: RunLogDependency):
     return run_log
 
 
-@router.post("/runs/{run_id}/retry", response_model=RunResponse)
+@router.post("/{run_id}/retry", response_model=RunResponse)
 async def retry_run_route(run_id: str, background_tasks: BackgroundTasks):
     run = retry_run(run_id)
     background_tasks.add_task(execute_run, run.run_id)
     return run
 
 
-@router.post("/runs/{run_id}/rerun", response_model=RunResponse)
+@router.post("/{run_id}/rerun", response_model=RunResponse)
 async def rerun_run_route(run_id: str, background_tasks: BackgroundTasks):
     run = rerun_run(run_id)
     background_tasks.add_task(execute_run, run.run_id)
     return run
 
 
-@router.post("/runs/{run_id}/cancel", response_model=RunResponse)
+@router.post("/{run_id}/cancel", response_model=RunResponse)
 async def cancel_run_route(run_id: str):
     return cancel_run(run_id)

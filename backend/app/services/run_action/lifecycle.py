@@ -2,6 +2,7 @@ import logging
 
 from ...core.config import settings
 from ...agent_workflow.roleplay import emit_roleplay_chat
+from ...agent_workflow.retry_guidance import build_retry_guidance
 from ...llm.client import llm_is_configured
 from ...messaging.message_sender import message_sender
 from ...schemas import RunResponse
@@ -28,10 +29,13 @@ from .formatters import (
 )
 from .types import (
     CommandResult,
+    RepairPhaseResolution,
+    RepairWorkflowResult,
     RunRecord,
     RunExecutionState,
     RetryGuidance,
     ScriptGenerationResult,
+    WorkflowChatMessage,
 )
 
 
@@ -190,10 +194,21 @@ def append_repair_analysis_log(
     append_run_log(run_id, f"Repair analysis ({source}): {preview_text(analysis_note)}")
 
 
-def emit_repair_feedback_message(content: str | None, *, node_name: str = "task_repairing") -> None:
+def emit_repair_feedback_message(
+    message: WorkflowChatMessage | str | None,
+    *,
+    node_name: str = "task_repairing",
+) -> None:
+    if isinstance(message, WorkflowChatMessage):
+        content = message.content
+        resolved_node_name = message.node_name
+    else:
+        content = message
+        resolved_node_name = node_name
+
     emit_roleplay_chat(
         content or "",
-        node_name=node_name,
+        node_name=resolved_node_name,
         emit_chat_message=True,
     )
 
@@ -234,6 +249,38 @@ def maybe_emit_retry_outcome_for_repair_attempt(
     )
 
 
+def resolve_terminal_retry_guidance(
+    *,
+    state: RunExecutionState,
+    result: CommandResult,
+    cancel_requested: bool = False,
+) -> RetryGuidance | None:
+    if not is_repair_attempt(state):
+        return None
+    if bool(result.get("cancelled")):
+        return build_retry_guidance("task_retry_cancelled")
+    if bool(result.get("ok")):
+        return build_retry_guidance("task_retry_done")
+    if cancel_requested:
+        return build_retry_guidance("task_retry_cancelled_requested")
+    return None
+
+
+def resolve_retry_guidance(repair_workflow: RepairWorkflowResult) -> RetryGuidance:
+    retry_guidance = repair_workflow.retry_guidance
+    if isinstance(retry_guidance, RetryGuidance):
+        return retry_guidance
+
+    retry_node_name = repair_workflow.retry_node_name
+    if isinstance(retry_node_name, str) and retry_node_name:
+        return build_retry_guidance(retry_node_name)
+
+    should_attempt_repair = repair_workflow.should_attempt_repair
+    return build_retry_guidance(
+        "task_retry_repairing" if should_attempt_repair else "task_retry_failed"
+    )
+
+
 def emit_retry_outcome_message(
     *,
     run_id: str,
@@ -269,6 +316,115 @@ def emit_retry_outcome_message(
 
 def repair_llm_is_available() -> bool:
     return llm_is_configured()
+
+
+def build_terminal_run_record_fields(
+    state: RunExecutionState,
+    *,
+    result: CommandResult | None = None,
+) -> dict[str, object]:
+    return {
+        "generator": state.current_generator,
+        "attempt_count": state.attempt_count,
+        "repair_attempted": state.repair_attempted,
+        "repair_count": state.repair_count,
+        "finished_at": utc_now_iso(),
+        "command": (
+            str(result.get("command")) if result and result.get("command") is not None else None
+        ),
+        "returncode": result.get("returncode") if result is not None else None,
+        "stdout": (
+            str(result.get("stdout") or "").strip() or None
+            if result is not None
+            else None
+        ),
+        "stderr": (
+            str(result.get("stderr") or "").strip() or None
+            if result is not None
+            else None
+        ),
+        "log_path": state.log_path,
+        "artifacts": state.artifacts,
+    }
+
+
+def finalize_attempt_terminal_result(
+    run_id: str,
+    state: RunExecutionState,
+    result: CommandResult,
+    *,
+    cancel_requested: bool = False,
+) -> RunResponse | None:
+    guidance = resolve_terminal_retry_guidance(
+        state=state,
+        result=result,
+        cancel_requested=cancel_requested,
+    )
+    if guidance is not None:
+        maybe_emit_retry_outcome_for_repair_attempt(
+            run_id=run_id,
+            state=state,
+            result=result,
+            guidance=guidance,
+        )
+
+    if bool(result.get("cancelled")):
+        return finalize_cancelled(
+            run_id,
+            state,
+            result=result,
+            reason=str(result.get("error") or "用户取消了当前任务。"),
+        )
+    if bool(result.get("ok")):
+        return finalize_success(run_id, state, result)
+    if cancel_requested:
+        return finalize_cancelled(run_id, state, result=result)
+    return None
+
+
+def advance_repair_phase(
+    run_id: str,
+    state: RunExecutionState,
+    result: CommandResult,
+    repair_workflow: RepairWorkflowResult,
+) -> RepairPhaseResolution:
+    repair_workflow = RepairWorkflowResult.from_value(repair_workflow)
+
+    maybe_emit_retry_outcome_for_repair_attempt(
+        run_id=run_id,
+        state=state,
+        result=result,
+        guidance=resolve_retry_guidance(repair_workflow),
+    )
+
+    if not repair_workflow.should_attempt_repair:
+        block_repair(
+            run_id,
+            state,
+            note=repair_workflow.reason,
+            analysis_note=repair_workflow.analysis_note,
+            analysis_source=repair_workflow.analysis_source,
+        )
+        return RepairPhaseResolution.stop()
+
+    mark_repair_requested(
+        run_id,
+        state,
+        analysis_note=repair_workflow.analysis_note,
+        analysis_source=repair_workflow.analysis_source,
+    )
+    emit_repair_feedback_message(
+        repair_workflow.feedback_message or repair_workflow.feedback_text,
+        node_name=repair_workflow.feedback_node_name or "task_repairing",
+    )
+    if run_cancel_requested(run_id):
+        return RepairPhaseResolution.cancel("用户在自动修复阶段取消了当前任务。")
+
+    repaired_result = repair_workflow.repaired_result or ScriptGenerationResult(
+        ok=False,
+        error="自动修复工作流未返回修复脚本。",
+    )
+    return RepairPhaseResolution.retry(repaired_result)
 
 
 def mark_repair_requested(
@@ -385,18 +541,8 @@ def finalize_success(run_id: str, state: RunExecutionState, result: CommandResul
             result=result,
             artifacts=state.artifacts,
         ),
-        generator=state.current_generator,
-        attempt_count=state.attempt_count,
-        repair_attempted=state.repair_attempted,
-        repair_count=state.repair_count,
-        finished_at=utc_now_iso(),
         error=None,
-        command=str(result.get("command")) if result.get("command") is not None else None,
-        returncode=result.get("returncode"),
-        stdout=str(result.get("stdout") or "").strip() or None,
-        stderr=str(result.get("stderr") or "").strip() or None,
-        log_path=state.log_path,
-        artifacts=state.artifacts,
+        **build_terminal_run_record_fields(state, result=result),
     )
     emit_final_run_chat_message(final_record, node_name="task_done")
     return to_run_response(final_record)
@@ -423,23 +569,13 @@ def finalize_failure(run_id: str, state: RunExecutionState, result: CommandResul
             artifacts=state.artifacts,
             repair_note=state.repair_note,
         ),
-        generator=state.current_generator,
-        attempt_count=state.attempt_count,
-        repair_attempted=state.repair_attempted,
-        repair_count=state.repair_count,
-        finished_at=utc_now_iso(),
         error=(
             state.repair_note
             or str(result.get("error") or "").strip()
             or str(result.get("stderr") or "").strip()
             or "Command execution failed"
         ),
-        command=str(result.get("command")) if result.get("command") is not None else None,
-        returncode=result.get("returncode"),
-        stdout=str(result.get("stdout") or "").strip() or None,
-        stderr=str(result.get("stderr") or "").strip() or None,
-        log_path=state.log_path,
-        artifacts=state.artifacts,
+        **build_terminal_run_record_fields(state, result=result),
     )
     emit_final_run_chat_message(final_record, node_name="task_failed")
     return to_run_response(final_record)
@@ -474,26 +610,8 @@ def finalize_cancelled(
             result=result,
         ),
         cancel_requested=True,
-        generator=state.current_generator,
-        attempt_count=state.attempt_count,
-        repair_attempted=state.repair_attempted,
-        repair_count=state.repair_count,
-        finished_at=utc_now_iso(),
         error=reason,
-        command=str(result.get("command")) if result and result.get("command") is not None else None,
-        returncode=result.get("returncode") if result is not None else None,
-        stdout=(
-            str(result.get("stdout") or "").strip() or None
-            if result is not None
-            else None
-        ),
-        stderr=(
-            str(result.get("stderr") or "").strip() or None
-            if result is not None
-            else None
-        ),
-        log_path=state.log_path,
-        artifacts=state.artifacts,
+        **build_terminal_run_record_fields(state, result=result),
     )
     emit_final_run_chat_message(final_record, node_name="task_cancelled")
     return to_run_response(final_record)
@@ -506,15 +624,9 @@ def finalize_exception(run_id: str, state: RunExecutionState, exc: Exception) ->
     final_record = update_run_record(
         run_id,
         status="failed",
-        generator=state.current_generator,
-        attempt_count=state.attempt_count,
-        repair_attempted=state.repair_attempted,
-        repair_count=state.repair_count,
-        finished_at=utc_now_iso(),
         output=f"任务执行过程中发生未处理异常：{exc}",
         error=str(exc),
-        log_path=state.log_path,
-        artifacts=state.artifacts,
+        **build_terminal_run_record_fields(state),
     )
     emit_final_run_chat_message(final_record, node_name="task_failed")
     return to_run_response(final_record)

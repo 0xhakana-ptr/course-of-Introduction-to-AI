@@ -6,13 +6,13 @@ from ..services.run_action.formatters import (
     preview_single_line,
 )
 from .summary_support import (
-    apply_summary_resolution,
-    build_summary_graph_result,
-    build_summary_initial_state,
+    build_prompt_text,
     compile_summary_graph,
     emit_summary_roleplay,
-    resolve_summary_text,
+    resolve_summary_node_state,
+    run_summary_graph_workflow,
 )
+from .workflow_results import WorkflowSummaryResult
 
 
 ATTEMPT_SUMMARY_SYSTEM_PROMPT = """你是本地 AI 桌宠后端中的尝试结果总结节点。
@@ -41,7 +41,7 @@ class AttemptSummaryState(TypedDict, total=False):
 
 
 def build_attempt_summary_prompt(state: AttemptSummaryState) -> str:
-    return "\n".join(
+    return build_prompt_text(
         [
             "请根据下面的信息，生成一条面向用户的简短中文说明。",
             f"run_id: {state.get('run_id') or '(none)'}",
@@ -54,19 +54,14 @@ def build_attempt_summary_prompt(state: AttemptSummaryState) -> str:
 def summary_node(state: AttemptSummaryState) -> AttemptSummaryState:
     attempt_summary = str(state.get("attempt_summary") or "").strip()
     next_action = str(state.get("next_action") or "").strip()
-    resolution = resolve_summary_text(
+    return resolve_summary_node_state(
+        state,
         fallback_text=attempt_summary,
         prompt=build_attempt_summary_prompt(state),
         system_prompt=ATTEMPT_SUMMARY_SYSTEM_PROMPT,
-        temperature=0.2,
         llm_is_configured_fn=llm_is_configured,
         call_llm_sync_fn=call_llm_sync,
-    )
-
-    return apply_summary_resolution(
-        state,
-        resolution=resolution,
-        output=build_retry_outcome_chat_text(
+        output_builder=lambda resolution: build_retry_outcome_chat_text(
             run_id=str(state.get("run_id") or ""),
             attempt_summary=attempt_summary,
             next_action=next_action,
@@ -100,14 +95,12 @@ def summarize_retry_outcome(
     next_action: str,
     node_name: str,
     emit_chat_message: bool = False,
-) -> dict[str, object]:
-    initial_state: AttemptSummaryState = build_summary_initial_state(
+) -> WorkflowSummaryResult:
+    return run_summary_graph_workflow(
+        attempt_summary_graph,
         run_id=run_id,
         attempt_summary=attempt_summary,
         next_action=next_action,
         node_name=node_name,
         emit_chat_message=emit_chat_message,
     )
-
-    result = attempt_summary_graph.invoke(initial_state)
-    return build_summary_graph_result(result)
