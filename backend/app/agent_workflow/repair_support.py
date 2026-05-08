@@ -8,6 +8,7 @@ from ..services.run_action.formatters import (
 )
 from ..services.run_action.types import CommandResult, ScriptGenerationResult, WorkflowChatMessage
 from .retry_guidance import maybe_build_retry_guidance_for_repair_decision
+from .workflow_nodes import TASK_REPAIRING_NODE
 from .workflow_results import WorkflowRepairResult, invoke_graph_with_result
 
 
@@ -71,7 +72,7 @@ def build_repair_feedback_message(
         next_repair_round=repair_count + 1,
     )
     return WorkflowChatMessage(
-        node_name="task_repairing",
+        node_name=TASK_REPAIRING_NODE,
         content=feedback_text,
     )
 

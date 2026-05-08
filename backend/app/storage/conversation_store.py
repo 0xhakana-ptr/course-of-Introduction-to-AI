@@ -13,6 +13,7 @@ from .run_store import utc_now_iso
 ConversationMessage = dict[str, str]
 ConversationSessionMetadata = dict[str, str | int | bool | None]
 ConversationSessionListItem = dict[str, str | int | bool | None]
+ConversationContextSnapshot = dict[str, object]
 CONTEXT_SUMMARY_PREVIEW_LIMIT = 120
 SESSION_SUMMARY_PREVIEW_LIMIT = 240
 CONTEXT_STRATEGY_VERSION = 1
@@ -69,20 +70,88 @@ class ConversationStore:
             return messages[-max_messages:]
         return messages
 
+    def _split_messages_for_context(
+        self,
+        messages: list[ConversationMessage],
+    ) -> tuple[list[ConversationMessage], list[ConversationMessage]]:
+        recent_count = settings.conversation_context_recent_messages
+        if recent_count <= 0:
+            return [], messages
+        return messages[:-recent_count], messages[-recent_count:]
+
+    def _get_last_message_at(self, messages: list[ConversationMessage]) -> str | None:
+        if not messages:
+            return None
+        return str(messages[-1].get("created_at") or "").strip() or None
+
+    def _get_cached_compressed_summary(
+        self,
+        messages: list[ConversationMessage],
+        metadata: ConversationSessionMetadata | None,
+    ) -> str | None:
+        if not self._is_metadata_compatible(messages, metadata):
+            return None
+        if metadata is None or metadata.get("compressed_summary") is None:
+            return None
+        summary = str(metadata.get("compressed_summary") or "").strip()
+        return summary or None
+
+    def _resolve_compressed_summary(
+        self,
+        messages: list[ConversationMessage],
+        older_messages: list[ConversationMessage],
+        metadata: ConversationSessionMetadata | None,
+    ) -> str | None:
+        if not older_messages:
+            return None
+
+        cached_summary = self._get_cached_compressed_summary(messages, metadata)
+        if cached_summary is not None:
+            return cached_summary
+        return self._build_history_summary(older_messages)
+
+    def _build_context_text(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        metadata: ConversationSessionMetadata | None,
+        external_context: str | None = None,
+    ) -> str | None:
+        chunks: list[str] = []
+        client_context = (external_context or "").strip()
+        if client_context:
+            chunks.append(f"Client provided context:\n{client_context}")
+
+        if messages:
+            chunks.extend(self._build_history_context_sections(messages, metadata=metadata))
+
+        combined = "\n\n".join(chunks).strip()
+        if not combined:
+            return None
+
+        max_chars = settings.chat_context_max_chars
+        if max_chars > 0 and len(combined) > max_chars:
+            return combined[-max_chars:]
+        return combined
+
+    def _load_session_state_locked(
+        self,
+        session_id: str,
+    ) -> tuple[list[ConversationMessage], ConversationSessionMetadata]:
+        messages = list(self._load_session_from_disk_locked(session_id))
+        metadata = self._session_metadata.get(session_id)
+        if metadata is None:
+            metadata = self._build_session_metadata(messages)
+            self._session_metadata[session_id] = metadata
+        return messages, metadata
+
     def _build_session_metadata(
         self,
         messages: list[ConversationMessage],
         *,
         updated_at: str | None = None,
     ) -> ConversationSessionMetadata:
-        recent_count_setting = settings.conversation_context_recent_messages
-        if recent_count_setting <= 0:
-            recent_messages = messages
-            older_messages: list[ConversationMessage] = []
-        else:
-            recent_messages = messages[-recent_count_setting:]
-            older_messages = messages[:-recent_count_setting]
-
+        older_messages, recent_messages = self._split_messages_for_context(messages)
         compressed_summary = self._build_history_summary(older_messages)
         summary_preview = compressed_summary
         if summary_preview:
@@ -91,10 +160,6 @@ class ConversationStore:
                 limit=SESSION_SUMMARY_PREVIEW_LIMIT,
             )
 
-        last_message_at = None
-        if messages:
-            last_message_at = str(messages[-1].get("created_at") or "").strip() or None
-
         return {
             "message_count": len(messages),
             "recent_message_count": len(recent_messages),
@@ -102,10 +167,10 @@ class ConversationStore:
             "has_compressed_context": bool(older_messages),
             "compressed_summary": compressed_summary,
             "summary_preview": summary_preview,
-            "last_message_at": last_message_at,
+            "last_message_at": self._get_last_message_at(messages),
             "updated_at": updated_at,
             "context_strategy_version": CONTEXT_STRATEGY_VERSION,
-            "context_recent_messages_limit": recent_count_setting,
+            "context_recent_messages_limit": settings.conversation_context_recent_messages,
             "context_summary_max_chars": settings.conversation_summary_max_chars,
         }
 
@@ -268,8 +333,8 @@ class ConversationStore:
         if not messages:
             return []
 
-        recent_count = settings.conversation_context_recent_messages
-        if recent_count <= 0 or len(messages) <= recent_count:
+        older_messages, recent_messages = self._split_messages_for_context(messages)
+        if not older_messages:
             history_lines = [
                 line
                 for message in messages
@@ -279,19 +344,12 @@ class ConversationStore:
                 return []
             return ["Stored conversation history:\n" + "\n".join(history_lines)]
 
-        recent_messages = messages[-recent_count:]
-        older_messages = messages[:-recent_count]
         sections: list[str] = []
-
-        older_summary = None
-        if self._is_metadata_compatible(messages, metadata):
-            older_summary = (
-                str(metadata.get("compressed_summary")).strip()
-                if metadata.get("compressed_summary") is not None
-                else None
-            )
-        if older_summary is None:
-            older_summary = self._build_history_summary(older_messages)
+        older_summary = self._resolve_compressed_summary(
+            messages,
+            older_messages,
+            metadata,
+        )
         if older_summary:
             sections.append(
                 (
@@ -450,6 +508,36 @@ class ConversationStore:
         )
         self._session_metadata[session_id] = metadata
 
+    def _build_context_snapshot_locked(
+        self,
+        session_id: str,
+        *,
+        external_context: str | None = None,
+    ) -> ConversationContextSnapshot | None:
+        if not self._session_exists_locked(session_id):
+            return None
+
+        messages, metadata = self._load_session_state_locked(session_id)
+        older_messages, recent_messages = self._split_messages_for_context(messages)
+        compressed_summary = self._resolve_compressed_summary(
+            messages,
+            older_messages,
+            metadata,
+        )
+        context_text = self._build_context_text(
+            messages,
+            metadata=metadata,
+            external_context=external_context,
+        )
+        return {
+            "session_id": session_id,
+            "metadata": dict(metadata),
+            "compressed_summary": compressed_summary,
+            "recent_messages": [dict(message) for message in recent_messages],
+            "context_text": context_text,
+            "context_char_count": len(context_text or ""),
+        }
+
     def get_or_create_session_id(self, session_id: str | None = None) -> str:
         normalized = (session_id or "").strip()
         with self._lock:
@@ -507,14 +595,35 @@ class ConversationStore:
             self._maybe_prune_storage_locked()
             if not self._session_exists_locked(session_id):
                 return None
-            if session_id not in self._sessions:
-                self._load_session_from_disk_locked(session_id)
-            metadata = self._session_metadata.get(session_id)
-            if metadata is None:
-                messages = self._sessions.get(session_id, [])
-                metadata = self._build_session_metadata(messages)
-                self._session_metadata[session_id] = metadata
+            _, metadata = self._load_session_state_locked(session_id)
             return dict(metadata)
+
+    def get_context_snapshot(
+        self,
+        session_id: str,
+        *,
+        external_context: str | None = None,
+    ) -> ConversationContextSnapshot | None:
+        with self._lock:
+            self._maybe_prune_storage_locked()
+            snapshot = self._build_context_snapshot_locked(
+                session_id,
+                external_context=external_context,
+            )
+            if snapshot is None:
+                return None
+            return {
+                "session_id": str(snapshot.get("session_id") or session_id),
+                "metadata": dict(snapshot.get("metadata") or {}),
+                "compressed_summary": snapshot.get("compressed_summary"),
+                "recent_messages": [
+                    dict(message)
+                    for message in snapshot.get("recent_messages", [])
+                    if isinstance(message, dict)
+                ],
+                "context_text": snapshot.get("context_text"),
+                "context_char_count": int(snapshot.get("context_char_count") or 0),
+            }
 
     def list_sessions(
         self,
@@ -534,27 +643,14 @@ class ConversationStore:
         return total, [dict(item) for item in items[safe_offset : safe_offset + safe_limit]]
 
     def build_context(self, session_id: str, external_context: str | None = None) -> str | None:
-        chunks: list[str] = []
-        client_context = (external_context or "").strip()
-        if client_context:
-            chunks.append(f"Client provided context:\n{client_context}")
-
         with self._lock:
             self._maybe_prune_storage_locked()
-            messages = list(self._load_session_from_disk_locked(session_id))
-            metadata = self._session_metadata.get(session_id)
-
-        if messages:
-            chunks.extend(self._build_history_context_sections(messages, metadata=metadata))
-
-        combined = "\n\n".join(chunks).strip()
-        if not combined:
-            return None
-
-        max_chars = settings.chat_context_max_chars
-        if max_chars > 0 and len(combined) > max_chars:
-            return combined[-max_chars:]
-        return combined
+            messages, metadata = self._load_session_state_locked(session_id)
+            return self._build_context_text(
+                messages,
+                metadata=metadata,
+                external_context=external_context,
+            )
 
     def clear_session(self, session_id: str) -> bool:
         with self._lock:

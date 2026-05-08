@@ -28,6 +28,10 @@ def resolve_workspace_path(rel_path: str) -> Path:
     return target
 
 
+def _to_workspace_rel_path(target: Path) -> str:
+    return str(target.relative_to(get_workspace_dir())).replace("\\", "/")
+
+
 def safe_write_file(rel_path: str, content: str) -> str:
     target = resolve_workspace_path(rel_path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -40,18 +44,39 @@ def safe_read_file(rel_path: str) -> str:
     return target.read_text(encoding="utf-8")
 
 
-def safe_list_files(rel_path: str = ".", recursive: bool = False) -> list[str]:
+def safe_list_entries(
+    rel_path: str = ".",
+    *,
+    recursive: bool = False,
+    include_files: bool = True,
+    include_dirs: bool = True,
+) -> list[dict[str, str]]:
     target = resolve_workspace_path(rel_path)
-    workspace_dir = get_workspace_dir()
     if not target.exists():
         return []
     if target.is_file():
-        return [str(target.relative_to(workspace_dir)).replace("\\", "/")]
+        if not include_files:
+            return []
+        return [{"path": _to_workspace_rel_path(target), "kind": "file"}]
 
     pattern = "**/*" if recursive else "*"
-    files: list[str] = []
+    entries: list[dict[str, str]] = []
     for path in target.glob(pattern):
-        if path.is_file():
-            files.append(str(path.relative_to(workspace_dir)).replace("\\", "/"))
-    files.sort()
-    return files
+        if path.is_file() and include_files:
+            entries.append({"path": _to_workspace_rel_path(path), "kind": "file"})
+        elif path.is_dir() and include_dirs:
+            entries.append({"path": _to_workspace_rel_path(path), "kind": "dir"})
+    entries.sort(key=lambda item: (item["path"], item["kind"]))
+    return entries
+
+
+def safe_list_files(rel_path: str = ".", recursive: bool = False) -> list[str]:
+    return [
+        entry["path"]
+        for entry in safe_list_entries(
+            rel_path,
+            recursive=recursive,
+            include_files=True,
+            include_dirs=False,
+        )
+    ]

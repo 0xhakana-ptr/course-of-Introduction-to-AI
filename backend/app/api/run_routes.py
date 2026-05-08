@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks
 
 from .error_responses import COMMON_ERROR_RESPONSES
 from .query_params import RunListLimitQuery, RunListOffsetQuery
-from .route_support import schedule_run_execution
+from .route_support import normalize_prompt_and_context, schedule_run_execution
 from .run_dependencies import (
     RunAttemptDependency,
     RunAttemptOutputDependency,
@@ -40,8 +40,7 @@ router = APIRouter(
 
 @router.post("", response_model=RunResponse)
 async def create_run_route(req: RunCreateRequest, background_tasks: BackgroundTasks):
-    prompt = req.prompt.strip()
-    context = (req.context or "").strip() or None
+    prompt, context = normalize_prompt_and_context(req.prompt, req.context)
     run = create_run(prompt, context)
     schedule_run_execution(background_tasks, run.run_id)
     return run

@@ -13,6 +13,7 @@ from .summary_support import (
     compile_summary_graph,
     run_summary_graph_workflow,
 )
+from .workflow_nodes import TASK_RETRY_DONE_NODE
 from .workflow_results import WorkflowSummaryResult
 
 
@@ -74,7 +75,7 @@ summary_node = build_summary_resolution_node(
 )
 
 
-roleplay_node = build_summary_roleplay_node(default_node_name="task_retry_done")
+roleplay_node = build_summary_roleplay_node(default_node_name=TASK_RETRY_DONE_NODE)
 
 
 def create_attempt_summary_graph():

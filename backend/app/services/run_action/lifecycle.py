@@ -1,11 +1,17 @@
 import logging
-from collections.abc import Callable
 
 from ...core.config import settings
-from ...agent_workflow.roleplay import emit_roleplay_chat
-from ...agent_workflow.retry_guidance import build_retry_guidance
+from ...agent_workflow.roleplay import emit_roleplay_message
+from ...agent_workflow.retry_guidance import (
+    build_terminal_retry_guidance,
+    resolve_retry_guidance_from_repair_result,
+)
+from ...agent_workflow.summary_support import emit_summary_workflow_with_fallback
+from ...agent_workflow.workflow_nodes import (
+    TASK_REPAIRING_NODE,
+    get_run_terminal_node_name,
+)
 from ...llm.client import llm_is_configured
-from ...messaging.message_sender import message_sender
 from ...schemas import RunResponse
 from ..character_interface import (
     send_task_cancelled,
@@ -43,24 +49,6 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
-def _emit_workflow_chat_with_fallback(
-    *,
-    invoke_workflow: Callable[[], object],
-    log_failed_result: Callable[[object], None],
-    log_exception: Callable[[], None],
-    emit_fallback: Callable[[], None],
-) -> None:
-    try:
-        result = invoke_workflow()
-        if bool(getattr(result, "ok", False)):
-            return
-        log_failed_result(result)
-    except Exception:
-        log_exception()
-
-    emit_fallback()
-
-
 def emit_final_run_chat_message(record: RunRecord, *, node_name: str) -> None:
     def invoke_workflow() -> object:
         from ...agent_workflow.run_summary_graph import summarize_run_record
@@ -71,22 +59,19 @@ def emit_final_run_chat_message(record: RunRecord, *, node_name: str) -> None:
             emit_chat_message=True,
         )
 
-    _emit_workflow_chat_with_fallback(
+    emit_summary_workflow_with_fallback(
         invoke_workflow=invoke_workflow,
         log_failed_result=lambda result: logger.warning(
             "Run summary graph returned failed result; falling back to direct summary message: run_id=%s output=%s",
             record.get("run_id"),
-            getattr(result, "output", ""),
+            result.output,
         ),
         log_exception=lambda: logger.exception(
             "Run summary graph failed; falling back to direct summary message: run_id=%s",
             record.get("run_id"),
         ),
-        emit_fallback=lambda: message_sender.send_chat_message(
-            content=build_run_completion_chat_text(record),
-            is_partial=False,
-            node_name=node_name,
-        ),
+        fallback_output=build_run_completion_chat_text(record),
+        fallback_node_name=node_name,
     )
 
 
@@ -224,18 +209,11 @@ def append_repair_analysis_log(
 def emit_repair_feedback_message(
     message: WorkflowChatMessage | str | None,
     *,
-    node_name: str = "task_repairing",
+    node_name: str = TASK_REPAIRING_NODE,
 ) -> None:
-    if isinstance(message, WorkflowChatMessage):
-        content = message.content
-        resolved_node_name = message.node_name
-    else:
-        content = message
-        resolved_node_name = node_name
-
-    emit_roleplay_chat(
-        content or "",
-        node_name=resolved_node_name,
+    emit_roleplay_message(
+        message,
+        default_node_name=node_name,
         emit_chat_message=True,
     )
 
@@ -276,38 +254,6 @@ def maybe_emit_retry_outcome_for_repair_attempt(
     )
 
 
-def resolve_terminal_retry_guidance(
-    *,
-    state: RunExecutionState,
-    result: CommandResult,
-    cancel_requested: bool = False,
-) -> RetryGuidance | None:
-    if not is_repair_attempt(state):
-        return None
-    if bool(result.get("cancelled")):
-        return build_retry_guidance("task_retry_cancelled")
-    if bool(result.get("ok")):
-        return build_retry_guidance("task_retry_done")
-    if cancel_requested:
-        return build_retry_guidance("task_retry_cancelled_requested")
-    return None
-
-
-def resolve_retry_guidance(repair_workflow: RepairWorkflowResult) -> RetryGuidance:
-    retry_guidance = repair_workflow.retry_guidance
-    if isinstance(retry_guidance, RetryGuidance):
-        return retry_guidance
-
-    retry_node_name = repair_workflow.retry_node_name
-    if isinstance(retry_node_name, str) and retry_node_name:
-        return build_retry_guidance(retry_node_name)
-
-    should_attempt_repair = repair_workflow.should_attempt_repair
-    return build_retry_guidance(
-        "task_retry_repairing" if should_attempt_repair else "task_retry_failed"
-    )
-
-
 def emit_retry_outcome_message(
     *,
     run_id: str,
@@ -326,26 +272,24 @@ def emit_retry_outcome_message(
             emit_chat_message=True,
         )
 
-    _emit_workflow_chat_with_fallback(
+    emit_summary_workflow_with_fallback(
         invoke_workflow=invoke_workflow,
         log_failed_result=lambda result: logger.warning(
             "Attempt summary graph returned failed result; falling back to direct retry outcome message: run_id=%s output=%s",
             run_id,
-            getattr(result, "output", ""),
+            result.output,
         ),
         log_exception=lambda: logger.exception(
             "Attempt summary graph failed; falling back to direct retry outcome message: run_id=%s",
             run_id,
         ),
-        emit_fallback=lambda: emit_roleplay_chat(
-            build_retry_outcome_chat_text(
-                run_id=run_id,
-                attempt_summary=attempt_summary,
-                next_action=next_action,
-            ),
-            node_name=node_name,
-            emit_chat_message=True,
+        fallback_output=build_retry_outcome_chat_text(
+            run_id=run_id,
+            attempt_summary=attempt_summary,
+            next_action=next_action,
         ),
+        fallback_node_name=node_name,
+        emit_chat_message=True,
     )
 
 
@@ -390,9 +334,10 @@ def finalize_attempt_terminal_result(
     *,
     cancel_requested: bool = False,
 ) -> RunResponse | None:
-    guidance = resolve_terminal_retry_guidance(
-        state=state,
-        result=result,
+    guidance = build_terminal_retry_guidance(
+        current_generator=state.current_generator,
+        cancelled=bool(result.get("cancelled")),
+        ok=bool(result.get("ok")),
         cancel_requested=cancel_requested,
     )
     if guidance is not None:
@@ -424,12 +369,16 @@ def advance_repair_phase(
     repair_workflow: RepairWorkflowResult,
 ) -> RepairPhaseResolution:
     repair_workflow = RepairWorkflowResult.from_value(repair_workflow)
+    analysis_note, analysis_source = repair_workflow.analysis_log_payload()
+    feedback_payload = repair_workflow.feedback_payload(
+        default_node_name=TASK_REPAIRING_NODE,
+    )
 
     maybe_emit_retry_outcome_for_repair_attempt(
         run_id=run_id,
         state=state,
         result=result,
-        guidance=resolve_retry_guidance(repair_workflow),
+        guidance=resolve_retry_guidance_from_repair_result(repair_workflow),
     )
 
     if not repair_workflow.should_attempt_repair:
@@ -437,27 +386,31 @@ def advance_repair_phase(
             run_id,
             state,
             note=repair_workflow.reason,
-            analysis_note=repair_workflow.analysis_note,
-            analysis_source=repair_workflow.analysis_source,
+            analysis_note=analysis_note,
+            analysis_source=analysis_source,
         )
         return RepairPhaseResolution.stop()
 
     mark_repair_requested(
         run_id,
         state,
-        analysis_note=repair_workflow.analysis_note,
-        analysis_source=repair_workflow.analysis_source,
+        analysis_note=analysis_note,
+        analysis_source=analysis_source,
     )
-    emit_repair_feedback_message(
-        repair_workflow.feedback_message or repair_workflow.feedback_text,
-        node_name=repair_workflow.feedback_node_name or "task_repairing",
-    )
+    if feedback_payload is not None:
+        feedback_node_name, feedback_text = feedback_payload
+        emit_repair_feedback_message(
+            feedback_text,
+            node_name=feedback_node_name,
+        )
     if run_cancel_requested(run_id):
         return RepairPhaseResolution.cancel("用户在自动修复阶段取消了当前任务。")
 
-    repaired_result = repair_workflow.repaired_result or ScriptGenerationResult(
-        ok=False,
-        error="自动修复工作流未返回修复脚本。",
+    repaired_result = repair_workflow.repaired_result_or(
+        ScriptGenerationResult(
+            ok=False,
+            error="自动修复工作流未返回修复脚本。",
+        )
     )
     return RepairPhaseResolution.retry(repaired_result)
 
@@ -579,7 +532,7 @@ def finalize_success(run_id: str, state: RunExecutionState, result: CommandResul
         error=None,
         **build_terminal_run_record_fields(state, result=result),
     )
-    emit_final_run_chat_message(final_record, node_name="task_done")
+    emit_final_run_chat_message(final_record, node_name=get_run_terminal_node_name("done"))
     return to_run_response(final_record)
 
 
@@ -612,7 +565,7 @@ def finalize_failure(run_id: str, state: RunExecutionState, result: CommandResul
         ),
         **build_terminal_run_record_fields(state, result=result),
     )
-    emit_final_run_chat_message(final_record, node_name="task_failed")
+    emit_final_run_chat_message(final_record, node_name=get_run_terminal_node_name("failed"))
     return to_run_response(final_record)
 
 
@@ -648,7 +601,7 @@ def finalize_cancelled(
         error=reason,
         **build_terminal_run_record_fields(state, result=result),
     )
-    emit_final_run_chat_message(final_record, node_name="task_cancelled")
+    emit_final_run_chat_message(final_record, node_name=get_run_terminal_node_name("cancelled"))
     return to_run_response(final_record)
 
 
@@ -663,5 +616,5 @@ def finalize_exception(run_id: str, state: RunExecutionState, exc: Exception) ->
         error=str(exc),
         **build_terminal_run_record_fields(state),
     )
-    emit_final_run_chat_message(final_record, node_name="task_failed")
+    emit_final_run_chat_message(final_record, node_name=get_run_terminal_node_name("failed"))
     return to_run_response(final_record)

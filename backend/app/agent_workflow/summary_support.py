@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from langgraph.graph import END, StateGraph
 
 from ..llm.client import call_llm_sync, llm_is_configured
-from .roleplay import emit_roleplay_chat
+from .roleplay import emit_roleplay_message, emit_roleplay_state
 from .workflow_results import WorkflowSummaryResult, invoke_graph_with_result
 
 
@@ -63,8 +63,91 @@ def build_summary_graph_result(result: Mapping[str, object]) -> WorkflowSummaryR
     return WorkflowSummaryResult.from_state(result)
 
 
+def emit_summary_workflow_with_fallback(
+    *,
+    invoke_workflow: Callable[[], object],
+    log_failed_result: Callable[[WorkflowSummaryResult], None],
+    log_exception: Callable[[], None],
+    fallback_output: str,
+    fallback_node_name: str,
+    emit_chat_message: bool = True,
+) -> None:
+    try:
+        result = WorkflowSummaryResult.from_value(invoke_workflow())
+        if result.ok:
+            return
+        log_failed_result(result)
+    except Exception:
+        log_exception()
+
+    emit_roleplay_message(
+        fallback_output,
+        default_node_name=fallback_node_name,
+        emit_chat_message=emit_chat_message,
+    )
+
+
 def build_prompt_text(lines: Iterable[object]) -> str:
     return "\n".join(str(line) for line in lines)
+
+
+def build_state_text_resolution(
+    state: Mapping[str, object],
+    *,
+    fallback_text: str,
+    prompt: str,
+    system_prompt: str,
+    text_key: str,
+    source_key: str | None = None,
+    error_key: str | None = None,
+    temperature: float = 0.2,
+    llm_is_configured_fn: Callable[[], bool] = llm_is_configured,
+    call_llm_sync_fn: Callable[..., object] = call_llm_sync,
+) -> dict[str, object]:
+    resolution = resolve_summary_text(
+        fallback_text=fallback_text,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        llm_is_configured_fn=llm_is_configured_fn,
+        call_llm_sync_fn=call_llm_sync_fn,
+    )
+    return apply_text_resolution(
+        state,
+        resolution=resolution,
+        text_key=text_key,
+        source_key=source_key,
+        error_key=error_key,
+    )
+
+
+def build_text_resolution_node(
+    *,
+    fallback_text_builder: Callable[[Mapping[str, object]], str],
+    prompt_builder: Callable[[Mapping[str, object]], str],
+    system_prompt: str,
+    text_key: str,
+    source_key: str | None = None,
+    error_key: str | None = None,
+    temperature: float = 0.2,
+    llm_is_configured_fn: Callable[[], bool] = llm_is_configured,
+    call_llm_sync_fn: Callable[..., object] = call_llm_sync,
+) -> Callable[[Mapping[str, object]], dict[str, object]]:
+    def text_node(state: Mapping[str, object]) -> dict[str, object]:
+        return build_state_text_resolution(
+            state,
+            fallback_text=fallback_text_builder(state),
+            prompt=prompt_builder(state),
+            system_prompt=system_prompt,
+            text_key=text_key,
+            source_key=source_key,
+            error_key=error_key,
+            temperature=temperature,
+            llm_is_configured_fn=llm_is_configured_fn,
+            call_llm_sync_fn=call_llm_sync_fn,
+        )
+
+    return text_node
 
 
 def apply_text_resolution(
@@ -114,16 +197,29 @@ def resolve_summary_node_state(
     llm_is_configured_fn: Callable[[], bool] = llm_is_configured,
     call_llm_sync_fn: Callable[..., object] = call_llm_sync,
 ) -> dict[str, object]:
-    resolution = resolve_summary_text(
+    next_state = build_state_text_resolution(
+        state,
         fallback_text=fallback_text,
         prompt=prompt,
         system_prompt=system_prompt,
+        text_key="summary_text",
+        source_key="summary_source",
+        error_key="llm_error",
         temperature=temperature,
         llm_is_configured_fn=llm_is_configured_fn,
         call_llm_sync_fn=call_llm_sync_fn,
     )
+    resolution = SummaryResolution(
+        text=str(next_state.get("summary_text") or ""),
+        source=str(next_state.get("summary_source") or "fallback"),
+        llm_error=(
+            str(next_state.get("llm_error"))
+            if next_state.get("llm_error") is not None
+            else None
+        ),
+    )
     return apply_summary_resolution(
-        state,
+        next_state,
         resolution=resolution,
         output=output_builder(resolution),
     )
@@ -145,12 +241,10 @@ def emit_summary_roleplay(
     *,
     default_node_name: str,
 ) -> dict[str, object]:
-    emit_roleplay_chat(
-        str(state.get("output") or ""),
-        node_name=str(state.get("node_name") or default_node_name),
-        emit_chat_message=bool(state.get("emit_chat_message", True)),
+    return emit_roleplay_state(
+        state,
+        default_node_name=default_node_name,
     )
-    return dict(state)
 
 
 def build_summary_resolution_node(

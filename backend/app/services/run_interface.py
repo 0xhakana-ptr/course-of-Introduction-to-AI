@@ -1,3 +1,4 @@
+from ..agent_workflow.workflow_nodes import TASK_CANCELLED_NODE
 from ..agent_workflow.repair_decision_graph import run_repair_workflow
 from ..core.config import settings
 from ..schemas import RunResponse
@@ -164,7 +165,7 @@ def cancel_run(run_id: str) -> RunResponse:
         )
         clear_run_control(run_id)
         send_task_cancelled()
-        emit_final_run_chat_message(cancelled_record, node_name="task_cancelled")
+        emit_final_run_chat_message(cancelled_record, node_name=TASK_CANCELLED_NODE)
         return to_run_response(cancelled_record)
 
     request_run_cancel(run_id)

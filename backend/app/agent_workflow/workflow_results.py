@@ -1,9 +1,41 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 
 GraphResultT = TypeVar("GraphResultT", bound="WorkflowGraphResult")
+SUMMARY_RESULT_FIELDS = (
+    "ok",
+    "output",
+    "summary_text",
+    "summary_source",
+    "llm_error",
+)
+AGENT_RESULT_FIELDS = (
+    "ok",
+    "output",
+    "intent",
+    "error",
+    "run_id",
+    "run_status",
+    "ui_status",
+)
+REPAIR_RESULT_FIELDS = (
+    "ok",
+    "should_attempt_repair",
+    "decision_reason",
+    "reason",
+    "analysis_note",
+    "analysis_source",
+    "failure_summary",
+    "repaired_result",
+    "feedback_message",
+    "feedback_text",
+    "feedback_node_name",
+    "retry_guidance",
+    "retry_next_action",
+    "retry_node_name",
+)
 
 
 @dataclass(slots=True)
@@ -50,16 +82,25 @@ class WorkflowSummaryResult(WorkflowGraphResult):
     llm_error: str | None = None
 
     @classmethod
-    def from_state(cls, state: Mapping[str, object]) -> "WorkflowSummaryResult":
+    def _from_normalized_state(
+        cls,
+        state: Mapping[str, object],
+        *,
+        ok: bool,
+    ) -> "WorkflowSummaryResult":
         llm_error = state.get("llm_error")
         return cls(
-            ok=True,
-            output=str(state.get("output") or ""),
-            summary_text=str(state.get("summary_text") or ""),
-            summary_source=str(state.get("summary_source") or "fallback"),
+            ok=ok,
+            output=_coerce_mapping_str(state, "output"),
+            summary_text=_coerce_mapping_str(state, "summary_text"),
+            summary_source=_coerce_mapping_str(state, "summary_source", default="fallback"),
             llm_error=str(llm_error) if llm_error is not None else None,
             state=dict(state),
         )
+
+    @classmethod
+    def from_state(cls, state: Mapping[str, object]) -> "WorkflowSummaryResult":
+        return cls._from_normalized_state(state, ok=True)
 
     @classmethod
     def from_error(
@@ -77,6 +118,17 @@ class WorkflowSummaryResult(WorkflowGraphResult):
             state=dict(state),
         )
 
+    @classmethod
+    def from_value(cls, value: object) -> "WorkflowSummaryResult":
+        if isinstance(value, cls):
+            return value
+
+        state = _extract_state_from_value(value, field_names=SUMMARY_RESULT_FIELDS)
+        return cls._from_normalized_state(
+            state,
+            ok=_resolve_result_ok(state, fallback=True),
+        )
+
     def as_dict(self) -> dict[str, object]:
         payload = super(WorkflowSummaryResult, self).as_dict()
         payload.update(
@@ -89,12 +141,45 @@ class WorkflowSummaryResult(WorkflowGraphResult):
         return payload
 
 
-def _coerce_mapping_text(state: Mapping[str, object], key: str) -> str | None:
-    value = state.get(key)
+def _coerce_optional_text(value: object) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _coerce_mapping_text(state: Mapping[str, object], key: str) -> str | None:
+    return _coerce_optional_text(state.get(key))
+
+
+def _coerce_mapping_str(
+    state: Mapping[str, object],
+    key: str,
+    *,
+    default: str = "",
+) -> str:
+    return str(state.get(key) or default)
+
+
+def _coerce_mapping_first_str(
+    state: Mapping[str, object],
+    *keys: str,
+    default: str = "",
+) -> str:
+    for key in keys:
+        value = state.get(key)
+        if value:
+            return str(value)
+    return default
+
+
+def _resolve_result_ok(
+    state: Mapping[str, object],
+    *,
+    fallback: bool,
+) -> bool:
+    ok_value = state.get("ok")
+    return fallback if ok_value is None else bool(ok_value)
 
 
 def _extract_state_from_value(
@@ -122,6 +207,25 @@ class WorkflowAgentResult(WorkflowGraphResult):
     ui_status: str | None = None
 
     @classmethod
+    def _from_normalized_state(
+        cls,
+        state: Mapping[str, object],
+        *,
+        ok: bool,
+        default_intent: str = "unknown",
+    ) -> "WorkflowAgentResult":
+        return cls(
+            ok=ok,
+            output=_coerce_mapping_str(state, "output"),
+            intent=_coerce_mapping_text(state, "intent") or default_intent,
+            error=_coerce_mapping_text(state, "error"),
+            run_id=_coerce_mapping_text(state, "run_id"),
+            run_status=_coerce_mapping_text(state, "run_status"),
+            ui_status=_coerce_mapping_text(state, "ui_status"),
+            state=dict(state),
+        )
+
+    @classmethod
     def from_state(
         cls,
         state: Mapping[str, object],
@@ -129,15 +233,10 @@ class WorkflowAgentResult(WorkflowGraphResult):
         default_intent: str = "unknown",
     ) -> "WorkflowAgentResult":
         error = _coerce_mapping_text(state, "error")
-        return cls(
+        return cls._from_normalized_state(
+            state,
             ok=error is None,
-            output=str(state.get("output") or ""),
-            intent=_coerce_mapping_text(state, "intent") or default_intent,
-            error=error,
-            run_id=_coerce_mapping_text(state, "run_id"),
-            run_status=_coerce_mapping_text(state, "run_status"),
-            ui_status=_coerce_mapping_text(state, "ui_status"),
-            state=dict(state),
+            default_intent=default_intent,
         )
 
     @classmethod
@@ -159,6 +258,24 @@ class WorkflowAgentResult(WorkflowGraphResult):
             state=dict(state),
         )
 
+    @classmethod
+    def from_value(
+        cls,
+        value: object,
+        *,
+        default_intent: str = "unknown",
+    ) -> "WorkflowAgentResult":
+        if isinstance(value, cls):
+            return value
+
+        state = _extract_state_from_value(value, field_names=AGENT_RESULT_FIELDS)
+        error = _coerce_mapping_text(state, "error")
+        return cls._from_normalized_state(
+            state,
+            ok=_resolve_result_ok(state, fallback=error is None),
+            default_intent=default_intent,
+        )
+
     def as_dict(self) -> dict[str, object]:
         payload = super(WorkflowAgentResult, self).as_dict()
         payload.update(
@@ -172,13 +289,47 @@ class WorkflowAgentResult(WorkflowGraphResult):
         )
         return payload
 
+    def resolved_intent(
+        self,
+        *,
+        valid_intents: Collection[str] | None = None,
+        default_intent: str = "unknown",
+    ) -> str:
+        intent = self.intent.strip()
+        if not intent:
+            return default_intent
+        if valid_intents is not None and intent not in valid_intents:
+            return default_intent
+        return intent
+
+    def resolved_output(
+        self,
+        *,
+        intent: str | None = None,
+        fallback_output_builder: Callable[[str], str] | None = None,
+    ) -> str:
+        output = self.output.strip()
+        if output:
+            return output
+        if fallback_output_builder is None:
+            return ""
+        return fallback_output_builder(intent or self.intent)
+
+    def run_payload(self) -> tuple[str | None, str | None]:
+        return self.run_id, self.run_status
+
 
 def _coerce_attr_text(value: object, attr_name: str) -> str | None:
-    attr_value = getattr(value, attr_name, None)
-    if attr_value is None:
-        return None
-    text = str(attr_value).strip()
-    return text or None
+    return _coerce_optional_text(getattr(value, attr_name, None))
+
+
+def _coerce_attr_or_mapping_text(
+    value: object,
+    attr_name: str,
+    state: Mapping[str, object],
+    state_key: str,
+) -> str | None:
+    return _coerce_attr_text(value, attr_name) or _coerce_mapping_text(state, state_key)
 
 
 @dataclass(slots=True)
@@ -193,25 +344,38 @@ class WorkflowRepairResult(WorkflowGraphResult):
     retry_guidance: Any | None = None
 
     @classmethod
-    def from_state(cls, state: Mapping[str, object]) -> "WorkflowRepairResult":
-        reason = str(
-            state.get("decision_reason")
-            or state.get("reason")
-            or "当前运行不满足自动修复条件。"
-        )
+    def _from_normalized_state(
+        cls,
+        state: Mapping[str, object],
+        *,
+        ok: bool,
+        reason_override: str | None = None,
+    ) -> "WorkflowRepairResult":
         feedback_message = state.get("feedback_message")
-        feedback_text = _coerce_attr_text(feedback_message, "content") or _coerce_mapping_text(
+        reason = reason_override or _coerce_mapping_first_str(
+            state,
+            "decision_reason",
+            "reason",
+            default="当前运行不满足自动修复条件。",
+        )
+        feedback_text = _coerce_attr_or_mapping_text(
+            feedback_message,
+            "content",
             state,
             "feedback_text",
         )
         return cls(
-            ok=True,
+            ok=ok,
             output=feedback_text or reason,
             should_attempt_repair=bool(state.get("should_attempt_repair", False)),
             reason=reason,
-            analysis_note=str(state.get("analysis_note") or state.get("failure_summary") or ""),
-            analysis_source=str(state.get("analysis_source") or "fallback"),
-            failure_summary=str(state.get("failure_summary") or ""),
+            analysis_note=_coerce_mapping_first_str(
+                state,
+                "analysis_note",
+                "failure_summary",
+            ),
+            analysis_source=_coerce_mapping_str(state, "analysis_source", default="fallback"),
+            failure_summary=_coerce_mapping_str(state, "failure_summary"),
             repaired_result=state.get("repaired_result"),
             feedback_message=feedback_message,
             retry_guidance=state.get("retry_guidance"),
@@ -219,24 +383,19 @@ class WorkflowRepairResult(WorkflowGraphResult):
         )
 
     @classmethod
+    def from_state(cls, state: Mapping[str, object]) -> "WorkflowRepairResult":
+        return cls._from_normalized_state(state, ok=True)
+
+    @classmethod
     def from_error(
         cls,
         exc: Exception,
         state: Mapping[str, object],
     ) -> "WorkflowRepairResult":
-        reason = f"自动修复工作流执行失败：{exc}"
-        return cls(
+        return cls._from_normalized_state(
+            state,
             ok=False,
-            output=reason,
-            should_attempt_repair=False,
-            reason=reason,
-            analysis_note=str(state.get("analysis_note") or state.get("failure_summary") or ""),
-            analysis_source=str(state.get("analysis_source") or "fallback"),
-            failure_summary=str(state.get("failure_summary") or ""),
-            repaired_result=None,
-            feedback_message=None,
-            retry_guidance=None,
-            state=dict(state),
+            reason_override=f"自动修复工作流执行失败：{exc}",
         )
 
     @classmethod
@@ -244,54 +403,68 @@ class WorkflowRepairResult(WorkflowGraphResult):
         if isinstance(value, cls):
             return value
 
-        return cls.from_state(
-            _extract_state_from_value(
-                value,
-                field_names=(
-                    "should_attempt_repair",
-                    "decision_reason",
-                    "reason",
-                    "analysis_note",
-                    "analysis_source",
-                    "failure_summary",
-                    "repaired_result",
-                    "feedback_message",
-                    "feedback_text",
-                    "feedback_node_name",
-                    "retry_guidance",
-                    "retry_next_action",
-                    "retry_node_name",
-                ),
-            )
+        state = _extract_state_from_value(value, field_names=REPAIR_RESULT_FIELDS)
+        return cls._from_normalized_state(
+            state,
+            ok=_resolve_result_ok(state, fallback=True),
         )
 
     @property
     def feedback_text(self) -> str | None:
-        return _coerce_attr_text(self.feedback_message, "content") or _coerce_mapping_text(
+        return _coerce_attr_or_mapping_text(
+            self.feedback_message,
+            "content",
             self.state,
             "feedback_text",
         )
 
     @property
     def feedback_node_name(self) -> str | None:
-        return _coerce_attr_text(self.feedback_message, "node_name") or _coerce_mapping_text(
+        return _coerce_attr_or_mapping_text(
+            self.feedback_message,
+            "node_name",
             self.state,
             "feedback_node_name",
         )
 
     @property
     def retry_next_action(self) -> str | None:
-        return _coerce_attr_text(self.retry_guidance, "next_action") or _coerce_mapping_text(
+        return _coerce_attr_or_mapping_text(
+            self.retry_guidance,
+            "next_action",
             self.state,
             "retry_next_action",
         )
 
     @property
     def retry_node_name(self) -> str | None:
-        return _coerce_attr_text(self.retry_guidance, "node_name") or _coerce_mapping_text(
+        return _coerce_attr_or_mapping_text(
+            self.retry_guidance,
+            "node_name",
             self.state,
             "retry_node_name",
         )
+
+    def analysis_log_payload(self) -> tuple[str | None, str | None]:
+        analysis_note = self.analysis_note.strip() or None
+        analysis_source = self.analysis_source.strip() or None
+        return analysis_note, analysis_source
+
+    def feedback_payload(
+        self,
+        *,
+        default_node_name: str,
+    ) -> tuple[str, str] | None:
+        feedback_text = self.feedback_text
+        if feedback_text is None:
+            return None
+        return (
+            self.feedback_node_name or default_node_name,
+            feedback_text,
+        )
+
+    def repaired_result_or(self, fallback: object) -> Any:
+        return self.repaired_result or fallback
 
     def as_dict(self) -> dict[str, object]:
         payload = super(WorkflowRepairResult, self).as_dict()

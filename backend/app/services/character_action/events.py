@@ -1,5 +1,17 @@
 from dataclasses import dataclass
 
+from ...agent_workflow.workflow_nodes import (
+    CHAT_DONE_NODE,
+    CHAT_ERROR_NODE,
+    CHAT_NODE,
+    TASK_CANCELLED_NODE,
+    TASK_DONE_NODE,
+    TASK_FAILED_NODE,
+    TASK_QUEUED_NODE,
+    TASK_REPAIRING_NODE,
+    TASK_STARTED_NODE,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class CharacterEvent:
@@ -14,7 +26,7 @@ class CharacterEvent:
 
 
 CHAT_STARTED_EVENT = CharacterEvent(
-    node_name="chat",
+    node_name=CHAT_NODE,
     quip="我想一下。",
     expression="thinking",
     status="running",
@@ -22,7 +34,7 @@ CHAT_STARTED_EVENT = CharacterEvent(
 )
 
 CHAT_DONE_EVENT = CharacterEvent(
-    node_name="chat_done",
+    node_name=CHAT_DONE_NODE,
     quip="我想好了。",
     expression="happy",
     status="done",
@@ -30,14 +42,14 @@ CHAT_DONE_EVENT = CharacterEvent(
 )
 
 CHAT_FAILED_EVENT = CharacterEvent(
-    node_name="chat_error",
+    node_name=CHAT_ERROR_NODE,
     quip="这次回复遇到了一点问题。",
     expression="worried",
     status="error",
 )
 
 TASK_QUEUED_EVENT = CharacterEvent(
-    node_name="task_queued",
+    node_name=TASK_QUEUED_NODE,
     quip="任务已经排队。",
     expression="thinking",
     status="running",
@@ -45,7 +57,7 @@ TASK_QUEUED_EVENT = CharacterEvent(
 )
 
 TASK_STARTED_EVENT = CharacterEvent(
-    node_name="task_started",
+    node_name=TASK_STARTED_NODE,
     quip="任务开始执行。",
     expression="coding",
     status="running",
@@ -53,7 +65,7 @@ TASK_STARTED_EVENT = CharacterEvent(
 )
 
 TASK_REPAIRING_EVENT = CharacterEvent(
-    node_name="task_repairing",
+    node_name=TASK_REPAIRING_NODE,
     quip="我在尝试修复刚才的问题。",
     expression="worried",
     status="running",
@@ -61,7 +73,7 @@ TASK_REPAIRING_EVENT = CharacterEvent(
 )
 
 TASK_DONE_EVENT = CharacterEvent(
-    node_name="task_done",
+    node_name=TASK_DONE_NODE,
     quip="任务完成了。",
     expression="happy",
     status="done",
@@ -69,14 +81,14 @@ TASK_DONE_EVENT = CharacterEvent(
 )
 
 TASK_FAILED_EVENT = CharacterEvent(
-    node_name="task_failed",
+    node_name=TASK_FAILED_NODE,
     quip="任务执行失败了。",
     expression="sad",
     status="error",
 )
 
 TASK_CANCELLED_EVENT = CharacterEvent(
-    node_name="task_cancelled",
+    node_name=TASK_CANCELLED_NODE,
     quip="任务已经取消。",
     expression="thinking",
     status="cancelled",

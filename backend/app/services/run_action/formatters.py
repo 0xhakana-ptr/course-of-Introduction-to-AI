@@ -17,6 +17,22 @@ def preview_single_line(text: str, limit: int = SUMMARY_PREVIEW_LIMIT) -> str:
     return build_preview(text, limit=limit)
 
 
+def build_run_chat_text(
+    *,
+    title: str,
+    run_id: str,
+    fields: list[tuple[str, str]],
+    include_run_link: bool = True,
+) -> str:
+    lines = [title]
+    if run_id:
+        lines.append(f"run_id: {run_id}")
+    lines.extend(f"{label}: {value}" for label, value in fields if value)
+    if include_run_link and run_id:
+        lines.append(f"查看完整结果: GET /runs/{run_id}")
+    return "\n".join(lines)
+
+
 def describe_generator(generator: str) -> str:
     generator_map = {
         "template": "本地模板",
@@ -139,15 +155,15 @@ def build_repair_retry_feedback_text(
         str(analysis_note or "我已经拿到了这次失败的关键信息。"),
         limit=200,
     )
-    lines = [
-        "我先同步一下这次代码任务的进展。",
-        f"run_id: {run_id}",
-        f"当前结果: {attempt_summary}",
-        f"分析: {analysis_text}",
-        f"下一步: 我会继续进行第 {next_repair_round} 轮自动修复，然后再次尝试执行。",
-        f"查看完整结果: GET /runs/{run_id}",
-    ]
-    return "\n".join(lines)
+    return build_run_chat_text(
+        title="我先同步一下这次代码任务的进展。",
+        run_id=run_id,
+        fields=[
+            ("当前结果", attempt_summary),
+            ("分析", analysis_text),
+            ("下一步", f"我会继续进行第 {next_repair_round} 轮自动修复，然后再次尝试执行。"),
+        ],
+    )
 
 
 def build_retry_outcome_chat_text(
@@ -158,14 +174,14 @@ def build_retry_outcome_chat_text(
     summary_text: str | None = None,
 ) -> str:
     outcome_text = preview_single_line(summary_text or attempt_summary, limit=220)
-    lines = [
-        "我继续同步一下自动修复后的这轮结果。",
-        f"run_id: {run_id}",
-        f"本轮结果: {outcome_text}",
-        f"下一步: {next_action}",
-        f"查看完整结果: GET /runs/{run_id}",
-    ]
-    return "\n".join(lines)
+    return build_run_chat_text(
+        title="我继续同步一下自动修复后的这轮结果。",
+        run_id=run_id,
+        fields=[
+            ("本轮结果", outcome_text),
+            ("下一步", next_action),
+        ],
+    )
 
 
 def to_run_attempt_response(record: AttemptRecord) -> RunAttemptResponse:
@@ -305,14 +321,14 @@ def build_run_completion_chat_text(
     }.get(status, "代码任务状态已更新。")
 
     summary = preview_single_line(summary_text or build_run_summary_text(record), limit=240)
-    lines = [status_title]
-    if run_id:
-        lines.append(f"run_id: {run_id}")
-    lines.append(f"状态: {status}")
-    lines.append(f"摘要: {summary}")
-    if run_id:
-        lines.append(f"查看完整结果: GET /runs/{run_id}")
-    return "\n".join(lines)
+    return build_run_chat_text(
+        title=status_title,
+        run_id=run_id,
+        fields=[
+            ("状态", status),
+            ("摘要", summary),
+        ],
+    )
 
 
 def to_run_summary_response(record: RunRecord) -> RunSummaryResponse:

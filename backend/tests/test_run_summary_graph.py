@@ -127,6 +127,28 @@ def test_summarize_run_record_returns_failed_result_when_graph_invoke_fails(monk
     assert "summary graph boom" in result.output
 
 
+def test_workflow_summary_result_can_normalize_generic_object_fields():
+    fake_summary_result = type(
+        "FakeSummaryResult",
+        (),
+        {
+            "ok": False,
+            "output": "summary graph failed",
+            "summary_text": "fallback summary",
+            "summary_source": "llm",
+            "llm_error": "summary error",
+        },
+    )()
+
+    result = WorkflowSummaryResult.from_value(fake_summary_result)
+
+    assert result.ok is False
+    assert result.output == "summary graph failed"
+    assert result.summary_text == "fallback summary"
+    assert result.summary_source == "llm"
+    assert result.llm_error == "summary error"
+
+
 def test_emit_final_run_chat_message_falls_back_when_summary_graph_returns_failed_result(monkeypatch):
     run = create_run("build a calculator demo", None)
     executed = execute_run(run.run_id)

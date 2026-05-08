@@ -17,6 +17,7 @@ from .summary_support import (
     compile_summary_graph,
     run_summary_graph_workflow,
 )
+from .workflow_nodes import AGENT_ROLEPLAY_NODE, TASK_DONE_NODE
 from .workflow_results import WorkflowSummaryResult
 
 
@@ -92,7 +93,7 @@ summary_node = build_summary_resolution_node(
 )
 
 
-roleplay_node = build_summary_roleplay_node(default_node_name="agent_roleplay")
+roleplay_node = build_summary_roleplay_node(default_node_name=AGENT_ROLEPLAY_NODE)
 
 
 def create_run_summary_graph():
@@ -109,7 +110,7 @@ run_summary_graph = create_run_summary_graph()
 def summarize_run_record(
     record: RunRecord,
     *,
-    node_name: str = "task_done",
+    node_name: str = TASK_DONE_NODE,
     emit_chat_message: bool = False,
 ) -> WorkflowSummaryResult:
     return run_summary_graph_workflow(

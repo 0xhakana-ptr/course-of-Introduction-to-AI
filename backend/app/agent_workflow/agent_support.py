@@ -1,7 +1,9 @@
 from collections.abc import Mapping
 
-from .roleplay import emit_roleplay_chat
+from .roleplay import emit_roleplay_state
+from .workflow_nodes import AGENT_ROLEPLAY_NODE
 from ..schemas import INTENT_TYPE
+from ..tools.workspace_tools import build_workspace_overview
 from .workflow_results import WorkflowAgentResult, invoke_graph_with_result
 
 
@@ -49,6 +51,35 @@ def merge_agent_state(
     return next_state
 
 
+def _normalize_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def merge_context_sections(*sections: object) -> str | None:
+    normalized_sections = [
+        text
+        for section in sections
+        if (text := _normalize_optional_text(section)) is not None
+    ]
+    if not normalized_sections:
+        return None
+    return "\n\n".join(normalized_sections)
+
+
+def build_coding_tool_context() -> str | None:
+    try:
+        overview = build_workspace_overview()
+    except Exception:
+        return None
+
+    if not overview:
+        return None
+    return f"Workspace overview for the coding task:\n{overview}"
+
+
 def build_routed_state(
     state: Mapping[str, object],
     *,
@@ -76,8 +107,13 @@ def build_chat_result_state(
 
 
 def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, object]:
+    tool_context = build_coding_tool_context()
     return merge_agent_state(
         state,
+        context=merge_context_sections(
+            state.get("context"),
+            tool_context,
+        ),
         ui_status="coding_requested",
     )
 
@@ -127,14 +163,12 @@ def build_unknown_intent_state(
 def emit_agent_roleplay_state(
     state: Mapping[str, object],
     *,
-    node_name: str = "agent_roleplay",
+    node_name: str = AGENT_ROLEPLAY_NODE,
 ) -> dict[str, object]:
-    emit_roleplay_chat(
-        str(state.get("output") or ""),
-        node_name=node_name,
-        emit_chat_message=bool(state.get("emit_chat_message", True)),
+    return emit_roleplay_state(
+        state,
+        default_node_name=node_name,
     )
-    return dict(state)
 
 
 def build_agent_initial_state(

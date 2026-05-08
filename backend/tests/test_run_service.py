@@ -1,6 +1,11 @@
 import threading
 import time
 
+from backend.app.services.run_action.formatters import (
+    build_repair_retry_feedback_text,
+    build_retry_outcome_chat_text,
+    build_run_completion_chat_text,
+)
 from backend.app.services.run_action.recovery import recover_interrupted_runs
 from backend.app.services.run_action.types import ScriptGenerationResult
 from backend.app.services.run_interface import create_run, execute_run, get_run, get_run_attempt
@@ -15,6 +20,48 @@ def wait_for(predicate, timeout_seconds: float = 5.0):
             return value
         time.sleep(0.05)
     return None
+
+
+def test_run_chat_text_builders_keep_shared_output_contract():
+    repair_feedback = build_repair_retry_feedback_text(
+        run_id="run_demo_1",
+        attempt_summary="第 1 次尝试失败。",
+        analysis_note="这里是分析摘要。",
+        next_repair_round=2,
+    )
+    retry_outcome = build_retry_outcome_chat_text(
+        run_id="run_demo_1",
+        attempt_summary="第 2 次尝试成功。",
+        next_action="我会整理最终结果。",
+        summary_text="这轮已经成功。",
+    )
+    completion_text = build_run_completion_chat_text(
+        {
+            "run_id": "run_demo_1",
+            "status": "done",
+            "attempt_count": 1,
+            "repair_count": 0,
+            "generator": "template",
+            "attempts": [],
+            "error": None,
+        }
+    )
+
+    assert repair_feedback.startswith("我先同步一下这次代码任务的进展。")
+    assert "run_id: run_demo_1" in repair_feedback
+    assert "当前结果: 第 1 次尝试失败。" in repair_feedback
+    assert "下一步: 我会继续进行第 2 轮自动修复，然后再次尝试执行。" in repair_feedback
+    assert repair_feedback.endswith("查看完整结果: GET /runs/run_demo_1")
+
+    assert retry_outcome.startswith("我继续同步一下自动修复后的这轮结果。")
+    assert "本轮结果: 这轮已经成功。" in retry_outcome
+    assert "下一步: 我会整理最终结果。" in retry_outcome
+    assert retry_outcome.endswith("查看完整结果: GET /runs/run_demo_1")
+
+    assert completion_text.startswith("代码任务已经完成。")
+    assert "run_id: run_demo_1" in completion_text
+    assert "状态: done" in completion_text
+    assert "摘要:" in completion_text
 
 
 def test_run_endpoints_expose_attempt_script_output_and_logs(client):

@@ -23,7 +23,7 @@ from .repair_support import (
     invoke_repair_graph,
     select_repair_graph_next_step,
 )
-from .summary_support import apply_text_resolution, build_prompt_text, resolve_summary_text
+from .summary_support import build_prompt_text, build_text_resolution_node
 from .workflow_results import WorkflowRepairResult
 
 
@@ -138,24 +138,25 @@ def route_by_eligibility(state: RepairDecisionState) -> str:
     return "qa_node" if bool(state.get("eligible")) else "decision_node"
 
 
+repair_analysis_node = build_text_resolution_node(
+    fallback_text_builder=lambda state: str(
+        state.get("analysis_note") or state.get("failure_summary") or ""
+    ),
+    prompt_builder=build_repair_analysis_prompt,
+    system_prompt=REPAIR_ANALYSIS_SYSTEM_PROMPT,
+    text_key="analysis_note",
+    source_key="analysis_source",
+    temperature=0.1,
+    llm_is_configured_fn=lambda: llm_is_configured(),
+    call_llm_sync_fn=lambda *args, **kwargs: call_llm_sync(*args, **kwargs),
+)
+
+
 def qa_node(state: RepairDecisionState) -> RepairDecisionState:
     if not bool(state.get("eligible")):
         return state
 
-    resolution = resolve_summary_text(
-        fallback_text=str(state.get("analysis_note") or state.get("failure_summary") or ""),
-        prompt=build_repair_analysis_prompt(state),
-        system_prompt=REPAIR_ANALYSIS_SYSTEM_PROMPT,
-        temperature=0.1,
-        llm_is_configured_fn=llm_is_configured,
-        call_llm_sync_fn=call_llm_sync,
-    )
-    return apply_text_resolution(
-        state,
-        resolution=resolution,
-        text_key="analysis_note",
-        source_key="analysis_source",
-    )
+    return repair_analysis_node(state)
 
 
 def decision_node(state: RepairDecisionState) -> RepairDecisionState:

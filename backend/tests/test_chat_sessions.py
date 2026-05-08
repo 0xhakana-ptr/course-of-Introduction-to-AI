@@ -1,5 +1,8 @@
+import asyncio
+
 from backend.app.services.chat_action.types import ChatServiceResult
-from backend.app.storage.conversation_store import ConversationStore
+from backend.app.services.chat_interface import generate_chat_response
+from backend.app.storage.conversation_store import ConversationStore, conversation_store
 
 
 def test_chat_response_returns_session_id_when_missing_llm(client):
@@ -143,6 +146,74 @@ def test_chat_session_metadata_endpoint_returns_exists_false_for_unknown_session
     assert payload["has_summary_cache"] is False
 
 
+def test_chat_session_context_endpoint_returns_context_snapshot(monkeypatch, client):
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        return ChatServiceResult(intent="chat", ok=True, output=f"reply to {prompt}")
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+    monkeypatch.setattr(
+        "backend.app.core.config.settings.conversation_context_recent_messages",
+        2,
+    )
+    monkeypatch.setattr(
+        "backend.app.core.config.settings.conversation_summary_max_chars",
+        200,
+    )
+
+    session_id: str | None = None
+    for prompt in ["first hello", "second hello", "third hello"]:
+        response = client.post(
+            "/chat",
+            json={"prompt": prompt, "context": None, "session_id": session_id},
+        )
+        assert response.status_code == 200
+        session_id = response.json()["session_id"]
+
+    assert session_id is not None
+    context_response = client.get(f"/chat/sessions/{session_id}/context")
+
+    assert context_response.status_code == 200
+    payload = context_response.json()
+    assert payload["ok"] is True
+    assert payload["exists"] is True
+    assert payload["session_id"] == session_id
+    assert payload["message_count"] == 6
+    assert payload["recent_message_count"] == 2
+    assert payload["compressed_message_count"] == 4
+    assert payload["has_summary_cache"] is True
+    assert payload["compressed_summary"]
+    assert "Compressed earlier conversation summary:" in payload["context_text"]
+    assert "Recent stored conversation history:" in payload["context_text"]
+    assert len(payload["recent_messages"]) == 2
+    assert payload["recent_messages"][0]["role"] == "user"
+    assert payload["recent_messages"][0]["content"] == "third hello"
+    assert payload["recent_messages"][1]["role"] == "assistant"
+    assert payload["recent_messages"][1]["content"] == "reply to third hello"
+    assert payload["context_char_count"] == len(payload["context_text"])
+
+
+def test_chat_session_context_endpoint_returns_exists_false_for_unknown_session(client):
+    response = client.get("/chat/sessions/not-found-session/context")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["exists"] is False
+    assert payload["session_id"] == "not-found-session"
+    assert payload["context_text"] is None
+    assert payload["recent_messages"] == []
+
+
 def test_chat_session_list_endpoint_returns_recent_sessions(monkeypatch, client):
     async def fake_build_agent_reply(
         prompt: str,
@@ -282,3 +353,50 @@ def test_chat_session_uses_compressed_context_for_long_history(monkeypatch, clie
     assert "Recent stored conversation history:" in seen_contexts[-1]
     assert "User: fourth hello" not in seen_contexts[-1]
     assert "Assistant: reply to third hello with extra words" in seen_contexts[-1]
+
+
+def test_generate_chat_response_marks_coding_schedule_failure(monkeypatch):
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        return ChatServiceResult(
+            intent="coding",
+            ok=True,
+            output=(
+                "已通过 LangGraph 创建代码任务，并交给 `/runs` 链路处理。\n\n"
+                "run_id: run-1"
+            ),
+            run_id="run-1",
+        )
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    def broken_schedule(run_id: str) -> None:
+        raise RuntimeError(f"schedule failed: {run_id}")
+
+    result = asyncio.run(
+        generate_chat_response(
+            "write python code",
+            None,
+            schedule_run=broken_schedule,
+        )
+    )
+
+    assert result.ok is False
+    assert result.run_id == "run-1"
+    assert result.session_id is not None
+    assert "后台执行调度失败" in result.output
+    assert result.error == "schedule failed: run-1"
+
+    stored_messages = conversation_store.get_messages(result.session_id)
+    assert len(stored_messages) == 1
+    assert stored_messages[0]["role"] == "user"
+    assert stored_messages[0]["content"] == "write python code"

@@ -55,6 +55,12 @@ class ConversationSessionInfo(BaseModel):
     updated_at: str | None = None
 
 
+class ConversationMessageItem(BaseModel):
+    role: MESSAGE_ROLE
+    content: str
+    created_at: str | None = None
+
+
 class ConversationSessionMetadataResponse(ConversationSessionInfo):
     ok: bool = True
     exists: bool
@@ -66,6 +72,15 @@ class ConversationSessionListResponse(BaseModel):
     offset: int = 0
     limit: int = 0
     items: list[ConversationSessionInfo] = Field(default_factory=list)
+
+
+class ConversationSessionContextResponse(ConversationSessionInfo):
+    ok: bool = True
+    exists: bool
+    context_text: str | None = None
+    context_char_count: int = 0
+    compressed_summary: str | None = None
+    recent_messages: list[ConversationMessageItem] = Field(default_factory=list)
 
 
 class MessageEnvelope(BaseModel):
