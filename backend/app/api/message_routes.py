@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from .error_responses import COMMON_ERROR_RESPONSES
+from .query_params import MessagesSinceIdQuery
 from ..message_queue import message_queue
 from ..schemas import ClearMessagesResponse, MessagesResponse
 
@@ -13,7 +14,7 @@ router = APIRouter(
 
 
 @router.get("", response_model=MessagesResponse)
-async def get_messages(since_id: str | None = Query(default=None)):
+async def get_messages(since_id: MessagesSinceIdQuery = None):
     messages = message_queue.get_messages(since_id)
     return MessagesResponse(
         ok=True,

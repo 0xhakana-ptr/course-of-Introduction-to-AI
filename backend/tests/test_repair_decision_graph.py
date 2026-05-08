@@ -4,11 +4,16 @@ from backend.app.agent_workflow.repair_decision_graph import (
 )
 from backend.app.agent_workflow.retry_guidance import build_retry_guidance
 from backend.app.agent_workflow.repair_support import (
+    build_failure_inspected_state,
+    build_feedback_composed_state,
+    build_repair_codegen_state,
+    build_repair_decision_state,
+    build_repair_eligibility_state,
     build_repair_feedback_message,
     select_repair_graph_next_step,
 )
 from backend.app.agent_workflow.workflow_results import WorkflowRepairResult
-from backend.app.services.run_action.types import ScriptGenerationResult
+from backend.app.services.run_action.types import ScriptGenerationResult, WorkflowChatMessage
 
 
 def test_repair_decision_graph_blocks_when_llm_is_unavailable():
@@ -307,3 +312,97 @@ def test_retry_guidance_builder_returns_expected_mapping():
 
     assert guidance.node_name == "task_retry_done"
     assert "整理最终结果" in guidance.next_action
+
+
+def test_repair_support_builds_state_updates_consistently():
+    base_state = {
+        "current_generator": "llm_repair",
+        "decision_reason": "",
+    }
+
+    inspected_state = build_failure_inspected_state(
+        base_state,
+        failure_summary="failure summary",
+    )
+    blocked_state = build_repair_eligibility_state(
+        base_state,
+        eligible=False,
+        decision_reason="blocked",
+    )
+    decided_state = build_repair_decision_state(
+        base_state,
+        current_generator="llm_repair",
+        should_attempt_repair=True,
+        decision_reason="go repair",
+    )
+
+    assert inspected_state["failure_summary"] == "failure summary"
+    assert inspected_state["analysis_note"] == "failure summary"
+    assert blocked_state["eligible"] is False
+    assert blocked_state["decision_reason"] == "blocked"
+    assert decided_state["should_attempt_repair"] is True
+    assert decided_state["decision_reason"] == "go repair"
+    assert decided_state["retry_guidance"] is not None
+    assert decided_state["retry_guidance"].node_name == "task_retry_repairing"
+
+
+def test_repair_support_builds_feedback_and_codegen_state():
+    base_state = {"repair_count": 0}
+    feedback_message = WorkflowChatMessage(
+        node_name="task_repairing",
+        content="repair feedback",
+    )
+    repaired_result = ScriptGenerationResult(
+        ok=True,
+        file_name="demo.py",
+        script_content='print("ok")\n',
+        raw_output="raw",
+    )
+
+    feedback_state = build_feedback_composed_state(
+        base_state,
+        feedback_message=feedback_message,
+    )
+    codegen_state = build_repair_codegen_state(
+        base_state,
+        repaired_result=repaired_result,
+    )
+
+    assert feedback_state["feedback_message"] == feedback_message
+    assert codegen_state["repaired_result"] == repaired_result
+
+
+def test_repair_workflow_returns_failed_result_when_graph_invoke_fails(monkeypatch):
+    fake_graph = type(
+        "BrokenGraph",
+        (),
+        {
+            "invoke": lambda self, state: (_ for _ in ()).throw(RuntimeError("repair graph boom")),
+        },
+    )()
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.repair_decision_graph.repair_decision_graph",
+        fake_graph,
+    )
+
+    result = evaluate_repair_decision(
+        prompt="build a demo",
+        context=None,
+        file_name="broken_demo.py",
+        script_content='raise RuntimeError("Intentional demo failure")\n',
+        failure_result={
+            "command": "python broken_demo.py",
+            "returncode": 1,
+            "stderr": "Traceback ... RuntimeError: Intentional demo failure",
+            "stdout": "This demo will fail intentionally.",
+            "error": "RuntimeError: Intentional demo failure",
+        },
+        repair_count=0,
+        max_repair_attempts=1,
+        llm_configured=True,
+    )
+
+    assert result.ok is False
+    assert result.should_attempt_repair is False
+    assert "自动修复工作流执行失败" in result.reason
+    assert "repair graph boom" in result.reason

@@ -10,10 +10,11 @@ from ..services.run_action.formatters import (
 )
 from ..services.run_action.types import RunRecord
 from .summary_support import (
+    SummaryResolution,
     build_prompt_text,
+    build_summary_resolution_node,
+    build_summary_roleplay_node,
     compile_summary_graph,
-    emit_summary_roleplay,
-    resolve_summary_node_state,
     run_summary_graph_workflow,
 )
 from .workflow_results import WorkflowSummaryResult
@@ -71,27 +72,27 @@ def build_run_summary_prompt(record: RunRecord) -> str:
     )
 
 
-def summary_node(state: RunSummaryState) -> RunSummaryState:
-    record = state["run_record"]
-    return resolve_summary_node_state(
-        state,
-        fallback_text=build_run_summary_text(record),
-        prompt=build_run_summary_prompt(record),
-        system_prompt=RUN_SUMMARY_SYSTEM_PROMPT,
-        llm_is_configured_fn=llm_is_configured,
-        call_llm_sync_fn=call_llm_sync,
-        output_builder=lambda resolution: build_run_completion_chat_text(
-            record,
-            summary_text=resolution.text,
-        ),
+def _build_run_summary_output(
+    state: RunSummaryState,
+    resolution: SummaryResolution,
+) -> str:
+    return build_run_completion_chat_text(
+        state["run_record"],
+        summary_text=resolution.text,
     )
 
 
-def roleplay_node(state: RunSummaryState) -> RunSummaryState:
-    return emit_summary_roleplay(
-        state,
-        default_node_name="agent_roleplay",
-    )
+summary_node = build_summary_resolution_node(
+    fallback_text_builder=lambda state: build_run_summary_text(state["run_record"]),
+    prompt_builder=lambda state: build_run_summary_prompt(state["run_record"]),
+    output_builder=_build_run_summary_output,
+    system_prompt=RUN_SUMMARY_SYSTEM_PROMPT,
+    llm_is_configured_fn=lambda: llm_is_configured(),
+    call_llm_sync_fn=lambda *args, **kwargs: call_llm_sync(*args, **kwargs),
+)
+
+
+roleplay_node = build_summary_roleplay_node(default_node_name="agent_roleplay")
 
 
 def create_run_summary_graph():

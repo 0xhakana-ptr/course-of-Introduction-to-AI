@@ -2,7 +2,7 @@ from collections.abc import Mapping
 
 from .roleplay import emit_roleplay_chat
 from ..schemas import INTENT_TYPE
-from .workflow_results import WorkflowAgentResult
+from .workflow_results import WorkflowAgentResult, invoke_graph_with_result
 
 
 AGENT_ROUTE_BY_INTENT: dict[str, str] = {
@@ -177,22 +177,16 @@ def invoke_agent_graph(
         emit_chat_message=emit_chat_message,
         intent=intent,
     )
-
-    try:
-        result = graph.invoke(initial_state)
-    except Exception as exc:
-        return WorkflowAgentResult(
-            ok=False,
-            intent=intent or "unknown",
-            output=f"Agent 工作流执行失败：{exc}",
-            error=str(exc),
-            run_id=None,
-            run_status=None,
-            ui_status=None,
-            state=dict(initial_state),
-        )
-
-    return WorkflowAgentResult.from_state(
-        result,
-        default_intent=intent or "unknown",
+    return invoke_graph_with_result(
+        graph,
+        initial_state=initial_state,
+        on_success=lambda result: WorkflowAgentResult.from_state(
+            result,
+            default_intent=intent or "unknown",
+        ),
+        on_error=lambda exc, state: WorkflowAgentResult.from_error(
+            exc,
+            state,
+            default_intent=intent or "unknown",
+        ),
     )

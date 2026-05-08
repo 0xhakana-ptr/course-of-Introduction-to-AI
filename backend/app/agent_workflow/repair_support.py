@@ -7,7 +7,8 @@ from ..services.run_action.formatters import (
     build_repair_retry_feedback_text,
 )
 from ..services.run_action.types import CommandResult, ScriptGenerationResult, WorkflowChatMessage
-from .workflow_results import WorkflowRepairResult
+from .retry_guidance import maybe_build_retry_guidance_for_repair_decision
+from .workflow_results import WorkflowRepairResult, invoke_graph_with_result
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,16 @@ REPAIR_EXECUTION_MODE = RepairWorkflowMode(
     generate_feedback=True,
     generate_repair_script=True,
 )
+
+
+def merge_repair_state(
+    state: Mapping[str, object],
+    **updates: object,
+) -> dict[str, object]:
+    return {
+        **state,
+        **updates,
+    }
 
 
 def select_repair_graph_next_step(
@@ -62,6 +73,73 @@ def build_repair_feedback_message(
     return WorkflowChatMessage(
         node_name="task_repairing",
         content=feedback_text,
+    )
+
+
+def build_failure_inspected_state(
+    state: Mapping[str, object],
+    *,
+    failure_summary: str,
+) -> dict[str, object]:
+    return merge_repair_state(
+        state,
+        failure_summary=failure_summary,
+        analysis_note=failure_summary,
+        analysis_source="fallback",
+    )
+
+
+def build_repair_eligibility_state(
+    state: Mapping[str, object],
+    *,
+    eligible: bool,
+    decision_reason: str | None = None,
+) -> dict[str, object]:
+    updates: dict[str, object] = {
+        "eligible": eligible,
+    }
+    if decision_reason is not None:
+        updates["decision_reason"] = decision_reason
+    return merge_repair_state(state, **updates)
+
+
+def build_repair_decision_state(
+    state: Mapping[str, object],
+    *,
+    current_generator: str,
+    should_attempt_repair: bool,
+    decision_reason: str | None = None,
+) -> dict[str, object]:
+    return merge_repair_state(
+        state,
+        should_attempt_repair=should_attempt_repair,
+        decision_reason=decision_reason if decision_reason is not None else state.get("decision_reason"),
+        retry_guidance=maybe_build_retry_guidance_for_repair_decision(
+            current_generator=current_generator,
+            should_attempt_repair=should_attempt_repair,
+        ),
+    )
+
+
+def build_feedback_composed_state(
+    state: Mapping[str, object],
+    *,
+    feedback_message: WorkflowChatMessage,
+) -> dict[str, object]:
+    return merge_repair_state(
+        state,
+        feedback_message=feedback_message,
+    )
+
+
+def build_repair_codegen_state(
+    state: Mapping[str, object],
+    *,
+    repaired_result: ScriptGenerationResult,
+) -> dict[str, object]:
+    return merge_repair_state(
+        state,
+        repaired_result=repaired_result,
     )
 
 
@@ -136,5 +214,9 @@ def invoke_repair_graph(
         max_repair_attempts=max_repair_attempts,
         llm_configured=llm_configured,
     )
-    result = graph.invoke(initial_state)
-    return WorkflowRepairResult.from_state(result)
+    return invoke_graph_with_result(
+        graph,
+        initial_state=initial_state,
+        on_success=WorkflowRepairResult.from_state,
+        on_error=WorkflowRepairResult.from_error,
+    )

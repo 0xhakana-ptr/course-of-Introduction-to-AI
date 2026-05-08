@@ -1,10 +1,14 @@
 from typing import Annotated
 
-from fastapi import Depends, Query
+from fastapi import Depends
 
 from .error_responses import raise_api_http_error
+from .query_params import (
+    AttemptOutputLimitQuery,
+    AttemptOutputOffsetQuery,
+    AttemptOutputStreamQuery,
+)
 from ..schemas import (
-    ATTEMPT_OUTPUT_STREAM,
     RunAttemptListResponse,
     RunAttemptOutputChunkResponse,
     RunAttemptResponse,
@@ -57,9 +61,9 @@ def require_run_attempt_script(run_id: str, attempt_number: int) -> RunAttemptSc
 def require_run_attempt_output(
     run_id: str,
     attempt_number: int,
-    stream: ATTEMPT_OUTPUT_STREAM = Query(default="stdout"),
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=4000, ge=1, le=20000),
+    stream: AttemptOutputStreamQuery = "stdout",
+    offset: AttemptOutputOffsetQuery = 0,
+    limit: AttemptOutputLimitQuery = 4000,
 ) -> RunAttemptOutputChunkResponse:
     output = get_run_attempt_output_chunk(
         run_id=run_id,

@@ -1,6 +1,8 @@
-from fastapi import APIRouter, BackgroundTasks, Query
+from fastapi import APIRouter, BackgroundTasks
 
 from .error_responses import COMMON_ERROR_RESPONSES
+from .query_params import RunListLimitQuery, RunListOffsetQuery
+from .route_support import schedule_run_execution
 from .run_dependencies import (
     RunAttemptDependency,
     RunAttemptOutputDependency,
@@ -22,7 +24,6 @@ from ..schemas import (
 from ..services.run_interface import (
     cancel_run,
     create_run,
-    execute_run,
     list_run_summaries,
     list_runs,
     rerun_run,
@@ -42,7 +43,7 @@ async def create_run_route(req: RunCreateRequest, background_tasks: BackgroundTa
     prompt = req.prompt.strip()
     context = (req.context or "").strip() or None
     run = create_run(prompt, context)
-    background_tasks.add_task(execute_run, run.run_id)
+    schedule_run_execution(background_tasks, run.run_id)
     return run
 
 
@@ -53,8 +54,8 @@ async def list_runs_route():
 
 @router.get("/summary", response_model=RunSummaryListResponse)
 async def list_run_summaries_route(
-    offset: int = Query(default=0, ge=0),
-    limit: int = Query(default=20, ge=1, le=100),
+    offset: RunListOffsetQuery = 0,
+    limit: RunListLimitQuery = 20,
 ):
     return list_run_summaries(offset=offset, limit=limit)
 
@@ -92,14 +93,14 @@ async def get_run_log_route(run_log: RunLogDependency):
 @router.post("/{run_id}/retry", response_model=RunResponse)
 async def retry_run_route(run_id: str, background_tasks: BackgroundTasks):
     run = retry_run(run_id)
-    background_tasks.add_task(execute_run, run.run_id)
+    schedule_run_execution(background_tasks, run.run_id)
     return run
 
 
 @router.post("/{run_id}/rerun", response_model=RunResponse)
 async def rerun_run_route(run_id: str, background_tasks: BackgroundTasks):
     run = rerun_run(run_id)
-    background_tasks.add_task(execute_run, run.run_id)
+    schedule_run_execution(background_tasks, run.run_id)
     return run
 
 

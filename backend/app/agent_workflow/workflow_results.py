@@ -1,6 +1,9 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TypeVar
+
+
+GraphResultT = TypeVar("GraphResultT", bound="WorkflowGraphResult")
 
 
 @dataclass(slots=True)
@@ -15,6 +18,29 @@ class WorkflowGraphResult:
             "output": self.output,
             "state": dict(self.state),
         }
+
+
+def invoke_graph_with_result(
+    graph: object,
+    *,
+    initial_state: Mapping[str, object],
+    on_success: Callable[[Mapping[str, object]], GraphResultT],
+    on_error: Callable[[Exception, dict[str, object]], GraphResultT],
+) -> GraphResultT:
+    normalized_state = dict(initial_state)
+
+    try:
+        result = graph.invoke(normalized_state)
+    except Exception as exc:
+        return on_error(exc, normalized_state)
+
+    if not isinstance(result, Mapping):
+        return on_error(
+            TypeError("workflow graph returned non-mapping state"),
+            normalized_state,
+        )
+
+    return on_success(result)
 
 
 @dataclass(slots=True)
@@ -32,6 +58,22 @@ class WorkflowSummaryResult(WorkflowGraphResult):
             summary_text=str(state.get("summary_text") or ""),
             summary_source=str(state.get("summary_source") or "fallback"),
             llm_error=str(llm_error) if llm_error is not None else None,
+            state=dict(state),
+        )
+
+    @classmethod
+    def from_error(
+        cls,
+        exc: Exception,
+        state: Mapping[str, object],
+    ) -> "WorkflowSummaryResult":
+        message = f"总结工作流执行失败：{exc}"
+        return cls(
+            ok=False,
+            output=message,
+            summary_text="",
+            summary_source="fallback",
+            llm_error=str(exc),
             state=dict(state),
         )
 
@@ -98,6 +140,25 @@ class WorkflowAgentResult(WorkflowGraphResult):
             state=dict(state),
         )
 
+    @classmethod
+    def from_error(
+        cls,
+        exc: Exception,
+        state: Mapping[str, object],
+        *,
+        default_intent: str = "unknown",
+    ) -> "WorkflowAgentResult":
+        return cls(
+            ok=False,
+            output=f"Agent 工作流执行失败：{exc}",
+            intent=default_intent,
+            error=str(exc),
+            run_id=None,
+            run_status=None,
+            ui_status=None,
+            state=dict(state),
+        )
+
     def as_dict(self) -> dict[str, object]:
         payload = super(WorkflowAgentResult, self).as_dict()
         payload.update(
@@ -154,6 +215,27 @@ class WorkflowRepairResult(WorkflowGraphResult):
             repaired_result=state.get("repaired_result"),
             feedback_message=feedback_message,
             retry_guidance=state.get("retry_guidance"),
+            state=dict(state),
+        )
+
+    @classmethod
+    def from_error(
+        cls,
+        exc: Exception,
+        state: Mapping[str, object],
+    ) -> "WorkflowRepairResult":
+        reason = f"自动修复工作流执行失败：{exc}"
+        return cls(
+            ok=False,
+            output=reason,
+            should_attempt_repair=False,
+            reason=reason,
+            analysis_note=str(state.get("analysis_note") or state.get("failure_summary") or ""),
+            analysis_source=str(state.get("analysis_source") or "fallback"),
+            failure_summary=str(state.get("failure_summary") or ""),
+            repaired_result=None,
+            feedback_message=None,
+            retry_guidance=None,
             state=dict(state),
         )
 

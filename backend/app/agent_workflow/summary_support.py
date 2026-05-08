@@ -5,7 +5,7 @@ from langgraph.graph import END, StateGraph
 
 from ..llm.client import call_llm_sync, llm_is_configured
 from .roleplay import emit_roleplay_chat
-from .workflow_results import WorkflowSummaryResult
+from .workflow_results import WorkflowSummaryResult, invoke_graph_with_result
 
 
 @dataclass(slots=True)
@@ -13,6 +13,16 @@ class SummaryResolution:
     text: str
     source: str = "fallback"
     llm_error: str | None = None
+
+
+def merge_summary_state(
+    state: Mapping[str, object],
+    **updates: object,
+) -> dict[str, object]:
+    return {
+        **state,
+        **updates,
+    }
 
 
 def resolve_summary_text(
@@ -65,10 +75,10 @@ def apply_text_resolution(
     source_key: str | None = None,
     error_key: str | None = None,
 ) -> dict[str, object]:
-    next_state = {
-        **state,
-        text_key: resolution.text,
-    }
+    next_state = merge_summary_state(
+        state,
+        **{text_key: resolution.text},
+    )
     if source_key is not None:
         next_state[source_key] = resolution.source
     if error_key is not None:
@@ -120,13 +130,14 @@ def resolve_summary_node_state(
 
 
 def build_summary_initial_state(**state: object) -> dict[str, object]:
-    return {
-        "summary_text": "",
-        "output": "",
-        "summary_source": "fallback",
-        "llm_error": None,
+    return merge_summary_state(
+        {},
+        summary_text="",
+        output="",
+        summary_source="fallback",
+        llm_error=None,
         **state,
-    }
+    )
 
 
 def emit_summary_roleplay(
@@ -142,10 +153,52 @@ def emit_summary_roleplay(
     return dict(state)
 
 
+def build_summary_resolution_node(
+    *,
+    fallback_text_builder: Callable[[Mapping[str, object]], str],
+    prompt_builder: Callable[[Mapping[str, object]], str],
+    output_builder: Callable[[Mapping[str, object], SummaryResolution], str],
+    system_prompt: str,
+    temperature: float = 0.2,
+    llm_is_configured_fn: Callable[[], bool] = llm_is_configured,
+    call_llm_sync_fn: Callable[..., object] = call_llm_sync,
+) -> Callable[[Mapping[str, object]], dict[str, object]]:
+    def summary_node(state: Mapping[str, object]) -> dict[str, object]:
+        return resolve_summary_node_state(
+            state,
+            fallback_text=fallback_text_builder(state),
+            prompt=prompt_builder(state),
+            system_prompt=system_prompt,
+            output_builder=lambda resolution: output_builder(state, resolution),
+            temperature=temperature,
+            llm_is_configured_fn=llm_is_configured_fn,
+            call_llm_sync_fn=call_llm_sync_fn,
+        )
+
+    return summary_node
+
+
+def build_summary_roleplay_node(
+    *,
+    default_node_name: str,
+) -> Callable[[Mapping[str, object]], dict[str, object]]:
+    def roleplay_node(state: Mapping[str, object]) -> dict[str, object]:
+        return emit_summary_roleplay(
+            state,
+            default_node_name=default_node_name,
+        )
+
+    return roleplay_node
+
+
 def run_summary_graph_workflow(graph: object, **state: object) -> WorkflowSummaryResult:
     initial_state = build_summary_initial_state(**state)
-    result = graph.invoke(initial_state)
-    return build_summary_graph_result(result)
+    return invoke_graph_with_result(
+        graph,
+        initial_state=initial_state,
+        on_success=build_summary_graph_result,
+        on_error=WorkflowSummaryResult.from_error,
+    )
 
 
 def compile_summary_graph(

@@ -6,10 +6,11 @@ from ..services.run_action.formatters import (
     preview_single_line,
 )
 from .summary_support import (
+    SummaryResolution,
     build_prompt_text,
+    build_summary_resolution_node,
+    build_summary_roleplay_node,
     compile_summary_graph,
-    emit_summary_roleplay,
-    resolve_summary_node_state,
     run_summary_graph_workflow,
 )
 from .workflow_results import WorkflowSummaryResult
@@ -51,30 +52,29 @@ def build_attempt_summary_prompt(state: AttemptSummaryState) -> str:
     )
 
 
-def summary_node(state: AttemptSummaryState) -> AttemptSummaryState:
-    attempt_summary = str(state.get("attempt_summary") or "").strip()
-    next_action = str(state.get("next_action") or "").strip()
-    return resolve_summary_node_state(
-        state,
-        fallback_text=attempt_summary,
-        prompt=build_attempt_summary_prompt(state),
-        system_prompt=ATTEMPT_SUMMARY_SYSTEM_PROMPT,
-        llm_is_configured_fn=llm_is_configured,
-        call_llm_sync_fn=call_llm_sync,
-        output_builder=lambda resolution: build_retry_outcome_chat_text(
-            run_id=str(state.get("run_id") or ""),
-            attempt_summary=attempt_summary,
-            next_action=next_action,
-            summary_text=preview_single_line(resolution.text, limit=220),
-        ),
+def _build_attempt_summary_output(
+    state: AttemptSummaryState,
+    resolution: SummaryResolution,
+) -> str:
+    return build_retry_outcome_chat_text(
+        run_id=str(state.get("run_id") or ""),
+        attempt_summary=str(state.get("attempt_summary") or "").strip(),
+        next_action=str(state.get("next_action") or "").strip(),
+        summary_text=preview_single_line(resolution.text, limit=220),
     )
 
 
-def roleplay_node(state: AttemptSummaryState) -> AttemptSummaryState:
-    return emit_summary_roleplay(
-        state,
-        default_node_name="task_retry_done",
-    )
+summary_node = build_summary_resolution_node(
+    fallback_text_builder=lambda state: str(state.get("attempt_summary") or "").strip(),
+    prompt_builder=build_attempt_summary_prompt,
+    output_builder=_build_attempt_summary_output,
+    system_prompt=ATTEMPT_SUMMARY_SYSTEM_PROMPT,
+    llm_is_configured_fn=lambda: llm_is_configured(),
+    call_llm_sync_fn=lambda *args, **kwargs: call_llm_sync(*args, **kwargs),
+)
+
+
+roleplay_node = build_summary_roleplay_node(default_node_name="task_retry_done")
 
 
 def create_attempt_summary_graph():

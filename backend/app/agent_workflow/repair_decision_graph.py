@@ -14,11 +14,15 @@ from ..services.run_action.types import (
 from .repair_support import (
     REPAIR_DECISION_ONLY_MODE,
     REPAIR_EXECUTION_MODE,
+    build_failure_inspected_state,
+    build_feedback_composed_state,
     build_repair_feedback_message,
+    build_repair_codegen_state,
+    build_repair_decision_state,
+    build_repair_eligibility_state,
     invoke_repair_graph,
     select_repair_graph_next_step,
 )
-from .retry_guidance import maybe_build_retry_guidance_for_repair_decision
 from .summary_support import apply_text_resolution, build_prompt_text, resolve_summary_text
 from .workflow_results import WorkflowRepairResult
 
@@ -106,12 +110,7 @@ def build_repair_analysis_prompt(state: RepairDecisionState) -> str:
 
 def inspect_failure_node(state: RepairDecisionState) -> RepairDecisionState:
     failure_summary = summarize_failure_result(state["failure_result"])
-    return {
-        **state,
-        "failure_summary": failure_summary,
-        "analysis_note": failure_summary,
-        "analysis_source": "fallback",
-    }
+    return build_failure_inspected_state(state, failure_summary=failure_summary)
 
 
 def eligibility_node(state: RepairDecisionState) -> RepairDecisionState:
@@ -119,23 +118,20 @@ def eligibility_node(state: RepairDecisionState) -> RepairDecisionState:
     max_repair_attempts = int(state.get("max_repair_attempts") or 0)
 
     if not bool(state.get("llm_configured", False)):
-        return {
-            **state,
-            "eligible": False,
-            "decision_reason": "未配置真实大模型，无法自动修复失败脚本。",
-        }
+        return build_repair_eligibility_state(
+            state,
+            eligible=False,
+            decision_reason="未配置真实大模型，无法自动修复失败脚本。",
+        )
 
     if repair_count >= max_repair_attempts:
-        return {
-            **state,
-            "eligible": False,
-            "decision_reason": "已达到自动修复最大次数限制。",
-        }
+        return build_repair_eligibility_state(
+            state,
+            eligible=False,
+            decision_reason="已达到自动修复最大次数限制。",
+        )
 
-    return {
-        **state,
-        "eligible": True,
-    }
+    return build_repair_eligibility_state(state, eligible=True)
 
 
 def route_by_eligibility(state: RepairDecisionState) -> str:
@@ -168,27 +164,21 @@ def decision_node(state: RepairDecisionState) -> RepairDecisionState:
     current_generator = str(state.get("current_generator") or "unknown")
 
     if not bool(state.get("eligible")):
-        return {
-            **state,
-            "should_attempt_repair": False,
-            "retry_guidance": maybe_build_retry_guidance_for_repair_decision(
-                current_generator=current_generator,
-                should_attempt_repair=False,
-            ),
-        }
+        return build_repair_decision_state(
+            state,
+            current_generator=current_generator,
+            should_attempt_repair=False,
+        )
 
-    return {
-        **state,
-        "should_attempt_repair": True,
-        "decision_reason": (
+    return build_repair_decision_state(
+        state,
+        current_generator=current_generator,
+        should_attempt_repair=True,
+        decision_reason=(
             "失败分析已完成，准备尝试自动修复"
             f"（{repair_count + 1}/{max_repair_attempts}）。"
         ),
-        "retry_guidance": maybe_build_retry_guidance_for_repair_decision(
-            current_generator=current_generator,
-            should_attempt_repair=True,
-        ),
-    }
+    )
 
 
 def route_after_decision(state: RepairDecisionState) -> str:
@@ -196,9 +186,9 @@ def route_after_decision(state: RepairDecisionState) -> str:
 
 
 def compose_feedback_node(state: RepairDecisionState) -> RepairDecisionState:
-    return {
-        **state,
-        "feedback_message": build_repair_feedback_message(
+    return build_feedback_composed_state(
+        state,
+        feedback_message=build_repair_feedback_message(
             run_id=str(state.get("run_id") or ""),
             attempt_number=int(state.get("attempt_number") or 0),
             current_generator=str(state.get("current_generator") or "unknown"),
@@ -208,7 +198,7 @@ def compose_feedback_node(state: RepairDecisionState) -> RepairDecisionState:
                 str(state.get("analysis_note") or "").strip() or None
             ),
         ),
-    }
+    )
 
 
 def route_after_feedback(state: RepairDecisionState) -> str:
@@ -223,10 +213,7 @@ def repair_codegen_node(state: RepairDecisionState) -> RepairDecisionState:
         script_content=str(state.get("script_content") or ""),
         failure_result=state["failure_result"],
     )
-    return {
-        **state,
-        "repaired_result": repaired_result,
-    }
+    return build_repair_codegen_state(state, repaired_result=repaired_result)
 
 
 def create_repair_decision_graph():

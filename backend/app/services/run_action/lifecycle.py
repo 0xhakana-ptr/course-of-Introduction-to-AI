@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 
 from ...core.config import settings
 from ...agent_workflow.roleplay import emit_roleplay_chat
@@ -42,25 +43,51 @@ from .types import (
 logger = logging.getLogger(__name__)
 
 
-def emit_final_run_chat_message(record: RunRecord, *, node_name: str) -> None:
+def _emit_workflow_chat_with_fallback(
+    *,
+    invoke_workflow: Callable[[], object],
+    log_failed_result: Callable[[object], None],
+    log_exception: Callable[[], None],
+    emit_fallback: Callable[[], None],
+) -> None:
     try:
+        result = invoke_workflow()
+        if bool(getattr(result, "ok", False)):
+            return
+        log_failed_result(result)
+    except Exception:
+        log_exception()
+
+    emit_fallback()
+
+
+def emit_final_run_chat_message(record: RunRecord, *, node_name: str) -> None:
+    def invoke_workflow() -> object:
         from ...agent_workflow.run_summary_graph import summarize_run_record
 
-        summarize_run_record(
+        return summarize_run_record(
             record,
             node_name=node_name,
             emit_chat_message=True,
         )
-    except Exception:
-        logger.exception(
+
+    _emit_workflow_chat_with_fallback(
+        invoke_workflow=invoke_workflow,
+        log_failed_result=lambda result: logger.warning(
+            "Run summary graph returned failed result; falling back to direct summary message: run_id=%s output=%s",
+            record.get("run_id"),
+            getattr(result, "output", ""),
+        ),
+        log_exception=lambda: logger.exception(
             "Run summary graph failed; falling back to direct summary message: run_id=%s",
             record.get("run_id"),
-        )
-        message_sender.send_chat_message(
+        ),
+        emit_fallback=lambda: message_sender.send_chat_message(
             content=build_run_completion_chat_text(record),
             is_partial=False,
             node_name=node_name,
-        )
+        ),
+    )
 
 
 def missing_llm_result() -> ScriptGenerationResult:
@@ -288,22 +315,29 @@ def emit_retry_outcome_message(
     next_action: str,
     node_name: str,
 ) -> None:
-    try:
+    def invoke_workflow() -> object:
         from ...agent_workflow.attempt_summary_graph import summarize_retry_outcome
 
-        summarize_retry_outcome(
+        return summarize_retry_outcome(
             run_id=run_id,
             attempt_summary=attempt_summary,
             next_action=next_action,
             node_name=node_name,
             emit_chat_message=True,
         )
-    except Exception:
-        logger.exception(
+
+    _emit_workflow_chat_with_fallback(
+        invoke_workflow=invoke_workflow,
+        log_failed_result=lambda result: logger.warning(
+            "Attempt summary graph returned failed result; falling back to direct retry outcome message: run_id=%s output=%s",
+            run_id,
+            getattr(result, "output", ""),
+        ),
+        log_exception=lambda: logger.exception(
             "Attempt summary graph failed; falling back to direct retry outcome message: run_id=%s",
             run_id,
-        )
-        emit_roleplay_chat(
+        ),
+        emit_fallback=lambda: emit_roleplay_chat(
             build_retry_outcome_chat_text(
                 run_id=run_id,
                 attempt_summary=attempt_summary,
@@ -311,7 +345,8 @@ def emit_retry_outcome_message(
             ),
             node_name=node_name,
             emit_chat_message=True,
-        )
+        ),
+    )
 
 
 def repair_llm_is_available() -> bool:
