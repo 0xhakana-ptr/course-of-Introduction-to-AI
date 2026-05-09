@@ -267,13 +267,26 @@ backend/app/services/
 ### 6.5 诊断
 
 - `diagnostics.py`
+- `diagnostics_failure.py`
 - `diagnostics_support.py`
+- `trace_runtime.py`
+- `trace_messages.py`
 
 职责：
 
-- 提供 Agent 调试入口
-- 产出 `workflow_trace`
-- 支持预览、受限执行和错误定位
+- `diagnostics.py`：提供 Agent 诊断入口，负责 preview / runtime diagnostics 的流程编排
+- `diagnostics_failure.py`：把失败事件转换成稳定 `error_code`、`failure_domain` 和中文摘要
+- `diagnostics_support.py`：负责 workspace tool 诊断快照，以及 workspace tool 相关响应字段组装
+- `trace_runtime.py`：负责 `workflow_trace` 的 runtime metadata、entry 构造、归一化、失败 trace 查找和事件聚合
+- `trace_messages.py`：负责 trace 的中文标签、严重级别和可读节点日志文案
+
+边界约束：
+
+- 新增 trace 事件元信息，优先改 `trace_runtime.py`
+- 新增 trace 展示文案，优先改 `trace_messages.py`
+- 新增 diagnostics 失败类型，优先改 `diagnostics_failure.py`
+- 新增 workspace tool 诊断字段，优先改 `diagnostics_support.py`
+- `diagnostics.py` 应尽量保持为流程编排，不再堆叠字段组装和文案分支
 
 ## 7. `llm/`、`storage/`、`tools/`、`messaging/`
 
@@ -307,6 +320,7 @@ backend/app/services/
 - `safe_fs.py`
 - `safe_execute_command.py`
 - `workspace_tools.py`
+- `workspace_tool_models.py`
 
 职责：
 
@@ -321,11 +335,14 @@ backend/app/services/
 当前文件：
 
 - `message_sender.py`
+- `event_types.py`
+- `runtime_events.py`
 
 职责：
 
 - 统一包装并发送业务消息
 - 避免各业务模块自己拼消息结构
+- 维护 runtime event 的稳定枚举和字段构造规则
 
 ## 8. 两条主调用链
 

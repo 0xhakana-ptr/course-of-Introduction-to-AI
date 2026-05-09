@@ -8,9 +8,6 @@ from ..schemas import (
     AgentWorkflowDebugSummary,
     AgentWorkflowErrorContext,
     INTENT_TYPE,
-    WorkspaceToolDescriptorInfo,
-    WorkspaceToolInfo,
-    WorkspaceToolPlanInfo,
 )
 from ..services.chat_action.intent import detect_intent
 from .agent_support import (
@@ -23,13 +20,16 @@ from .agent_support import (
 )
 from .diagnostics_support import (
     WorkspaceToolSnapshot,
+    build_workspace_tool_response_kwargs,
+)
+from .diagnostics_failure import build_failure_descriptor
+from .agent_graph import run_agent
+from .trace_runtime import (
     build_runtime_event_summary,
-    build_failure_descriptor,
     find_failure_trace,
     normalize_trace_items,
     trace_items_from_state,
 )
-from .agent_graph import run_agent
 
 
 def _coerce_intent(value: object) -> INTENT_TYPE:
@@ -74,64 +74,6 @@ def _build_preview_notes(
             "该输入会进入 coding_node，并对已有 run 执行控制动作。"
         ]
     return ["该输入会进入 coding_node，但当前未能解析出更细的后续分支。"]
-
-
-def _build_workspace_tool_descriptor_info(
-    snapshot: WorkspaceToolSnapshot,
-) -> WorkspaceToolDescriptorInfo | None:
-    if snapshot.descriptor is None:
-        return None
-    return WorkspaceToolDescriptorInfo.model_validate(snapshot.descriptor)
-
-
-def _build_workspace_tool_plan_info(
-    snapshot: WorkspaceToolSnapshot,
-) -> WorkspaceToolPlanInfo | None:
-    if snapshot.plan is None:
-        return None
-    return WorkspaceToolPlanInfo.model_validate(snapshot.plan)
-
-
-def _build_workspace_tool_info(
-    snapshot: WorkspaceToolSnapshot,
-) -> WorkspaceToolInfo | None:
-    if (
-        snapshot.name is None
-        and snapshot.reason is None
-        and snapshot.category is None
-        and snapshot.output_kind is None
-        and snapshot.error_code is None
-        and snapshot.descriptor is None
-        and snapshot.plan is None
-    ):
-        return None
-    return WorkspaceToolInfo(
-        name=snapshot.name,
-        title=snapshot.title,
-        reason=snapshot.reason,
-        category=snapshot.category,
-        output_kind=snapshot.output_kind,
-        error_code=snapshot.error_code,
-        descriptor=_build_workspace_tool_descriptor_info(snapshot),
-        plan=_build_workspace_tool_plan_info(snapshot),
-    )
-
-
-def _build_workspace_tool_response_kwargs(
-    snapshot: WorkspaceToolSnapshot,
-) -> dict[str, object]:
-    descriptor_info = _build_workspace_tool_descriptor_info(snapshot)
-    plan_info = _build_workspace_tool_plan_info(snapshot)
-    return {
-        "workspace_tool_name": snapshot.name,
-        "workspace_tool_reason": snapshot.reason,
-        "workspace_tool_category": snapshot.category,
-        "workspace_tool_output_kind": snapshot.output_kind,
-        "workspace_tool_error_code": snapshot.error_code,
-        "workspace_tool_descriptor": descriptor_info,
-        "workspace_tool_plan": plan_info,
-        "workspace_tool": _build_workspace_tool_info(snapshot),
-    }
 
 
 def _phase_suggested_next_step(phase: str, *, blocked: bool) -> str:
@@ -352,7 +294,7 @@ def preview_agent_workflow(
             if final_state.get("target_run_id") is not None
             else None
         ),
-        **_build_workspace_tool_response_kwargs(tool_snapshot),
+        **build_workspace_tool_response_kwargs(tool_snapshot),
         ui_status=str(final_state.get("ui_status")) if final_state.get("ui_status") is not None else None,
         planned_nodes=_build_planned_nodes(selected_route, coding_next_node),
         notes=_build_preview_notes(
@@ -411,7 +353,7 @@ async def run_agent_workflow_diagnostics(
             executable=False,
             executed=False,
             blocked_reason=blocked_reason,
-            **_build_workspace_tool_response_kwargs(preview_tool_snapshot),
+            **build_workspace_tool_response_kwargs(preview_tool_snapshot),
             ui_status=preview.ui_status,
             planned_nodes=list(preview.planned_nodes),
             notes=list(preview.notes),
@@ -462,7 +404,7 @@ async def run_agent_workflow_diagnostics(
         run_status=result.run_status,
         output=result.output or None,
         error=result.error,
-        **_build_workspace_tool_response_kwargs(runtime_tool_snapshot),
+        **build_workspace_tool_response_kwargs(runtime_tool_snapshot),
         ui_status=result.ui_status,
         planned_nodes=list(preview.planned_nodes),
         notes=list(preview.notes),

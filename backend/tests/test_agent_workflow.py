@@ -16,7 +16,10 @@ from backend.app.agent_workflow.agent_run_state import (
     WorkflowRunStateSnapshot,
     build_run_state_updates,
 )
-from backend.app.agent_workflow.agent_state_support import normalize_optional_text
+from backend.app.agent_workflow.agent_state_support import (
+    append_workflow_trace,
+    normalize_optional_text,
+)
 from backend.app.agent_workflow.agent_support import (
     build_agent_initial_state,
     build_chat_result_state,
@@ -39,6 +42,17 @@ from backend.app.agent_workflow.agent_support import (
     select_agent_next_node,
 )
 from backend.app.agent_workflow.agent_text_support import describe_run_action
+from backend.app.agent_workflow.trace_messages import (
+    build_trace_event_label,
+    build_trace_message,
+    build_trace_status_level,
+)
+from backend.app.agent_workflow.trace_runtime import (
+    build_runtime_event_summary,
+    build_workflow_trace_entry,
+    find_failure_trace,
+    normalize_trace_items,
+)
 from backend.app.agent_workflow.roleplay import emit_roleplay_message, emit_roleplay_state
 from backend.app.agent_workflow.workflow_results import WorkflowAgentResult
 from backend.app.message_queue import message_queue
@@ -497,6 +511,100 @@ def test_agent_text_and_state_support_helpers_expose_stable_utilities():
     assert describe_run_action("other") == "处理"
     assert normalize_optional_text("  demo  ") == "demo"
     assert normalize_optional_text("   ") is None
+
+
+def test_trace_runtime_builds_stable_workflow_trace_entries():
+    entry = build_workflow_trace_entry(
+        step=3,
+        node="chat_node",
+        event="llm_response_failed",
+        ui_status="chat_failed",
+        details={"has_error": True},
+    )
+
+    assert entry["step"] == 3
+    assert entry["event_type"] == "chat.response_failed"
+    assert entry["event_source"] == "chat"
+    assert entry["event_stage"] == "chat"
+    assert entry["frontend_visible"] is False
+    assert entry["details"] == {"has_error": True}
+    assert build_trace_event_label("llm_response_failed") == "聊天回复失败"
+    assert build_trace_event_label("custom_event") == "custom_event"
+    assert build_trace_status_level("workspace_tool_failed") == "error"
+    assert build_trace_status_level("workspace_tool_skipped") == "warning"
+    assert build_trace_status_level("workspace_tool_applied") == "info"
+    assert build_trace_message(
+        {
+            "node_label": "代码任务预处理",
+            "event": "coding_request_prepared",
+            "details": {
+                "run_action": "create",
+                "workspace_tool_name": "read_workspace_text",
+                "workspace_tool_title": "读取工作区文本",
+                "workspace_tool_category": "context",
+                "workspace_tool_output_kind": "file_preview",
+            },
+        }
+    ) == (
+        "代码任务预处理已解析 coding 请求，动作为 `create`，"
+        "并规划工作区工具 `read_workspace_text`（读取工作区文本），"
+        "类别 `context`，输出 `file_preview`。"
+    )
+
+
+def test_append_workflow_trace_uses_runtime_trace_entry_helper():
+    state = append_workflow_trace(
+        {
+            "workflow_trace": [
+                {"step": 1, "node": "router", "event": "intent_routed"},
+                "invalid trace item",
+            ],
+        },
+        node="workspace_tool_node",
+        event="workspace_tool_applied",
+        ui_status="workspace_tool_ready",
+        details={"tool_name": "build_workspace_overview"},
+    )
+
+    trace = state["workflow_trace"]
+
+    assert len(trace) == 2
+    assert trace[-1]["step"] == 2
+    assert trace[-1]["event_type"] == "tool.applied"
+    assert trace[-1]["event_source"] == "tool"
+    assert trace[-1]["event_stage"] == "tools"
+    assert trace[-1]["ui_status"] == "workspace_tool_ready"
+    assert trace[-1]["details"] == {"tool_name": "build_workspace_overview"}
+
+
+def test_trace_runtime_normalizes_failure_and_event_summary():
+    trace = normalize_trace_items(
+        [
+            {"step": 1, "node": "router", "event": "intent_routed"},
+            {
+                "step": 2,
+                "node": "chat_node",
+                "event": "llm_response_failed",
+                "details": {"has_error": True},
+            },
+            "invalid trace item",
+        ]
+    )
+    failure = find_failure_trace(trace)
+    summary = build_runtime_event_summary(trace)
+
+    assert len(trace) == 2
+    assert trace[0]["node_label"] == "意图路由"
+    assert trace[0]["event_type"] == "workflow.intent_routed"
+    assert trace[1]["status_level"] == "error"
+    assert failure is not None
+    assert failure["event"] == "llm_response_failed"
+    assert summary.event_count == 2
+    assert summary.error_event_count == 1
+    assert summary.event_type_counts["chat.response_failed"] == 1
+    assert summary.event_source_counts["workflow"] == 1
+    assert summary.event_source_counts["chat"] == 1
+    assert summary.last_event_stage == "chat"
 
 
 def test_agent_graph_support_guard_node_wraps_exceptions():

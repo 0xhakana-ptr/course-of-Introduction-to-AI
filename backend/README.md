@@ -98,7 +98,27 @@ uv run uvicorn backend.app.main:app --reload --port 8000
 uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
 ```
 
-### 3.2 检查 LLM 配置
+### 3.2 功能层 smoke 验证
+
+不启动真实服务时，可以用 `TestClient` 快速验证核心接口能否被应用正确挂载：
+
+```powershell
+@'
+from fastapi.testclient import TestClient
+
+from backend.app.main import app
+
+client = TestClient(app)
+
+print(client.get("/health").json())
+print(client.post("/agent/diagnostics/preview", json={"prompt": "hello", "context": None}).json()["selected_route"])
+print(client.post("/chat", json={"prompt": "/test chat smoke", "context": None}).json()["intent"])
+'@ | uv run --python 3.11 --with-requirements backend/requirements.txt python -
+```
+
+这个 smoke 示例使用 `/test chat`，不会依赖真实 LLM。要验证真实模型连通性，请继续使用 `/llm/diagnostics?check_remote=true`。
+
+### 3.3 检查 LLM 配置
 
 只检查本地配置是否被后端正确读取：
 
@@ -112,7 +132,7 @@ Invoke-RestMethod http://127.0.0.1:8000/llm/diagnostics
 Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
 ```
 
-### 3.3 与 Electron 联调
+### 3.4 与 Electron 联调
 
 ```powershell
 $env:AI_AGENT_ENDPOINT="http://127.0.0.1:8000/chat"

@@ -2,7 +2,7 @@ import logging
 from collections.abc import Mapping
 
 from .roleplay import emit_roleplay_state
-from .trace_runtime import build_trace_runtime_event_fields
+from .trace_runtime import build_workflow_trace_entry, coerce_workflow_trace_items
 from .workflow_nodes import AGENT_ROLEPLAY_NODE
 from .workflow_results import WorkflowAgentResult, invoke_graph_with_result
 from ..schemas import INTENT_TYPE
@@ -34,27 +34,16 @@ def append_workflow_trace(
     ui_status: str | None = None,
     details: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    trace_items = state.get("workflow_trace")
-    trace: list[dict[str, object]] = []
-    if isinstance(trace_items, list):
-        trace = [
-            dict(item)
-            for item in trace_items
-            if isinstance(item, Mapping)
-        ]
+    trace = coerce_workflow_trace_items(state.get("workflow_trace"))
     trace.append(
-        {
-            "step": len(trace) + 1,
-            "node": node,
-            "event": event,
-            **build_trace_runtime_event_fields(
-                node=node,
-                event=event,
-                frontend_visible=False,
-            ),
-            "ui_status": ui_status,
-            "details": dict(details) if details else None,
-        }
+        build_workflow_trace_entry(
+            step=len(trace) + 1,
+            node=node,
+            event=event,
+            ui_status=ui_status,
+            details=details,
+            frontend_visible=False,
+        )
     )
     logger.debug(
         "Workflow trace appended: step=%s node=%s event=%s ui_status=%s details=%s",

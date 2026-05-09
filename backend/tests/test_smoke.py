@@ -56,6 +56,40 @@ def test_chat_test_command_keeps_response_contract(client):
     assert queue_payload["messages"][0]["_channel"] == "agent:chat"
 
 
+def test_agent_diagnostics_smoke_contract_without_llm(client):
+    preview_response = client.post(
+        "/agent/diagnostics/preview",
+        json={"prompt": "hello", "context": None},
+    )
+
+    assert preview_response.status_code == 200
+    preview_payload = preview_response.json()
+    assert preview_payload["ok"] is True
+    assert preview_payload["intent"] == "chat"
+    assert preview_payload["selected_route"] == "chat_node"
+    assert preview_payload["runtime_event_summary"]["event_count"] >= 2
+    assert preview_payload["workflow_trace"][0]["node"] == "router"
+
+    run_response = client.post(
+        "/agent/diagnostics/run",
+        json={"prompt": "???", "context": None},
+    )
+
+    assert run_response.status_code == 200
+    run_payload = run_response.json()
+    assert run_payload["ok"] is True
+    assert run_payload["intent"] == "unknown"
+    assert run_payload["selected_route"] == "unknown_node"
+    assert run_payload["executable"] is True
+    assert run_payload["executed"] is True
+    assert [item["node"] for item in run_payload["workflow_trace"]] == [
+        "router",
+        "unknown_node",
+        "roleplay_node",
+    ]
+    assert run_payload["runtime_event_summary"]["last_event_type"] == "roleplay.emitted"
+
+
 def test_chat_coding_branch_keeps_response_contract(client):
     response = client.post("/chat", json={"prompt": "write python code", "context": None})
 

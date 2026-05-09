@@ -1,6 +1,7 @@
+from backend.app.agent_workflow.diagnostics_failure import build_failure_descriptor
 from backend.app.agent_workflow.diagnostics_support import (
     WorkspaceToolSnapshot,
-    build_failure_descriptor,
+    build_workspace_tool_response_kwargs,
 )
 from backend.app.services.run_interface import create_run
 
@@ -194,6 +195,16 @@ def test_workspace_tool_snapshot_can_merge_runtime_state_with_preview_state():
         "tool_input": {"rel_path": "backend/app/main.py"},
         "reason": "Prompt references a workspace file path.",
     }
+    response_kwargs = build_workspace_tool_response_kwargs(runtime_snapshot)
+
+    assert response_kwargs["workspace_tool_name"] == "read_workspace_text"
+    assert response_kwargs["workspace_tool_category"] == "context"
+    assert response_kwargs["workspace_tool_error_code"] == "WORKSPACE_TOOL_EXECUTION_FAILED"
+    assert response_kwargs["workspace_tool_descriptor"].name == "read_workspace_text"
+    assert response_kwargs["workspace_tool_plan"].tool_input == {
+        "rel_path": "backend/app/main.py",
+    }
+    assert response_kwargs["workspace_tool"].title == "读取工作区文本"
 
 
 def test_workspace_tool_failure_descriptor_prefers_specific_tool_error_code():
