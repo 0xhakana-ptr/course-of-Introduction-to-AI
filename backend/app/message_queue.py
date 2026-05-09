@@ -4,6 +4,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from .messaging.runtime_events import normalize_frontend_message_payload
+
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ class MessageQueue:
         """
         with self._lock:
             message_id = self._next_message_id()
-            stored_message = dict(message)
+            stored_message = normalize_frontend_message_payload(message)
             stored_message['_id'] = message_id
             stored_message['_timestamp'] = self._timestamp()
 

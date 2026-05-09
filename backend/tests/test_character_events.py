@@ -19,6 +19,9 @@ def test_send_chat_started_emits_character_messages():
         "agent:status",
     ]
     assert messages[0]["content"] == "我想一下。"
+    assert messages[0]["event_type"] == "chat.started"
+    assert messages[0]["event_source"] == "chat"
+    assert messages[0]["event_stage"] == "chat"
     assert messages[1]["expression"] == "thinking"
     assert messages[2]["status"] == "running"
     assert messages[2]["progress"] == 5
@@ -31,6 +34,9 @@ def test_send_task_done_emits_done_status_and_happy_expression():
 
     assert messages[0]["type"] == "quip"
     assert messages[0]["content"] == "任务完成了。"
+    assert messages[0]["event_type"] == "run.finished"
+    assert messages[0]["event_source"] == "run"
+    assert messages[0]["event_stage"] == "run"
     assert messages[1]["type"] == "expression"
     assert messages[1]["expression"] == "happy"
     assert messages[2]["type"] == "status"

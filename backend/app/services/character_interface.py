@@ -22,6 +22,9 @@ def dispatch_character_event(event: CharacterEvent) -> bool:
                 node_name=event.node_name,
                 priority=event.priority,
                 duration=event.duration,
+                event_type=event.event_type,
+                event_source=event.event_source,
+                event_stage=event.event_stage,
             )
         )
     if event.expression:
@@ -31,6 +34,9 @@ def dispatch_character_event(event: CharacterEvent) -> bool:
                 node_name=event.node_name,
                 duration=event.duration,
                 mode="set",
+                event_type=event.event_type,
+                event_source=event.event_source,
+                event_stage=event.event_stage,
             )
         )
     if event.motion:
@@ -39,6 +45,9 @@ def dispatch_character_event(event: CharacterEvent) -> bool:
                 motion=event.motion,
                 node_name=event.node_name,
                 duration=event.duration,
+                event_type=event.event_type,
+                event_source=event.event_source,
+                event_stage=event.event_stage,
             )
         )
     if event.status:
@@ -47,6 +56,9 @@ def dispatch_character_event(event: CharacterEvent) -> bool:
                 status=event.status,
                 progress=event.progress,
                 node_name=event.node_name,
+                event_type=event.event_type,
+                event_source=event.event_source,
+                event_stage=event.event_stage,
             )
         )
     return all(results) if results else True

@@ -1,12 +1,18 @@
 import re
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ..core.text_utils import clip_text
 from .safe_execute_command import safe_execute_command
 from .safe_fs import get_workspace_dir, resolve_workspace_path, safe_list_entries, safe_read_file
+from .workspace_tool_models import (
+    WorkspaceToolDescriptor,
+    WorkspaceToolExecutionResult,
+    WorkspaceToolPlan,
+)
 
 
 DEFAULT_TOOL_TEXT_LIMIT = 4000
@@ -28,6 +34,14 @@ WORKSPACE_TOOL_NAME_OVERVIEW = "build_workspace_overview"
 WORKSPACE_TOOL_NAME_LIST = "list_workspace_entries"
 WORKSPACE_TOOL_NAME_READ = "read_workspace_text"
 WORKSPACE_TOOL_NAME_TEST = "run_workspace_tests"
+WORKSPACE_TOOL_CATEGORY_CONTEXT = "context"
+WORKSPACE_TOOL_CATEGORY_EXECUTION = "execution"
+WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW = "overview_text"
+WORKSPACE_TOOL_OUTPUT_KIND_LISTING = "entry_listing"
+WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW = "file_preview"
+WORKSPACE_TOOL_OUTPUT_KIND_COMMAND_RESULT = "command_result"
+WORKSPACE_TOOL_ERROR_UNREGISTERED = "WORKSPACE_TOOL_UNREGISTERED"
+WORKSPACE_TOOL_ERROR_EXECUTION_FAILED = "WORKSPACE_TOOL_EXECUTION_FAILED"
 WORKSPACE_TOOL_PATH_PATTERN = re.compile(
     r"(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]*|[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+"
 )
@@ -65,7 +79,20 @@ WORKSPACE_TOOL_INPUT_KEYS = (
 @dataclass(frozen=True, slots=True)
 class WorkspaceToolDefinition:
     name: str
-    executor: callable
+    title: str
+    description: str
+    category: str
+    output_kind: str
+    input_keys: tuple[str, ...]
+    executor: Callable[[Mapping[str, object]], tuple[object, str]]
+
+
+def _serialize_workspace_tool_definition(
+    tool_definition: WorkspaceToolDefinition,
+) -> dict[str, object]:
+    descriptor = WorkspaceToolDescriptor.from_value(tool_definition)
+    assert descriptor is not None
+    return descriptor.as_dict()
 
 
 def _normalize_rel_path(rel_path: str | None) -> str:
@@ -170,15 +197,56 @@ def _build_workspace_tool_plan(
     reason: str,
     **tool_input: object,
 ) -> dict[str, object]:
-    return {
-        "tool_name": tool_name,
-        "tool_input": {
+    return WorkspaceToolPlan(
+        tool_name=tool_name,
+        tool_input={
             key: value
             for key, value in tool_input.items()
             if value is not None
         },
-        "reason": reason,
-    }
+        reason=reason,
+    ).as_dict()
+
+
+def normalize_workspace_tool_plan(value: object) -> WorkspaceToolPlan | None:
+    if value is None:
+        return None
+    if isinstance(value, WorkspaceToolPlan):
+        return value
+    if not isinstance(value, Mapping):
+        return None
+
+    tool_name = str(value.get("tool_name") or WORKSPACE_TOOL_NAME_OVERVIEW).strip()
+    tool_input = _extract_workspace_tool_input(value)
+    reason = _normalize_optional_text(value.get("reason"))
+    return WorkspaceToolPlan(
+        tool_name=tool_name or WORKSPACE_TOOL_NAME_OVERVIEW,
+        tool_input=tool_input,
+        reason=reason,
+    )
+
+
+def normalize_workspace_tool_result(value: object) -> WorkspaceToolExecutionResult:
+    if isinstance(value, WorkspaceToolExecutionResult):
+        return value
+    if isinstance(value, Mapping):
+        normalized = dict(value)
+        descriptor = WorkspaceToolDescriptor.from_value(normalized.get("tool_descriptor"))
+        normalized["tool_descriptor"] = descriptor
+        normalized["tool_name"] = str(
+            normalized.get("tool_name") or WORKSPACE_TOOL_NAME_OVERVIEW
+        ).strip() or WORKSPACE_TOOL_NAME_OVERVIEW
+        if not isinstance(normalized.get("tool_input"), Mapping):
+            normalized["tool_input"] = {}
+        return WorkspaceToolExecutionResult.model_validate(normalized)
+
+    return WorkspaceToolExecutionResult(
+        tool_name=WORKSPACE_TOOL_NAME_OVERVIEW,
+        ok=False,
+        tool_error_code=WORKSPACE_TOOL_ERROR_EXECUTION_FAILED,
+        error=f"invalid workspace tool result: {type(value).__name__}",
+        summary=f"Workspace tool result is invalid: {type(value).__name__}",
+    )
 
 
 def _extract_workspace_tool_input(plan: Mapping[str, object]) -> dict[str, object]:
@@ -423,18 +491,38 @@ def _execute_test_tool(tool_input: Mapping[str, object]) -> tuple[dict[str, obje
 WORKSPACE_TOOL_REGISTRY: dict[str, WorkspaceToolDefinition] = {
     WORKSPACE_TOOL_NAME_OVERVIEW: WorkspaceToolDefinition(
         name=WORKSPACE_TOOL_NAME_OVERVIEW,
+        title="工作区概览",
+        description="读取项目顶层结构和关键文件摘要，用于创建代码任务前的轻量上下文补充。",
+        category=WORKSPACE_TOOL_CATEGORY_CONTEXT,
+        output_kind=WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW,
+        input_keys=("rel_path", "include_files", "file_preview_chars"),
         executor=_execute_overview_tool,
     ),
     WORKSPACE_TOOL_NAME_READ: WorkspaceToolDefinition(
         name=WORKSPACE_TOOL_NAME_READ,
+        title="读取工作区文本",
+        description="读取单个工作区文本文件并返回裁剪后的内容预览。",
+        category=WORKSPACE_TOOL_CATEGORY_CONTEXT,
+        output_kind=WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW,
+        input_keys=("rel_path", "max_chars"),
         executor=_execute_read_tool,
     ),
     WORKSPACE_TOOL_NAME_LIST: WorkspaceToolDefinition(
         name=WORKSPACE_TOOL_NAME_LIST,
+        title="列出工作区目录",
+        description="列出工作区目录结构，用于理解项目布局。",
+        category=WORKSPACE_TOOL_CATEGORY_CONTEXT,
+        output_kind=WORKSPACE_TOOL_OUTPUT_KIND_LISTING,
+        input_keys=("rel_path", "recursive", "max_entries"),
         executor=_execute_list_tool,
     ),
     WORKSPACE_TOOL_NAME_TEST: WorkspaceToolDefinition(
         name=WORKSPACE_TOOL_NAME_TEST,
+        title="运行工作区测试",
+        description="在受控 workspace 边界内运行 pytest，并返回摘要化测试结果。",
+        category=WORKSPACE_TOOL_CATEGORY_EXECUTION,
+        output_kind=WORKSPACE_TOOL_OUTPUT_KIND_COMMAND_RESULT,
+        input_keys=("test_paths", "cwd", "timeout_seconds", "max_output_chars"),
         executor=_execute_test_tool,
     ),
 }
@@ -447,6 +535,20 @@ def list_workspace_tool_names() -> tuple[str, ...]:
 def get_workspace_tool_definition(tool_name: str) -> WorkspaceToolDefinition | None:
     normalized_tool_name = str(tool_name or "").strip()
     return WORKSPACE_TOOL_REGISTRY.get(normalized_tool_name)
+
+
+def get_workspace_tool_descriptor(tool_name: str) -> dict[str, object] | None:
+    tool_definition = get_workspace_tool_definition(tool_name)
+    if tool_definition is None:
+        return None
+    return _serialize_workspace_tool_definition(tool_definition)
+
+
+def list_workspace_tool_descriptors() -> list[dict[str, object]]:
+    return [
+        _serialize_workspace_tool_definition(tool_definition)
+        for tool_definition in WORKSPACE_TOOL_REGISTRY.values()
+    ]
 
 
 def build_workspace_overview(
@@ -532,44 +634,69 @@ def plan_workspace_tool(prompt: str) -> dict[str, object]:
     )
 
 
-def execute_workspace_tool_plan(plan: Mapping[str, object]) -> dict[str, object]:
-    tool_name = str(plan.get("tool_name") or WORKSPACE_TOOL_NAME_OVERVIEW).strip()
-    reason = _normalize_optional_text(plan.get("reason"))
-    tool_input = _extract_workspace_tool_input(plan)
+def execute_workspace_tool_plan(plan: Mapping[str, object] | WorkspaceToolPlan) -> dict[str, object]:
+    plan_model = normalize_workspace_tool_plan(plan)
+    if plan_model is None:
+        plan_model = WorkspaceToolPlan(
+            tool_name=WORKSPACE_TOOL_NAME_OVERVIEW,
+            tool_input={},
+            reason="Workspace tool plan is missing or invalid; using default overview plan.",
+        )
+
+    tool_name = plan_model.tool_name.strip() or WORKSPACE_TOOL_NAME_OVERVIEW
+    reason = _normalize_optional_text(plan_model.reason)
+    tool_input = dict(plan_model.tool_input)
     tool_definition = get_workspace_tool_definition(tool_name)
+    tool_descriptor = (
+        _serialize_workspace_tool_definition(tool_definition)
+        if tool_definition is not None
+        else None
+    )
 
     if tool_definition is None:
-        return {
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "ok": False,
-            "reason": reason,
-            "summary": f"Workspace tool `{tool_name}` is not registered.",
-            "error": f"unregistered workspace tool: {tool_name}",
-            "data": None,
-        }
+        return WorkspaceToolExecutionResult(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            ok=False,
+            reason=reason,
+            tool_category=None,
+            tool_output_kind=None,
+            tool_error_code=WORKSPACE_TOOL_ERROR_UNREGISTERED,
+            tool_descriptor=None,
+            summary=f"Workspace tool `{tool_name}` is not registered.",
+            error=f"unregistered workspace tool: {tool_name}",
+            data=None,
+        ).as_dict()
 
     try:
         data, summary = tool_definition.executor(tool_input)
 
-        return {
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "ok": True,
-            "reason": reason,
-            "summary": summary,
-            "data": data,
-        }
+        return WorkspaceToolExecutionResult(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            ok=True,
+            reason=reason,
+            tool_category=tool_definition.category,
+            tool_output_kind=tool_definition.output_kind,
+            tool_error_code=None,
+            tool_descriptor=WorkspaceToolDescriptor.from_value(tool_descriptor),
+            summary=summary,
+            data=data,
+        ).as_dict()
     except Exception as exc:
-        return {
-            "tool_name": tool_name,
-            "tool_input": tool_input,
-            "ok": False,
-            "reason": reason,
-            "summary": f"Workspace tool `{tool_name}` failed: {exc}",
-            "error": str(exc),
-            "data": None,
-        }
+        return WorkspaceToolExecutionResult(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            ok=False,
+            reason=reason,
+            tool_category=tool_definition.category,
+            tool_output_kind=tool_definition.output_kind,
+            tool_error_code=WORKSPACE_TOOL_ERROR_EXECUTION_FAILED,
+            tool_descriptor=WorkspaceToolDescriptor.from_value(tool_descriptor),
+            summary=f"Workspace tool `{tool_name}` failed: {exc}",
+            error=str(exc),
+            data=None,
+        ).as_dict()
 
 
 def build_workspace_tool_context(result: Mapping[str, object]) -> str | None:

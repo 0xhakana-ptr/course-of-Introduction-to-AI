@@ -3,6 +3,9 @@ import logging
 import os
 from typing import Any
 
+from .event_types import AGENT_EVENT_SOURCE, AGENT_EVENT_STAGE, AGENT_EVENT_TYPE
+from .runtime_events import build_runtime_event_fields
+
 
 message_queue = None
 logger = logging.getLogger(__name__)
@@ -46,19 +49,60 @@ class MessageSender:
             return True
         logger.warning("Message queue unavailable; frontend message was not sent: channel=%s", channel)
         return False
-    
-    def send_quip(self, content: str, node_name: str, priority: str = 'medium', duration: int = 3000) -> bool:
-        """发送 Quip 消息"""
-        message = {
-            'type': 'quip',
-            'content': content,
-            'node_name': node_name,
-            'timestamp': self._get_timestamp(),
-            'metadata': {
-                'priority': priority,
-                'duration': duration
-            }
+
+    def _build_message(
+        self,
+        *,
+        message_type: str,
+        node_name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        event_type: AGENT_EVENT_TYPE,
+        event_source: AGENT_EVENT_SOURCE,
+        event_stage: AGENT_EVENT_STAGE,
+        frontend_visible: bool = True,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        message: dict[str, Any] = {
+            "type": message_type,
+            "timestamp": self._get_timestamp(),
+            **build_runtime_event_fields(
+                event_type=event_type,
+                event_source=event_source,
+                event_stage=event_stage,
+                frontend_visible=frontend_visible,
+            ),
         }
+        if node_name:
+            message["node_name"] = node_name
+        if metadata:
+            message["metadata"] = dict(metadata)
+        message.update(fields)
+        return message
+
+    def send_quip(
+        self,
+        content: str,
+        node_name: str,
+        priority: str = 'medium',
+        duration: int = 3000,
+        *,
+        event_type: AGENT_EVENT_TYPE = "character.quip",
+        event_source: AGENT_EVENT_SOURCE = "character",
+        event_stage: AGENT_EVENT_STAGE = "roleplay",
+    ) -> bool:
+        """发送 Quip 消息"""
+        message = self._build_message(
+            message_type='quip',
+            content=content,
+            node_name=node_name,
+            metadata={
+                'priority': priority,
+                'duration': duration,
+            },
+            event_type=event_type,
+            event_source=event_source,
+            event_stage=event_stage,
+        )
         return self._send_to_frontend('agent:quip', message)
     
     def send_expression(
@@ -69,20 +113,26 @@ class MessageSender:
         duration: int = 5000,
         transition: str = 'smooth',
         mode: str = 'set',
+        *,
+        event_type: AGENT_EVENT_TYPE = "character.expression",
+        event_source: AGENT_EVENT_SOURCE = "character",
+        event_stage: AGENT_EVENT_STAGE = "roleplay",
     ) -> bool:
         """发送表情消息"""
-        message = {
-            'type': 'expression',
-            'expression': expression,
-            'mode': mode,
-            'intensity': intensity,
-            'node_name': node_name,
-            'timestamp': self._get_timestamp(),
-            'metadata': {
+        message = self._build_message(
+            message_type='expression',
+            expression=expression,
+            mode=mode,
+            intensity=intensity,
+            node_name=node_name,
+            metadata={
                 'duration': duration,
-                'transition': transition
-            }
-        }
+                'transition': transition,
+            },
+            event_type=event_type,
+            event_source=event_source,
+            event_stage=event_stage,
+        )
         return self._send_to_frontend('agent:expression', message)
 
     def send_motion(
@@ -91,18 +141,24 @@ class MessageSender:
         node_name: str,
         duration: int | None = None,
         loop: bool = False,
+        *,
+        event_type: AGENT_EVENT_TYPE = "character.motion",
+        event_source: AGENT_EVENT_SOURCE = "character",
+        event_stage: AGENT_EVENT_STAGE = "roleplay",
     ) -> bool:
         """发送动作消息"""
         metadata: dict[str, Any] = {'loop': loop}
         if duration is not None:
             metadata['duration'] = duration
-        message = {
-            'type': 'motion',
-            'motion': motion,
-            'node_name': node_name,
-            'timestamp': self._get_timestamp(),
-            'metadata': metadata,
-        }
+        message = self._build_message(
+            message_type='motion',
+            motion=motion,
+            node_name=node_name,
+            metadata=metadata,
+            event_type=event_type,
+            event_source=event_source,
+            event_stage=event_stage,
+        )
         return self._send_to_frontend('agent:motion', message)
     
     def send_chat_message(
@@ -112,44 +168,73 @@ class MessageSender:
         sequence_id: int = 0,
         total_parts: int = 1,
         node_name: str = '',
+        *,
+        event_type: AGENT_EVENT_TYPE = "chat.message",
+        event_source: AGENT_EVENT_SOURCE = "roleplay",
+        event_stage: AGENT_EVENT_STAGE = "roleplay",
     ) -> bool:
         """发送 Chat 消息"""
-        message = {
-            'type': 'chat',
-            'role': 'assistant',
-            'content': content,
-            'timestamp': self._get_timestamp(),
-            'node_name': node_name or None,
-            'metadata': {
+        message = self._build_message(
+            message_type='chat',
+            role='assistant',
+            content=content,
+            node_name=node_name or None,
+            metadata={
                 'is_partial': is_partial,
                 'sequence_id': sequence_id,
                 'total_parts': total_parts,
-                'node_name': node_name
-            }
-        }
+                'node_name': node_name,
+            },
+            event_type=event_type,
+            event_source=event_source,
+            event_stage=event_stage,
+        )
         return self._send_to_frontend('agent:chat', message)
     
-    def send_error(self, code: str, message: str, details: Any = None, node_name: str = '') -> bool:
+    def send_error(
+        self,
+        code: str,
+        message: str,
+        details: Any = None,
+        node_name: str = '',
+        *,
+        event_type: AGENT_EVENT_TYPE = "system.error",
+        event_source: AGENT_EVENT_SOURCE = "system",
+        event_stage: AGENT_EVENT_STAGE = "system",
+    ) -> bool:
         """发送错误消息"""
-        error_message = {
-            'type': 'error',
-            'code': code,
-            'message': message,
-            'details': details,
-            'timestamp': self._get_timestamp(),
-            'node_name': node_name
-        }
+        error_message = self._build_message(
+            message_type='error',
+            code=code,
+            message=message,
+            details=details,
+            node_name=node_name or None,
+            event_type=event_type,
+            event_source=event_source,
+            event_stage=event_stage,
+        )
         return self._send_to_frontend('agent:error', error_message)
     
-    def send_status(self, status: str, progress: int | None = None, node_name: str = '') -> bool:
+    def send_status(
+        self,
+        status: str,
+        progress: int | None = None,
+        node_name: str = '',
+        *,
+        event_type: AGENT_EVENT_TYPE = "status.updated",
+        event_source: AGENT_EVENT_SOURCE = "system",
+        event_stage: AGENT_EVENT_STAGE = "system",
+    ) -> bool:
         """发送状态更新"""
-        status_message = {
-            'type': 'status',
-            'status': status,
-            'progress': progress,
-            'node_name': node_name,
-            'timestamp': self._get_timestamp()
-        }
+        status_message = self._build_message(
+            message_type='status',
+            status=status,
+            progress=progress,
+            node_name=node_name or None,
+            event_type=event_type,
+            event_source=event_source,
+            event_stage=event_stage,
+        )
         return self._send_to_frontend('agent:status', status_message)
 
 

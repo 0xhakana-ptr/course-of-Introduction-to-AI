@@ -1,3 +1,7 @@
+from backend.app.agent_workflow.diagnostics_support import (
+    WorkspaceToolSnapshot,
+    build_failure_descriptor,
+)
 from backend.app.services.run_interface import create_run
 
 
@@ -23,6 +27,15 @@ def test_agent_diagnostics_preview_route_returns_coding_plan(monkeypatch, client
     assert payload["selected_route"] == "coding_node"
     assert payload["run_action"] == "create"
     assert payload["workspace_tool_name"] == "read_workspace_text"
+    assert payload["workspace_tool_category"] == "context"
+    assert payload["workspace_tool_output_kind"] == "file_preview"
+    assert payload["workspace_tool_error_code"] is None
+    assert payload["workspace_tool_descriptor"]["name"] == "read_workspace_text"
+    assert payload["workspace_tool_plan"]["tool_input"] == {"rel_path": "backend/app/main.py"}
+    assert payload["workspace_tool"]["name"] == "read_workspace_text"
+    assert payload["workspace_tool"]["title"] == "读取工作区文本"
+    assert payload["workspace_tool"]["descriptor"]["category"] == "context"
+    assert payload["workspace_tool"]["plan"]["tool_name"] == "read_workspace_text"
     assert payload["planned_nodes"] == [
         "router",
         "coding_node",
@@ -35,18 +48,33 @@ def test_agent_diagnostics_preview_route_returns_coding_plan(monkeypatch, client
     assert payload["debug_summary"]["first_node_label"] == "意图路由"
     assert payload["debug_summary"]["last_node"] == "diagnostics_preview"
     assert payload["debug_summary"]["last_phase"] == "diagnostics"
+    assert payload["runtime_event_summary"]["event_count"] >= 3
+    assert payload["runtime_event_summary"]["error_event_count"] == 0
+    assert payload["runtime_event_summary"]["frontend_visible_count"] == 0
+    assert payload["runtime_event_summary"]["event_source_counts"]["workflow"] >= 2
+    assert payload["runtime_event_summary"]["last_event_source"] == "diagnostics"
+    assert payload["runtime_event_summary"]["last_event_stage"] == "diagnostics"
     assert payload["error_context"] is None
     assert len(payload["workflow_trace"]) >= 3
     assert payload["workflow_trace"][0]["node"] == "router"
     assert payload["workflow_trace"][0]["node_label"] == "意图路由"
     assert payload["workflow_trace"][0]["phase"] == "routing"
     assert payload["workflow_trace"][0]["event_label"] == "意图已路由"
+    assert payload["workflow_trace"][0]["event_type"] == "workflow.intent_routed"
+    assert payload["workflow_trace"][0]["event_source"] == "workflow"
+    assert payload["workflow_trace"][0]["event_stage"] == "routing"
+    assert payload["workflow_trace"][0]["frontend_visible"] is False
     assert payload["workflow_trace"][0]["status_level"] == "info"
     assert "coding" in payload["workflow_trace"][0]["message"]
     assert payload["workflow_trace"][1]["node"] == "coding_node"
     assert payload["workflow_trace"][1]["node_label"] == "代码任务预处理"
     assert payload["workflow_trace"][1]["event_label"] == "代码任务请求已解析"
+    assert payload["workflow_trace"][1]["event_type"] == "workflow.coding_prepared"
+    assert payload["workflow_trace"][1]["event_source"] == "workflow"
+    assert payload["workflow_trace"][1]["event_stage"] == "coding"
     assert payload["workflow_trace"][1]["status_level"] == "info"
+    assert "规划工作区工具" in payload["workflow_trace"][1]["message"]
+    assert "读取工作区文本" in payload["workflow_trace"][1]["message"]
 
     runs_response = client.get("/runs")
     assert runs_response.status_code == 200
@@ -106,6 +134,11 @@ def test_agent_diagnostics_run_route_executes_chat_branch(monkeypatch, client):
     assert payload["output"] == "reply to hello"
     assert payload["debug_summary"]["blocked"] is False
     assert payload["debug_summary"]["error_present"] is False
+    assert payload["runtime_event_summary"]["event_count"] == 3
+    assert payload["runtime_event_summary"]["event_source_counts"]["chat"] == 1
+    assert payload["runtime_event_summary"]["event_source_counts"]["roleplay"] == 1
+    assert payload["runtime_event_summary"]["event_stage_counts"]["chat"] == 1
+    assert payload["runtime_event_summary"]["last_event_type"] == "roleplay.emitted"
     assert payload["error_context"] is None
     assert [item["node"] for item in payload["workflow_trace"]] == [
         "router",
@@ -113,9 +146,71 @@ def test_agent_diagnostics_run_route_executes_chat_branch(monkeypatch, client):
         "roleplay_node",
     ]
     assert payload["workflow_trace"][1]["event_label"] == "聊天回复完成"
+    assert payload["workflow_trace"][1]["event_type"] == "chat.response_ready"
+    assert payload["workflow_trace"][1]["event_source"] == "chat"
+    assert payload["workflow_trace"][1]["event_stage"] == "chat"
     assert payload["workflow_trace"][1]["status_level"] == "info"
     assert "LLM 回复生成" in payload["workflow_trace"][1]["message"]
     assert payload["workflow_trace"][2]["event_label"] == "角色收口已发送"
+    assert payload["workflow_trace"][2]["event_type"] == "roleplay.emitted"
+    assert payload["workflow_trace"][2]["event_source"] == "roleplay"
+    assert payload["workflow_trace"][2]["event_stage"] == "roleplay"
+
+
+def test_workspace_tool_snapshot_can_merge_runtime_state_with_preview_state():
+    preview_snapshot = WorkspaceToolSnapshot.from_state(
+        {
+            "workspace_tool_name": "read_workspace_text",
+            "workspace_tool_reason": "Prompt references a workspace file path.",
+            "workspace_tool_descriptor": {
+                "name": "read_workspace_text",
+                "title": "读取工作区文本",
+                "description": "读取单个工作区文本文件并返回裁剪后的内容预览。",
+                "category": "context",
+                "output_kind": "file_preview",
+                "input_keys": ["rel_path", "max_chars"],
+            },
+            "workspace_tool_plan": {
+                "tool_name": "read_workspace_text",
+                "tool_input": {"rel_path": "backend/app/main.py"},
+                "reason": "Prompt references a workspace file path.",
+            },
+        }
+    )
+    runtime_snapshot = WorkspaceToolSnapshot.from_state(
+        {
+            "workspace_tool_name": "read_workspace_text",
+            "workspace_tool_error_code": "WORKSPACE_TOOL_EXECUTION_FAILED",
+        }
+    ).merged_with(preview_snapshot)
+
+    assert runtime_snapshot.name == "read_workspace_text"
+    assert runtime_snapshot.title == "读取工作区文本"
+    assert runtime_snapshot.category == "context"
+    assert runtime_snapshot.output_kind == "file_preview"
+    assert runtime_snapshot.error_code == "WORKSPACE_TOOL_EXECUTION_FAILED"
+    assert runtime_snapshot.plan == {
+        "tool_name": "read_workspace_text",
+        "tool_input": {"rel_path": "backend/app/main.py"},
+        "reason": "Prompt references a workspace file path.",
+    }
+
+
+def test_workspace_tool_failure_descriptor_prefers_specific_tool_error_code():
+    descriptor = build_failure_descriptor(
+        error_type="workflow_error",
+        failure_event="workspace_tool_failed",
+        failure_phase="tools",
+        failure_details={
+            "tool_name": "missing_tool",
+            "tool_title": "缺失工具",
+            "tool_error_code": "WORKSPACE_TOOL_UNREGISTERED",
+        },
+    )
+
+    assert descriptor["error_code"] == "WORKSPACE_TOOL_UNREGISTERED"
+    assert descriptor["failure_domain"] == "workspace_tool_registry"
+    assert "缺失工具" in descriptor["summary"]
 
 
 def test_agent_diagnostics_run_route_executes_inspect_branch(client):
@@ -158,6 +253,11 @@ def test_agent_diagnostics_run_route_blocks_side_effecting_coding_paths(client):
     assert payload["debug_summary"]["failure_phase"] == "diagnostics"
     assert payload["debug_summary"]["failure_code"] == "DIAGNOSTICS_BLOCKED_SIDE_EFFECT"
     assert payload["debug_summary"]["failure_domain"] == "diagnostics_guard"
+    assert payload["runtime_event_summary"]["event_count"] >= 3
+    assert payload["runtime_event_summary"]["event_source_counts"]["diagnostics"] == 1
+    assert payload["runtime_event_summary"]["last_event_type"] == "diagnostics.coding_path_selected"
+    assert payload["workspace_tool"]["name"] == "build_workspace_overview"
+    assert payload["workspace_tool"]["descriptor"]["title"] == "工作区概览"
     assert payload["workflow_trace"][-1]["event_label"] == "诊断 coding 路径已确定"
     assert payload["workflow_trace"][-1]["status_level"] == "info"
     assert "后续节点" in payload["workflow_trace"][-1]["message"]
@@ -202,7 +302,12 @@ def test_agent_diagnostics_run_route_returns_error_context_for_chat_failure(monk
     assert payload["debug_summary"]["failure_phase"] == "chat"
     assert payload["debug_summary"]["failure_code"] == "CHAT_LLM_RESPONSE_FAILED"
     assert payload["debug_summary"]["failure_domain"] == "llm"
+    assert payload["runtime_event_summary"]["error_event_count"] == 1
+    assert payload["runtime_event_summary"]["event_type_counts"]["chat.response_failed"] == 1
     assert payload["workflow_trace"][1]["event_label"] == "聊天回复失败"
+    assert payload["workflow_trace"][1]["event_type"] == "chat.response_failed"
+    assert payload["workflow_trace"][1]["event_source"] == "chat"
+    assert payload["workflow_trace"][1]["event_stage"] == "chat"
     assert payload["workflow_trace"][1]["status_level"] == "error"
     assert "失败结果" in payload["workflow_trace"][1]["message"]
     assert payload["error_context"]["error_type"] == "workflow_error"
@@ -237,7 +342,12 @@ def test_agent_diagnostics_run_route_returns_error_context_for_chat_exception(mo
     assert payload["debug_summary"]["failure_phase"] == "chat"
     assert payload["debug_summary"]["failure_code"] == "WORKFLOW_NODE_EXCEPTION"
     assert payload["debug_summary"]["failure_domain"] == "workflow_node"
+    assert payload["runtime_event_summary"]["error_event_count"] == 1
+    assert payload["runtime_event_summary"]["event_type_counts"]["workflow.node_exception"] == 1
     assert payload["workflow_trace"][1]["event_label"] == "节点异常"
+    assert payload["workflow_trace"][1]["event_type"] == "workflow.node_exception"
+    assert payload["workflow_trace"][1]["event_source"] == "chat"
+    assert payload["workflow_trace"][1]["event_stage"] == "chat"
     assert payload["workflow_trace"][1]["status_level"] == "error"
     assert "未捕获异常" in payload["workflow_trace"][1]["message"]
     assert payload["error_context"]["summary"] == "工作流节点抛出了未捕获异常。"

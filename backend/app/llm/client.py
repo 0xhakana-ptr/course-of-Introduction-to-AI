@@ -691,12 +691,14 @@ async def call_llm(
     *,
     system_prompt: str | None = None,
     temperature: float = 0.3,
+    max_tokens: int | None = None,
 ) -> LLMCallResult:
     return await _call_with_provider_chain_async(
         prompt=prompt,
         context=context,
         system_prompt=system_prompt or settings.llm_system_prompt,
         temperature=temperature,
+        max_tokens=max_tokens,
     )
 
 
@@ -706,10 +708,12 @@ def call_llm_sync(
     *,
     system_prompt: str | None = None,
     temperature: float = 0.3,
+    max_tokens: int | None = None,
 ) -> LLMCallResult:
     return _call_with_provider_chain_sync(
         prompt=prompt,
         context=context,
         system_prompt=system_prompt or settings.llm_system_prompt,
         temperature=temperature,
+        max_tokens=max_tokens,
     )
