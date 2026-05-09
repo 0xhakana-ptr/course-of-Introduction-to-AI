@@ -1,8 +1,10 @@
 from collections.abc import Callable, Mapping
 
+from .agent_run_state import WorkflowRunStateSnapshot
+
 
 def resolve_target_run_id(state: Mapping[str, object]) -> str:
-    return str(state.get("target_run_id") or state.get("run_id") or "").strip()
+    return WorkflowRunStateSnapshot.from_state(state).resolved_target_run_id()
 
 
 def resolve_run_snapshot_fields(

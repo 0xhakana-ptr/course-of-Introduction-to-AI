@@ -140,12 +140,16 @@ class LLMDiagnosticsResponse(BaseModel):
     configured: bool
     api_key_present: bool
     base_url: str | None = None
+    chat_completions_url: str | None = None
     resolved_url: str | None = None
+    provider_profile: str = "openai"
     model: str | None = None
     timeout_seconds: int
     fallback_configured: bool = False
     fallback_base_url: str | None = None
+    fallback_chat_completions_url: str | None = None
     fallback_resolved_url: str | None = None
+    fallback_provider_profile: str | None = None
     fallback_model: str | None = None
     fallback_timeout_seconds: int | None = None
     checked_remote: bool = False

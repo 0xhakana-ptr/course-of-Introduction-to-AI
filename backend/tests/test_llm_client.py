@@ -4,10 +4,15 @@ import httpx
 
 from backend.app.llm.client import (
     LLMProviderConfig,
+    MINIMAX_PROVIDER_PROFILE,
     build_request_error_message,
+    build_messages,
+    build_payload,
     call_llm,
     call_llm_sync,
     failure_result,
+    infer_provider_profile,
+    resolve_chat_completions_url,
     success_result,
 )
 
@@ -39,6 +44,46 @@ def test_build_request_error_message_preserves_non_empty_error_text():
 
     assert "error_type: ConnectError" in message
     assert "dns failed" in message
+
+
+def test_build_messages_combines_context_into_single_system_message():
+    messages = build_messages("你好", "上一轮对话", "你是助手")
+
+    assert len(messages) == 2
+    assert messages[0]["role"] == "system"
+    assert "你是助手" in messages[0]["content"]
+    assert "Recent conversation context:\n上一轮对话" in messages[0]["content"]
+    assert messages[1] == {"role": "user", "content": "你好"}
+
+
+def test_resolve_chat_completions_url_prefers_explicit_endpoint():
+    assert (
+        resolve_chat_completions_url(
+            "https://api.example.com/v1",
+            explicit_url="https://gateway.example.com/custom/chat",
+        )
+        == "https://gateway.example.com/custom/chat"
+    )
+
+
+def test_infer_provider_profile_detects_minimax_from_url():
+    assert (
+        infer_provider_profile(base_url="https://api.minimaxi.com/v1")
+        == MINIMAX_PROVIDER_PROFILE
+    )
+
+
+def test_build_payload_clamps_zero_temperature_for_minimax():
+    payload = build_payload(
+        "hello",
+        None,
+        "You are helpful.",
+        0.0,
+        model="MiniMax-M2.7",
+        profile=MINIMAX_PROVIDER_PROFILE,
+    )
+
+    assert payload["temperature"] == 0.01
 
 
 def test_call_llm_falls_back_after_primary_request_error(monkeypatch):

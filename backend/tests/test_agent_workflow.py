@@ -12,6 +12,10 @@ from backend.app.agent_workflow.agent_run_support import (
     execute_run_control_action,
     resolve_target_run_id,
 )
+from backend.app.agent_workflow.agent_run_state import (
+    WorkflowRunStateSnapshot,
+    build_run_state_updates,
+)
 from backend.app.agent_workflow.agent_state_support import normalize_optional_text
 from backend.app.agent_workflow.agent_support import (
     build_agent_initial_state,
@@ -429,6 +433,46 @@ def test_agent_run_support_resolves_target_run_id():
     assert resolve_target_run_id(state) == "run-target-1"
     assert resolve_target_run_id({"run_id": "run-fallback-1"}) == "run-fallback-1"
     assert resolve_target_run_id({}) == ""
+
+
+def test_agent_run_state_helpers_normalize_and_build_updates():
+    snapshot = WorkflowRunStateSnapshot.from_state(
+        {
+            "run_id": " run-1 ",
+            "run_status": " queued ",
+            "run_action": " inspect ",
+            "target_run_id": " run-target-1 ",
+            "run_summary": " summary ",
+            "run_next_action": " next step ",
+            "ui_status": " run_snapshot_ready ",
+        }
+    )
+    updates = build_run_state_updates(
+        run_id=" run-2 ",
+        run_status=" running ",
+        run_action=" retry ",
+        run_summary="  ",
+        run_next_action=" continue ",
+        ui_status=" run_control_done ",
+    )
+
+    assert snapshot.run_id == "run-1"
+    assert snapshot.run_status == "queued"
+    assert snapshot.run_action == "inspect"
+    assert snapshot.target_run_id == "run-target-1"
+    assert snapshot.run_summary == "summary"
+    assert snapshot.run_next_action == "next step"
+    assert snapshot.ui_status == "run_snapshot_ready"
+    assert snapshot.resolved_target_run_id() == "run-target-1"
+    assert snapshot.run_payload() == ("run-1", "queued")
+    assert updates == {
+        "run_id": "run-2",
+        "run_status": "running",
+        "run_action": "retry",
+        "run_summary": None,
+        "run_next_action": "continue",
+        "ui_status": "run_control_done",
+    }
 
 
 def test_agent_run_support_executes_control_action_and_fallback_text():

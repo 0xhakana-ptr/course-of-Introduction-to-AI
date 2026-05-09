@@ -17,6 +17,8 @@ class LLMProviderConfig:
     api_key: str
     model: str
     timeout_seconds: int
+    profile: str = "openai"
+    chat_completions_url: str = ""
 
 
 @dataclass(slots=True)
@@ -35,12 +37,16 @@ class LLMDiagnosticsResult:
     configured: bool
     api_key_present: bool
     base_url: str | None
+    chat_completions_url: str | None
     resolved_url: str | None
+    provider_profile: str
     model: str | None
     timeout_seconds: int
     fallback_configured: bool = False
     fallback_base_url: str | None = None
+    fallback_chat_completions_url: str | None = None
     fallback_resolved_url: str | None = None
+    fallback_provider_profile: str | None = None
     fallback_model: str | None = None
     fallback_timeout_seconds: int | None = None
     checked_remote: bool = False
@@ -54,9 +60,43 @@ class LLMDiagnosticsResult:
 
 DIAGNOSTIC_PREVIEW_LIMIT = 200
 DIAGNOSTIC_ERROR_LIMIT = 500
+OPENAI_PROVIDER_PROFILE = "openai"
+MINIMAX_PROVIDER_PROFILE = "minimax"
+MINIMAX_MIN_TEMPERATURE = 0.01
+MINIMAX_MAX_TEMPERATURE = 1.0
 
 
-def resolve_chat_completions_url(base_url: str | None = None) -> str:
+def normalize_provider_profile(value: str | None) -> str:
+    text = str(value or "").strip().lower()
+    if text in {OPENAI_PROVIDER_PROFILE, MINIMAX_PROVIDER_PROFILE}:
+        return text
+    return ""
+
+
+def infer_provider_profile(
+    *,
+    profile: str | None = None,
+    base_url: str | None = None,
+    chat_completions_url: str | None = None,
+) -> str:
+    normalized = normalize_provider_profile(profile)
+    if normalized:
+        return normalized
+
+    probe = " ".join(item for item in (base_url, chat_completions_url) if item).lower()
+    if "minimax" in probe or "minimaxi" in probe:
+        return MINIMAX_PROVIDER_PROFILE
+    return OPENAI_PROVIDER_PROFILE
+
+
+def resolve_chat_completions_url(
+    base_url: str | None = None,
+    *,
+    explicit_url: str | None = None,
+) -> str:
+    endpoint = (explicit_url or "").strip().rstrip("/")
+    if endpoint:
+        return endpoint
     base = (base_url or settings.llm_base_url).rstrip("/")
     if not base:
         return ""
@@ -72,6 +112,12 @@ def get_primary_provider() -> LLMProviderConfig:
         api_key=settings.llm_api_key,
         model=settings.llm_model,
         timeout_seconds=settings.llm_timeout_seconds,
+        profile=infer_provider_profile(
+            profile=settings.llm_provider_profile,
+            base_url=settings.llm_base_url,
+            chat_completions_url=settings.llm_chat_completions_url,
+        ),
+        chat_completions_url=settings.llm_chat_completions_url,
     )
 
 
@@ -82,11 +128,21 @@ def get_fallback_provider() -> LLMProviderConfig:
         api_key=settings.llm_fallback_api_key or settings.llm_api_key,
         model=settings.llm_fallback_model,
         timeout_seconds=settings.llm_fallback_timeout_seconds,
+        profile=infer_provider_profile(
+            profile=settings.llm_fallback_provider_profile or settings.llm_provider_profile,
+            base_url=settings.llm_fallback_base_url or settings.llm_base_url,
+            chat_completions_url=(
+                settings.llm_fallback_chat_completions_url or settings.llm_chat_completions_url
+            ),
+        ),
+        chat_completions_url=(
+            settings.llm_fallback_chat_completions_url or settings.llm_chat_completions_url
+        ),
     )
 
 
 def provider_is_configured(provider: LLMProviderConfig) -> bool:
-    return bool(provider.base_url and provider.api_key and provider.model)
+    return bool((provider.base_url or provider.chat_completions_url) and provider.api_key and provider.model)
 
 
 def get_provider_chain() -> list[LLMProviderConfig]:
@@ -103,6 +159,8 @@ def get_provider_chain() -> list[LLMProviderConfig]:
             and item.api_key == fallback.api_key
             and item.model == fallback.model
             and item.timeout_seconds == fallback.timeout_seconds
+            and item.profile == fallback.profile
+            and item.chat_completions_url == fallback.chat_completions_url
             for item in providers
         )
         if not duplicate:
@@ -190,14 +248,27 @@ def unconfigured_message(prompt: str, context: str | None = None) -> LLMCallResu
 
 
 def build_messages(prompt: str, context: str | None, system_prompt: str) -> list[dict[str, str]]:
-    combined_system = system_prompt
-    if context:
-        combined_system = f"{system_prompt}\n\nRecent conversation context:\n{context}"
-    messages: list[dict[str, str]] = [
+    combined_system = system_prompt.strip()
+    normalized_context = str(context or "").strip()
+    if normalized_context:
+        if combined_system:
+            combined_system = f"{combined_system}\n\nRecent conversation context:\n{normalized_context}"
+        else:
+            combined_system = f"Recent conversation context:\n{normalized_context}"
+
+    return [
         {"role": "system", "content": combined_system},
         {"role": "user", "content": prompt},
     ]
-    return messages
+
+
+def normalize_temperature_for_provider(profile: str, temperature: float) -> float:
+    if profile == MINIMAX_PROVIDER_PROFILE:
+        if temperature <= 0:
+            return MINIMAX_MIN_TEMPERATURE
+        if temperature > MINIMAX_MAX_TEMPERATURE:
+            return MINIMAX_MAX_TEMPERATURE
+    return temperature
 
 
 def build_payload(
@@ -208,11 +279,12 @@ def build_payload(
     *,
     model: str | None = None,
     max_tokens: int | None = None,
+    profile: str = OPENAI_PROVIDER_PROFILE,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "model": model or settings.llm_model,
         "messages": build_messages(prompt, context, system_prompt),
-        "temperature": temperature,
+        "temperature": normalize_temperature_for_provider(profile, temperature),
     }
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
@@ -235,7 +307,10 @@ def build_provider_request_parts(
     temperature: float,
     max_tokens: int | None = None,
 ) -> tuple[str, dict[str, object], dict[str, str]]:
-    endpoint = resolve_chat_completions_url(provider.base_url)
+    endpoint = resolve_chat_completions_url(
+        provider.base_url,
+        explicit_url=provider.chat_completions_url,
+    )
     payload = build_payload(
         prompt=prompt,
         context=context,
@@ -243,6 +318,7 @@ def build_provider_request_parts(
         temperature=temperature,
         model=provider.model,
         max_tokens=max_tokens,
+        profile=provider.profile,
     )
     headers = build_headers(provider.api_key)
     return endpoint, payload, headers
@@ -454,14 +530,28 @@ def build_llm_diagnostics_result(
         configured=llm_is_configured(),
         api_key_present=bool(primary.api_key or fallback.api_key),
         base_url=primary.base_url or None,
-        resolved_url=resolve_chat_completions_url(primary.base_url) or None,
+        chat_completions_url=primary.chat_completions_url or None,
+        resolved_url=resolve_chat_completions_url(
+            primary.base_url,
+            explicit_url=primary.chat_completions_url,
+        ) or None,
+        provider_profile=primary.profile,
         model=primary.model or None,
         timeout_seconds=primary.timeout_seconds,
         fallback_configured=provider_is_configured(fallback),
         fallback_base_url=(fallback.base_url or None) if provider_is_configured(fallback) else None,
-        fallback_resolved_url=(
-            resolve_chat_completions_url(fallback.base_url) or None
+        fallback_chat_completions_url=(
+            fallback.chat_completions_url or None
         ) if provider_is_configured(fallback) else None,
+        fallback_resolved_url=(
+            resolve_chat_completions_url(
+                fallback.base_url,
+                explicit_url=fallback.chat_completions_url,
+            ) or None
+        ) if provider_is_configured(fallback) else None,
+        fallback_provider_profile=(
+            fallback.profile if provider_is_configured(fallback) else None
+        ),
         fallback_model=(fallback.model or None) if provider_is_configured(fallback) else None,
         fallback_timeout_seconds=(
             fallback.timeout_seconds if provider_is_configured(fallback) else None

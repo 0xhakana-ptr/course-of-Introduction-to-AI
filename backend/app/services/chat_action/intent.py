@@ -136,6 +136,9 @@ FILE_REFERENCE_PATTERN = re.compile(
 NATURAL_LANGUAGE_PATTERN = re.compile(r"[A-Za-z\u4e00-\u9fff]")
 CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
 LATIN_WORD_PATTERN = re.compile(r"[A-Za-z]+")
+MATH_EXPRESSION_PATTERN = re.compile(
+    r"^\s*[\d\s+\-*/%=().]+(?:[?？]|等于几|等于多少|结果是多少|怎么算)?\s*$"
+)
 CHAT_HINTS = (
     "我",
     "你",
@@ -219,6 +222,17 @@ def _is_symbolic_or_empty_prompt(text: str) -> bool:
     if not stripped:
         return True
     return NATURAL_LANGUAGE_PATTERN.search(stripped) is None
+
+
+def looks_like_math_question(prompt: str) -> bool:
+    text = str(prompt or "").strip()
+    if not text:
+        return False
+    if not any(char.isdigit() for char in text):
+        return False
+    if not any(operator in text for operator in ("+", "-", "*", "/", "%", "=")):
+        return False
+    return MATH_EXPRESSION_PATTERN.fullmatch(text) is not None
 
 
 def has_strong_chat_signal(prompt: str) -> bool:

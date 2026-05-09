@@ -4,6 +4,7 @@ from .agent_constants import (
     RUN_ACTION_CREATE,
     RUN_ACTION_INSPECT,
 )
+from .agent_run_state import build_run_state_updates
 from .agent_state_support import (
     append_workflow_trace,
     merge_agent_state,
@@ -72,9 +73,15 @@ def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, objec
         workspace_tool_error_code=None,
         workspace_tool_error=None,
         workspace_tool_context=None,
-        run_action=run_action,
-        target_run_id=target_run_id,
-        ui_status="coding_requested",
+        **build_run_state_updates(
+            run_id=None,
+            run_status=None,
+            run_action=run_action,
+            target_run_id=target_run_id,
+            run_summary=None,
+            run_next_action=None,
+            ui_status="coding_requested",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -197,8 +204,12 @@ def build_run_creation_failure_state(
         state,
         output=f"代码任务创建失败：{error}",
         error=error,
-        run_action=RUN_ACTION_CREATE,
-        ui_status="run_create_failed",
+        **build_run_state_updates(
+            run_action=RUN_ACTION_CREATE,
+            run_summary=None,
+            run_next_action=None,
+            ui_status="run_create_failed",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -225,13 +236,15 @@ def build_run_creation_success_state(
             snapshot_summary=snapshot_summary,
             next_action=next_action,
         ),
-        run_id=run_id,
-        run_status=status,
-        run_action=RUN_ACTION_CREATE,
-        run_summary=snapshot_summary,
-        run_next_action=next_action,
         error=None,
-        ui_status="run_queued",
+        **build_run_state_updates(
+            run_id=run_id,
+            run_status=status,
+            run_action=RUN_ACTION_CREATE,
+            run_summary=snapshot_summary,
+            run_next_action=next_action,
+            ui_status="run_queued",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -258,13 +271,15 @@ def build_run_snapshot_success_state(
             snapshot_summary=snapshot_summary,
             next_action=next_action,
         ),
-        run_id=run_id,
-        run_status=status,
-        run_action=RUN_ACTION_INSPECT,
-        run_summary=snapshot_summary,
-        run_next_action=next_action,
         error=None,
-        ui_status="run_snapshot_ready",
+        **build_run_state_updates(
+            run_id=run_id,
+            run_status=status,
+            run_action=RUN_ACTION_INSPECT,
+            run_summary=snapshot_summary,
+            run_next_action=next_action,
+            ui_status="run_snapshot_ready",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -295,13 +310,15 @@ def build_run_snapshot_progress_state(
             latest_attempt_summary=latest_attempt_summary,
             cancel_requested=cancel_requested,
         ),
-        run_id=run_id,
-        run_status=status,
-        run_action=RUN_ACTION_INSPECT,
-        run_summary=snapshot_summary,
-        run_next_action=next_action,
         error=None,
-        ui_status="run_snapshot_in_progress",
+        **build_run_state_updates(
+            run_id=run_id,
+            run_status=status,
+            run_action=RUN_ACTION_INSPECT,
+            run_summary=snapshot_summary,
+            run_next_action=next_action,
+            ui_status="run_snapshot_in_progress",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -333,13 +350,15 @@ def build_run_terminal_summary_state(
             summary_text=summary_text,
             next_action=next_action,
         ),
-        run_id=run_id,
-        run_status=status,
-        run_action=RUN_ACTION_INSPECT,
-        run_summary=summary_text,
-        run_next_action=next_action,
         error=None,
-        ui_status="run_snapshot_terminal",
+        **build_run_state_updates(
+            run_id=run_id,
+            run_status=status,
+            run_action=RUN_ACTION_INSPECT,
+            run_summary=summary_text,
+            run_next_action=next_action,
+            ui_status="run_snapshot_terminal",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -364,10 +383,15 @@ def build_run_snapshot_failure_state(
     next_state = merge_agent_state(
         state,
         output="\n".join(lines),
-        run_id=target_run_id,
-        run_action=RUN_ACTION_INSPECT,
         error=error,
-        ui_status="run_snapshot_failed",
+        **build_run_state_updates(
+            run_id=target_run_id,
+            run_status=None,
+            run_action=RUN_ACTION_INSPECT,
+            run_summary=None,
+            run_next_action=None,
+            ui_status="run_snapshot_failed",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -398,13 +422,15 @@ def build_run_control_success_state(
             next_action=next_action,
             source_run_id=source_run_id,
         ),
-        run_id=run_id,
-        run_status=status,
-        run_action=action,
-        run_summary=snapshot_summary,
-        run_next_action=next_action,
         error=None,
-        ui_status="run_control_done",
+        **build_run_state_updates(
+            run_id=run_id,
+            run_status=status,
+            run_action=action,
+            run_summary=snapshot_summary,
+            run_next_action=next_action,
+            ui_status="run_control_done",
+        ),
     )
     return append_workflow_trace(
         next_state,
@@ -430,10 +456,15 @@ def build_run_control_failure_state(
             run_id=target_run_id,
             error=error,
         ),
-        run_id=target_run_id,
-        run_action=action,
         error=error,
-        ui_status="run_control_failed",
+        **build_run_state_updates(
+            run_id=target_run_id,
+            run_status=None,
+            run_action=action,
+            run_summary=None,
+            run_next_action=None,
+            ui_status="run_control_failed",
+        ),
     )
     return append_workflow_trace(
         next_state,

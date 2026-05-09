@@ -53,12 +53,28 @@ LLM_MODEL=
 
 ```text
 LLM_BASE_URL=https://api.longcat.chat/openai/v1
+LLM_PROVIDER_PROFILE=openai
 LLM_MODEL=LongCat-Flash-Thinking-2601
+```
+
+如果你使用 MiniMax，建议显式指定 provider profile：
+
+```text
+LLM_BASE_URL=https://api.minimaxi.com/v1
+LLM_PROVIDER_PROFILE=minimax
+LLM_MODEL=MiniMax-M2.7
+```
+
+如果某个 provider 的聊天端点不是标准的 `base_url + /chat/completions`，可以额外设置：
+
+```text
+LLM_CHAT_COMPLETIONS_URL=
 ```
 
 说明：
 
 - 后端只要求“OpenAI-compatible 接口”，并不限定必须是 OpenAI 官方
+- 当前优先稳定支持 `openai` 与 `minimax` 两类 profile；如果是其他供应商，优先先验证其 `/chat/completions` 兼容程度
 - 未配置 LLM 时，服务仍可启动，但聊天会退回占位回复，`runs` 会优先走本地模板逻辑
 
 ### 2.3 启动后端

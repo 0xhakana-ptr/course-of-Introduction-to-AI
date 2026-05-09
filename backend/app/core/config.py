@@ -21,6 +21,17 @@ DEFAULT_CONVERSATION_CONTEXT_RECENT_MESSAGES = 8
 DEFAULT_CONVERSATION_SUMMARY_MAX_CHARS = 1200
 
 
+def _read_env(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name)
+        if value is None:
+            continue
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return default.strip()
+
+
 class Settings:
     def __init__(self) -> None:
         backend_root = BACKEND_ROOT
@@ -36,9 +47,11 @@ class Settings:
             os.getenv("CONVERSATION_DIR_NAME", "conversations").strip() or "conversations"
         )
 
-        self.llm_base_url = os.getenv("LLM_BASE_URL", "").strip()
-        self.llm_api_key = os.getenv("LLM_API_KEY", "").strip()
-        self.llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini").strip()
+        self.llm_base_url = _read_env("LLM_BASE_URL", "OPENAI_BASE_URL")
+        self.llm_chat_completions_url = _read_env("LLM_CHAT_COMPLETIONS_URL")
+        self.llm_provider_profile = _read_env("LLM_PROVIDER_PROFILE")
+        self.llm_api_key = _read_env("LLM_API_KEY", "OPENAI_API_KEY")
+        self.llm_model = _read_env("LLM_MODEL", "OPENAI_MODEL", default="gpt-4o-mini")
         self.llm_system_prompt = os.getenv(
             "LLM_SYSTEM_PROMPT",
             DEFAULT_LLM_SYSTEM_PROMPT,
@@ -47,9 +60,11 @@ class Settings:
         llm_timeout_raw = os.getenv("LLM_TIMEOUT_SECONDS", "30").strip()
         self.llm_timeout_seconds = int(llm_timeout_raw) if llm_timeout_raw.isdigit() else 30
 
-        self.llm_fallback_base_url = os.getenv("LLM_FALLBACK_BASE_URL", "").strip()
-        self.llm_fallback_api_key = os.getenv("LLM_FALLBACK_API_KEY", "").strip()
-        self.llm_fallback_model = os.getenv("LLM_FALLBACK_MODEL", "").strip()
+        self.llm_fallback_base_url = _read_env("LLM_FALLBACK_BASE_URL")
+        self.llm_fallback_chat_completions_url = _read_env("LLM_FALLBACK_CHAT_COMPLETIONS_URL")
+        self.llm_fallback_provider_profile = _read_env("LLM_FALLBACK_PROVIDER_PROFILE")
+        self.llm_fallback_api_key = _read_env("LLM_FALLBACK_API_KEY")
+        self.llm_fallback_model = _read_env("LLM_FALLBACK_MODEL")
 
         llm_fallback_timeout_raw = os.getenv("LLM_FALLBACK_TIMEOUT_SECONDS", "").strip()
         if llm_fallback_timeout_raw.isdigit():
