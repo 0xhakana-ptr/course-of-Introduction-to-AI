@@ -223,7 +223,18 @@
 - `ui_status`
 - `planned_nodes`
 - `notes`
+- `debug_summary`
 - `workflow_trace`
+
+补充说明：
+
+- `workflow_trace` 中的每一项除了原始 `node / event / ui_status / details` 外，还会补充：
+  - `node_label`：节点中文标签，便于直接阅读
+  - `phase`：稳定的英文阶段标识，便于程序判断
+  - `event_label`：事件中文短标签，便于快速扫描
+  - `status_level`：节点日志级别，当前为 `info / warning / error`
+  - `message`：面向开发调试的节点级中文摘要
+- `debug_summary` 会进一步聚合 `*_node_label`、`*_phase` 以及失败时的 `failure_code / failure_domain`，用于快速定位“问题发生在哪个阶段、属于哪类故障”
 
 返回体示例：
 
@@ -252,7 +263,12 @@
     {
       "step": 1,
       "node": "router",
+      "node_label": "意图路由",
+      "phase": "routing",
       "event": "intent_routed",
+      "event_label": "意图已路由",
+      "status_level": "info",
+      "message": "意图路由已将输入路由到 `coding` 意图。",
       "ui_status": "routed",
       "details": {
         "intent": "coding"
@@ -261,7 +277,12 @@
     {
       "step": 2,
       "node": "coding_node",
+      "node_label": "代码任务预处理",
+      "phase": "coding",
       "event": "coding_request_prepared",
+      "event_label": "代码任务请求已解析",
+      "status_level": "info",
+      "message": "代码任务预处理已解析 coding 请求，动作为 `cancel`，目标 run_id 为 `123e4567-e89b-12d3-a456-426614174000`。",
       "ui_status": "coding_requested",
       "details": {
         "run_action": "cancel",
@@ -269,9 +290,198 @@
         "workspace_tool_name": null
       }
     }
+  ],
+  "debug_summary": {
+    "trace_count": 3,
+    "first_node": "router",
+    "first_node_label": "意图路由",
+    "last_node": "diagnostics_preview",
+    "last_node_label": "诊断预览",
+    "terminal_node": "diagnostics_preview",
+    "terminal_node_label": "诊断预览",
+    "last_event": "coding_path_selected",
+    "last_ui_status": "coding_requested",
+    "last_phase": "diagnostics",
+    "failure_node": null,
+    "failure_node_label": null,
+    "failure_event": null,
+    "failure_phase": null,
+    "failure_code": null,
+    "failure_domain": null,
+    "blocked": false,
+    "error_present": false
+  },
+  "error_context": null
+}
+```
+
+### 3.2.2 `POST /agent/diagnostics/run`
+
+请求体：
+
+```json
+{
+  "prompt": "请查看 run_id 123e4567-e89b-12d3-a456-426614174000 的状态",
+  "context": null,
+  "intent": null
+}
+```
+
+用途：
+
+- 在更接近真实运行期的前提下执行一遍安全的 Agent workflow 分支
+- 返回真实 `output / error / ui_status / workflow_trace`
+- 用于排查某条输入在真实 `agent_workflow` 中到底如何收口
+
+当前默认允许执行的分支：
+
+- `chat`
+- `unknown`
+- `coding + inspect`
+
+当前默认拦截的分支：
+
+- `coding + create`
+- `coding + retry`
+- `coding + rerun`
+- `coding + cancel`
+
+说明：
+
+- 拦截这些分支是为了避免 diagnostics 接口意外创建 run 或修改已有任务状态
+- 对于被拦截的输入，仍会返回 preview 级别的 `planned_nodes` 和 `workflow_trace`，并给出 `blocked_reason`
+
+返回字段包括：
+
+- `ok`
+- `executable`
+- `executed`
+- `blocked_reason`
+- `output`
+- `error`
+- `run_id`
+- `run_status`
+- `ui_status`
+- `planned_nodes`
+- `notes`
+- `debug_summary`
+- `error_context`
+- `workflow_trace`
+
+补充说明：
+
+- 无论是 `preview` 级 trace，还是实际运行期 diagnostics 返回的 trace，当前都会统一补充 `node_label` 与 `phase`。
+- 当前 `workflow_trace` 已经可以直接作为“节点级日志”阅读：请求方可优先查看 `event_label / status_level / message`，只有需要更细字段时再回退到 `details`。
+- 当运行失败，或 diagnostics 因安全原因被主动拦截时，`debug_summary` 与 `error_context` 会优先给出：
+  - `failure_node`
+  - `failure_node_label`
+  - `failure_event`
+  - `failure_phase`
+  - `failure_code`
+  - `failure_domain`
+- `error_context` 当前还会返回：
+  - `summary`：统一中文故障摘要
+  - `error_code`：稳定英文错误码
+  - `failure_domain`：稳定故障域，便于前端或调试端分类显示
+
+返回体示例：
+
+```json
+{
+  "ok": true,
+  "prompt": "hello",
+  "intent": "chat",
+  "selected_route": "chat_node",
+  "run_action": null,
+  "executable": true,
+  "executed": true,
+  "blocked_reason": null,
+  "run_id": null,
+  "run_status": null,
+  "output": "reply to hello",
+  "error": null,
+  "ui_status": "chat_done",
+  "planned_nodes": [
+    "router",
+    "chat_node",
+    "roleplay_node"
+  ],
+  "notes": [
+    "该输入会进入 chat_node，并调用当前 LLM client 生成回复。"
+  ],
+  "debug_summary": {
+    "trace_count": 3,
+    "first_node": "router",
+    "first_node_label": "意图路由",
+    "last_node": "roleplay_node",
+    "last_node_label": "角色收口",
+    "terminal_node": "roleplay_node",
+    "terminal_node_label": "角色收口",
+    "last_event": "roleplay_emit",
+    "last_ui_status": "chat_done",
+    "last_phase": "roleplay",
+    "failure_node": null,
+    "failure_node_label": null,
+    "failure_event": null,
+    "failure_phase": null,
+    "failure_code": null,
+    "failure_domain": null,
+    "blocked": false,
+    "error_present": false
+  },
+  "error_context": null,
+  "workflow_trace": [
+    {
+      "step": 1,
+      "node": "router",
+      "node_label": "意图路由",
+      "phase": "routing",
+      "event": "intent_routed",
+      "event_label": "意图已路由",
+      "status_level": "info",
+      "message": "意图路由已将输入路由到 `chat` 意图。",
+      "ui_status": "routed",
+      "details": {
+        "intent": "chat"
+      }
+    },
+    {
+      "step": 2,
+      "node": "chat_node",
+      "node_label": "聊天回复",
+      "phase": "chat",
+      "event": "llm_response_ready",
+      "event_label": "聊天回复完成",
+      "status_level": "info",
+      "message": "聊天回复已完成 LLM 回复生成。",
+      "ui_status": "chat_done",
+      "details": {
+        "has_error": false
+      }
+    },
+    {
+      "step": 3,
+      "node": "roleplay_node",
+      "node_label": "角色收口",
+      "phase": "roleplay",
+      "event": "roleplay_emit",
+      "event_label": "角色收口已发送",
+      "status_level": "info",
+      "message": "角色收口已完成最终输出收口。",
+      "ui_status": "chat_done",
+      "details": {
+        "node_name": "agent_roleplay"
+      }
+    }
   ]
 }
 ```
+
+说明补充：
+
+- `debug_summary` 用于快速概览这次 diagnostics 最终走到了哪个节点、最后一个事件是什么、是否存在错误、是否属于被主动拦截的路径。
+- `error_context` 用于在运行期 diagnostics 失败或被拦截时，直接给出失败节点、失败节点标签、失败事件、失败阶段、稳定错误码、故障域、统一摘要和下一步建议，避免只看原始 trace 才能定位。
+- 当前 `agent_workflow` 主节点已经接入统一的 node exception guard：如果某个 node 直接抛异常，后端会将其收口为 `workflow_node_failed` 状态，并在 trace 中记录 `node_exception`，而不是让整条 LangGraph 链路直接静默中断。
 
 ### 3.3 `POST /chat`
 

@@ -5,8 +5,18 @@ from langgraph.graph import END, StateGraph
 from ..llm.client import call_llm_sync
 from ..schemas import INTENT_TYPE
 from ..services.chat_action.intent import detect_intent
+from .agent_graph_support import (
+    configure_agent_graph_edges,
+    register_agent_graph_nodes,
+)
 from ..services.run_interface import cancel_run, create_run, get_run, get_run_snapshot, rerun_run, retry_run
-from .run_summary_graph import summarize_run_record
+from .agent_run_support import (
+    build_run_control_fallback_next_action,
+    execute_run_control_action,
+    resolve_run_snapshot_fields,
+    resolve_target_run_id,
+    resolve_terminal_run_summary,
+)
 from .agent_support import (
     RUN_ACTION_CANCEL,
     RUN_ACTION_RERUN,
@@ -22,12 +32,14 @@ from .agent_support import (
     build_run_snapshot_progress_state,
     build_run_terminal_summary_state,
     build_unknown_intent_state,
+    build_workflow_node_failure_state,
     build_workspace_tool_state,
     emit_agent_roleplay_state,
     invoke_agent_graph,
     select_coding_next_node,
     select_agent_next_node,
 )
+from .run_summary_graph import summarize_run_record
 from .workflow_results import WorkflowAgentResult
 
 
@@ -53,20 +65,6 @@ class AgentState(TypedDict, total=False):
     workspace_tool_error: str | None
     workspace_tool_context: str | None
 
-
-def _resolve_run_snapshot_fields(
-    *,
-    run_id: str,
-    fallback_status: str,
-    fallback_summary: str,
-    fallback_next_action: str,
-) -> tuple[str, str, str]:
-    snapshot = get_run_snapshot(run_id)
-    if snapshot is None:
-        return fallback_status, fallback_summary, fallback_next_action
-    return snapshot.status, snapshot.summary, snapshot.next_action
-
-
 def router_node(state: AgentState) -> AgentState:
     prompt = state.get("user_input", "")
     intent = state.get("intent") or detect_intent(prompt)
@@ -74,6 +72,8 @@ def router_node(state: AgentState) -> AgentState:
 
 
 def route_by_intent(state: AgentState) -> str:
+    if str(state.get("ui_status") or "").strip() == "workflow_node_failed":
+        return "roleplay_node"
     return select_agent_next_node(state.get("intent"))
 
 
@@ -104,7 +104,8 @@ def run_tool_node(state: AgentState) -> AgentState:
     except Exception as exc:
         return build_run_creation_failure_state(state, error=str(exc))
 
-    status, snapshot_summary, next_action = _resolve_run_snapshot_fields(
+    status, snapshot_summary, next_action = resolve_run_snapshot_fields(
+        get_snapshot=get_run_snapshot,
         run_id=run.run_id,
         fallback_status=run.status,
         fallback_summary="任务已创建，等待后台执行。",
@@ -120,7 +121,7 @@ def run_tool_node(state: AgentState) -> AgentState:
 
 
 def run_snapshot_node(state: AgentState) -> AgentState:
-    target_run_id = str(state.get("target_run_id") or state.get("run_id") or "").strip()
+    target_run_id = resolve_target_run_id(state)
     if not target_run_id:
         return build_run_snapshot_failure_state(
             state,
@@ -137,19 +138,12 @@ def run_snapshot_node(state: AgentState) -> AgentState:
         )
 
     if snapshot.terminal:
-        run = get_run(target_run_id)
-        summary_text = snapshot.summary
-        output: str | None = None
-        if run is not None:
-            summary_result = summarize_run_record(
-                run.model_dump(),
-                emit_chat_message=False,
-            )
-            if summary_result.ok and summary_result.output.strip():
-                output = summary_result.output
-            if summary_result.summary_text.strip():
-                summary_text = summary_result.summary_text
-
+        summary_text, output = resolve_terminal_run_summary(
+            run_id=target_run_id,
+            snapshot_summary=snapshot.summary,
+            load_run=get_run,
+            summarize_run=summarize_run_record,
+        )
         return build_run_terminal_summary_state(
             state,
             run_id=target_run_id,
@@ -172,7 +166,7 @@ def run_snapshot_node(state: AgentState) -> AgentState:
 
 def run_control_node(state: AgentState) -> AgentState:
     action = str(state.get("run_action") or "").strip()
-    target_run_id = str(state.get("target_run_id") or state.get("run_id") or "").strip()
+    target_run_id = resolve_target_run_id(state)
     if not target_run_id:
         return build_run_control_failure_state(
             state,
@@ -182,19 +176,20 @@ def run_control_node(state: AgentState) -> AgentState:
         )
 
     try:
-        if action == RUN_ACTION_RETRY:
-            run = retry_run(target_run_id)
-        elif action == RUN_ACTION_RERUN:
-            run = rerun_run(target_run_id)
-        elif action == RUN_ACTION_CANCEL:
-            run = cancel_run(target_run_id)
-        else:
-            return build_run_control_failure_state(
-                state,
-                action=action,
-                run_id=target_run_id,
-                error="当前请求不属于支持的 run 控制动作。",
-            )
+        run = execute_run_control_action(
+            action=action,
+            target_run_id=target_run_id,
+            retry_action=retry_run,
+            rerun_action=rerun_run,
+            cancel_action=cancel_run,
+        )
+    except ValueError as exc:
+        return build_run_control_failure_state(
+            state,
+            action=action,
+            run_id=target_run_id,
+            error=str(exc),
+        )
     except Exception as exc:
         return build_run_control_failure_state(
             state,
@@ -203,16 +198,12 @@ def run_control_node(state: AgentState) -> AgentState:
             error=str(exc),
         )
 
-    fallback_next_action = (
-        "等待后台开始执行，然后继续查询任务状态。"
-        if action in {RUN_ACTION_RETRY, RUN_ACTION_RERUN}
-        else "任务状态已更新，可继续查询任务快照确认最终结果。"
-    )
-    status, snapshot_summary, next_action = _resolve_run_snapshot_fields(
+    status, snapshot_summary, next_action = resolve_run_snapshot_fields(
+        get_snapshot=get_run_snapshot,
         run_id=run.run_id,
         fallback_status=run.status,
         fallback_summary=run.output,
-        fallback_next_action=fallback_next_action,
+        fallback_next_action=build_run_control_fallback_next_action(action),
     )
     return build_run_control_success_state(
         state,
@@ -233,46 +224,30 @@ def unknown_node(state: AgentState) -> AgentState:
 def roleplay_node(state: AgentState) -> AgentState:
     return emit_agent_roleplay_state(state)
 
-
 def create_agent_graph():
     workflow = StateGraph(AgentState)
 
-    workflow.add_node("router", router_node)
-    workflow.add_node("chat_node", chat_node)
-    workflow.add_node("coding_node", coding_node)
-    workflow.add_node("workspace_tool_node", workspace_tool_node)
-    workflow.add_node("run_tool_node", run_tool_node)
-    workflow.add_node("run_snapshot_node", run_snapshot_node)
-    workflow.add_node("run_control_node", run_control_node)
-    workflow.add_node("unknown_node", unknown_node)
-    workflow.add_node("roleplay_node", roleplay_node)
-
-    workflow.set_entry_point("router")
-    workflow.add_conditional_edges(
-        "router",
-        route_by_intent,
-        {
-            "chat_node": "chat_node",
-            "coding_node": "coding_node",
-            "unknown_node": "unknown_node",
+    register_agent_graph_nodes(
+        workflow,
+        node_handlers={
+            "router": router_node,
+            "chat_node": chat_node,
+            "coding_node": coding_node,
+            "workspace_tool_node": workspace_tool_node,
+            "run_tool_node": run_tool_node,
+            "run_snapshot_node": run_snapshot_node,
+            "run_control_node": run_control_node,
+            "unknown_node": unknown_node,
+            "roleplay_node": roleplay_node,
         },
+        failure_builder=build_workflow_node_failure_state,
     )
-    workflow.add_edge("chat_node", "roleplay_node")
-    workflow.add_conditional_edges(
-        "coding_node",
-        select_coding_next_node,
-        {
-            "workspace_tool_node": "workspace_tool_node",
-            "run_snapshot_node": "run_snapshot_node",
-            "run_control_node": "run_control_node",
-        },
+    configure_agent_graph_edges(
+        workflow,
+        route_by_intent=route_by_intent,
+        select_coding_next_node=select_coding_next_node,
+        end_node=END,
     )
-    workflow.add_edge("workspace_tool_node", "run_tool_node")
-    workflow.add_edge("run_tool_node", "roleplay_node")
-    workflow.add_edge("run_snapshot_node", "roleplay_node")
-    workflow.add_edge("run_control_node", "roleplay_node")
-    workflow.add_edge("unknown_node", "roleplay_node")
-    workflow.add_edge("roleplay_node", END)
 
     return workflow.compile()
 

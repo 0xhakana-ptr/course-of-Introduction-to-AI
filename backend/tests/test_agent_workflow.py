@@ -1,4 +1,18 @@
 from backend.app.agent_workflow.agent_graph import run_agent
+from backend.app.agent_workflow.agent_graph_support import (
+    AGENT_CODING_EDGE_MAP,
+    AGENT_LINEAR_EDGES,
+    AGENT_ROUTER_EDGE_MAP,
+    configure_agent_graph_edges,
+    guard_node,
+    register_agent_graph_nodes,
+)
+from backend.app.agent_workflow.agent_run_support import (
+    build_run_control_fallback_next_action,
+    execute_run_control_action,
+    resolve_target_run_id,
+)
+from backend.app.agent_workflow.agent_state_support import normalize_optional_text
 from backend.app.agent_workflow.agent_support import (
     build_agent_initial_state,
     build_chat_result_state,
@@ -20,6 +34,7 @@ from backend.app.agent_workflow.agent_support import (
     select_coding_next_node,
     select_agent_next_node,
 )
+from backend.app.agent_workflow.agent_text_support import describe_run_action
 from backend.app.agent_workflow.roleplay import emit_roleplay_message, emit_roleplay_state
 from backend.app.agent_workflow.workflow_results import WorkflowAgentResult
 from backend.app.message_queue import message_queue
@@ -218,6 +233,24 @@ def test_agent_graph_routes_chat_intent_to_llm(monkeypatch):
     ]
 
 
+def test_agent_graph_captures_node_exception_with_trace(monkeypatch):
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.agent_graph.call_llm_sync",
+        lambda prompt, context: (_ for _ in ()).throw(RuntimeError("llm raised boom")),
+    )
+
+    result = run_agent("hello", None, intent="chat", emit_chat_message=False)
+
+    assert result.ok is False
+    assert result.intent == "chat"
+    assert result.ui_status == "workflow_node_failed"
+    assert result.error == "llm raised boom"
+    assert "chat_node" in result.output
+    assert result.workflow_trace[-2]["node"] == "chat_node"
+    assert result.workflow_trace[-2]["event"] == "node_exception"
+    assert result.workflow_trace[-1]["node"] == "roleplay_node"
+
+
 def test_agent_graph_routes_coding_intent_with_workspace_tool_context(monkeypatch):
     captured: dict[str, object] = {}
 
@@ -315,7 +348,7 @@ def test_intent_detection_can_identify_run_control_prompts():
 
 def test_agent_support_merges_context_sections_and_builds_tool_plan(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_support.plan_workspace_tool",
+        "backend.app.agent_workflow.agent_builder_support.plan_workspace_tool",
         lambda prompt: {
             "tool_name": "read_workspace_text",
             "tool_input": {"rel_path": "backend/app/demo.txt"},
@@ -380,9 +413,109 @@ def test_agent_support_builds_run_control_request_without_workspace_tool():
     assert select_coding_next_node(state) == "run_control_node"
 
 
+def test_agent_run_support_resolves_target_run_id():
+    state = {
+        "target_run_id": "run-target-1",
+        "run_id": "run-fallback-1",
+    }
+
+    assert resolve_target_run_id(state) == "run-target-1"
+    assert resolve_target_run_id({"run_id": "run-fallback-1"}) == "run-fallback-1"
+    assert resolve_target_run_id({}) == ""
+
+
+def test_agent_run_support_executes_control_action_and_fallback_text():
+    captured: dict[str, str] = {}
+
+    result = execute_run_control_action(
+        action="retry",
+        target_run_id="run-1",
+        retry_action=lambda run_id: captured.setdefault("run_id", run_id) or {"ok": True},
+        rerun_action=lambda run_id: {"mode": "rerun", "run_id": run_id},
+        cancel_action=lambda run_id: {"mode": "cancel", "run_id": run_id},
+    )
+
+    assert captured["run_id"] == "run-1"
+    assert result == "run-1"
+    assert build_run_control_fallback_next_action("retry") == "等待后台开始执行，然后继续查询任务状态。"
+    assert build_run_control_fallback_next_action("cancel") == "任务状态已更新，可继续查询任务快照确认最终结果。"
+
+
+def test_agent_text_and_state_support_helpers_expose_stable_utilities():
+    assert describe_run_action("cancel") == "取消"
+    assert describe_run_action("other") == "处理"
+    assert normalize_optional_text("  demo  ") == "demo"
+    assert normalize_optional_text("   ") is None
+
+
+def test_agent_graph_support_guard_node_wraps_exceptions():
+    wrapped = guard_node(
+        "chat_node",
+        lambda state: (_ for _ in ()).throw(RuntimeError("boom")),
+        failure_builder=lambda state, node_name, exc: {
+            "state": state,
+            "node_name": node_name,
+            "error": str(exc),
+        },
+    )
+
+    result = wrapped({"prompt": "hello"})
+
+    assert result["node_name"] == "chat_node"
+    assert result["error"] == "boom"
+    assert result["state"] == {"prompt": "hello"}
+
+
+def test_agent_graph_support_registers_nodes_and_edges():
+    class FakeWorkflow:
+        def __init__(self):
+            self.nodes: list[str] = []
+            self.entry_point: str | None = None
+            self.conditional_edges: list[tuple[str, dict[str, str]]] = []
+            self.edges: list[tuple[str, str]] = []
+
+        def add_node(self, node_name, handler):
+            self.nodes.append(node_name)
+
+        def set_entry_point(self, node_name):
+            self.entry_point = node_name
+
+        def add_conditional_edges(self, node_name, route_fn, edge_map):
+            self.conditional_edges.append((node_name, dict(edge_map)))
+
+        def add_edge(self, start_node, end_node):
+            self.edges.append((start_node, end_node))
+
+    workflow = FakeWorkflow()
+
+    register_agent_graph_nodes(
+        workflow,
+        node_handlers={
+            "router": lambda state: state,
+            "chat_node": lambda state: state,
+        },
+        failure_builder=lambda state, node_name, exc: state,
+    )
+    configure_agent_graph_edges(
+        workflow,
+        route_by_intent=lambda state: "chat_node",
+        select_coding_next_node=lambda state: "workspace_tool_node",
+        end_node="END",
+    )
+
+    assert workflow.nodes == ["router", "chat_node"]
+    assert workflow.entry_point == "router"
+    assert workflow.conditional_edges == [
+        ("router", AGENT_ROUTER_EDGE_MAP),
+        ("coding_node", AGENT_CODING_EDGE_MAP),
+    ]
+    assert workflow.edges[:-1] == list(AGENT_LINEAR_EDGES)
+    assert workflow.edges[-1] == ("roleplay_node", "END")
+
+
 def test_agent_support_builds_workspace_tool_state_and_merges_context(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_support.execute_workspace_tool_plan",
+        "backend.app.agent_workflow.agent_builder_support.execute_workspace_tool_plan",
         lambda plan: {
             "tool_name": "build_workspace_overview",
             "reason": "Provide a compact workspace overview before creating the run.",
@@ -413,7 +546,7 @@ def test_agent_support_builds_workspace_tool_state_and_merges_context(monkeypatc
 
 def test_agent_support_keeps_original_context_when_workspace_tool_fails(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_support.execute_workspace_tool_plan",
+        "backend.app.agent_workflow.agent_builder_support.execute_workspace_tool_plan",
         lambda plan: {
             "tool_name": "read_workspace_text",
             "reason": "Prompt references a workspace file path.",

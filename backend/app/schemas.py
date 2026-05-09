@@ -160,9 +160,49 @@ class AgentDiagnosticsRequest(BaseModel):
 class AgentWorkflowTraceEntry(BaseModel):
     step: int
     node: str
+    node_label: str | None = None
+    phase: str | None = None
     event: str
+    event_label: str | None = None
+    status_level: str | None = None
+    message: str | None = None
     ui_status: str | None = None
     details: dict[str, Any] | None = None
+
+
+class AgentWorkflowDebugSummary(BaseModel):
+    trace_count: int = 0
+    first_node: str | None = None
+    first_node_label: str | None = None
+    last_node: str | None = None
+    last_node_label: str | None = None
+    terminal_node: str | None = None
+    terminal_node_label: str | None = None
+    last_event: str | None = None
+    last_ui_status: str | None = None
+    last_phase: str | None = None
+    failure_node: str | None = None
+    failure_node_label: str | None = None
+    failure_event: str | None = None
+    failure_phase: str | None = None
+    failure_code: str | None = None
+    failure_domain: str | None = None
+    blocked: bool = False
+    error_present: bool = False
+
+
+class AgentWorkflowErrorContext(BaseModel):
+    message: str | None = None
+    error_type: str | None = None
+    summary: str | None = None
+    error_code: str | None = None
+    failure_domain: str | None = None
+    failure_node: str | None = None
+    failure_node_label: str | None = None
+    failure_event: str | None = None
+    failure_phase: str | None = None
+    last_ui_status: str | None = None
+    suggested_next_step: str | None = None
 
 
 class AgentDiagnosticsResponse(BaseModel):
@@ -178,6 +218,29 @@ class AgentDiagnosticsResponse(BaseModel):
     ui_status: str | None = None
     planned_nodes: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    debug_summary: AgentWorkflowDebugSummary | None = None
+    error_context: AgentWorkflowErrorContext | None = None
+    workflow_trace: list[AgentWorkflowTraceEntry] = Field(default_factory=list)
+
+
+class AgentRunDiagnosticsResponse(BaseModel):
+    ok: bool = True
+    prompt: str
+    intent: INTENT_TYPE
+    selected_route: str
+    run_action: str | None = None
+    executable: bool = False
+    executed: bool = False
+    blocked_reason: str | None = None
+    run_id: str | None = None
+    run_status: str | None = None
+    output: str | None = None
+    error: str | None = None
+    ui_status: str | None = None
+    planned_nodes: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    debug_summary: AgentWorkflowDebugSummary | None = None
+    error_context: AgentWorkflowErrorContext | None = None
     workflow_trace: list[AgentWorkflowTraceEntry] = Field(default_factory=list)
 
 
