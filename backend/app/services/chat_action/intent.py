@@ -311,4 +311,5 @@ def detect_intent(prompt: str) -> INTENT_TYPE:
         return "chat"
     if looks_like_chat_prompt(prompt):
         return "chat"
-    return "unknown"
+    # Default to chat for general questions
+    return "chat"
