@@ -1,6 +1,8 @@
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
+from .messaging.event_types import AGENT_EVENT_SOURCE, AGENT_EVENT_STAGE, AGENT_EVENT_TYPE
+
 
 INTENT_TYPE = Literal["chat", "coding", "unknown"]
 RUN_STATUS = Literal["queued", "running", "done", "failed", "cancelled"]
@@ -90,6 +92,10 @@ class MessageEnvelope(BaseModel):
     queue_timestamp: str | None = Field(default=None, alias="_timestamp")
     channel: MESSAGE_CHANNEL | None = Field(default=None, alias="_channel")
     type: MESSAGE_TYPE
+    event_type: AGENT_EVENT_TYPE | None = None
+    event_source: AGENT_EVENT_SOURCE | None = None
+    event_stage: AGENT_EVENT_STAGE | None = None
+    frontend_visible: bool | None = None
     timestamp: str | None = None
     node_name: str | None = None
     metadata: dict[str, Any] | None = None
@@ -163,6 +169,10 @@ class AgentWorkflowTraceEntry(BaseModel):
     node_label: str | None = None
     phase: str | None = None
     event: str
+    event_type: AGENT_EVENT_TYPE | None = None
+    event_source: AGENT_EVENT_SOURCE | None = None
+    event_stage: AGENT_EVENT_STAGE | None = None
+    frontend_visible: bool | None = None
     event_label: str | None = None
     status_level: str | None = None
     message: str | None = None
@@ -191,6 +201,18 @@ class AgentWorkflowDebugSummary(BaseModel):
     error_present: bool = False
 
 
+class AgentWorkflowRuntimeEventSummary(BaseModel):
+    event_count: int = 0
+    error_event_count: int = 0
+    frontend_visible_count: int = 0
+    last_event_type: str | None = None
+    last_event_source: str | None = None
+    last_event_stage: str | None = None
+    event_type_counts: dict[str, int] = Field(default_factory=dict)
+    event_source_counts: dict[str, int] = Field(default_factory=dict)
+    event_stage_counts: dict[str, int] = Field(default_factory=dict)
+
+
 class AgentWorkflowErrorContext(BaseModel):
     message: str | None = None
     error_type: str | None = None
@@ -205,6 +227,32 @@ class AgentWorkflowErrorContext(BaseModel):
     suggested_next_step: str | None = None
 
 
+class WorkspaceToolDescriptorInfo(BaseModel):
+    name: str
+    title: str
+    description: str
+    category: str
+    output_kind: str
+    input_keys: list[str] = Field(default_factory=list)
+
+
+class WorkspaceToolPlanInfo(BaseModel):
+    tool_name: str
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    reason: str | None = None
+
+
+class WorkspaceToolInfo(BaseModel):
+    name: str | None = None
+    title: str | None = None
+    reason: str | None = None
+    category: str | None = None
+    output_kind: str | None = None
+    error_code: str | None = None
+    descriptor: WorkspaceToolDescriptorInfo | None = None
+    plan: WorkspaceToolPlanInfo | None = None
+
+
 class AgentDiagnosticsResponse(BaseModel):
     ok: bool = True
     prompt: str
@@ -214,11 +262,17 @@ class AgentDiagnosticsResponse(BaseModel):
     target_run_id: str | None = None
     workspace_tool_name: str | None = None
     workspace_tool_reason: str | None = None
-    workspace_tool_plan: dict[str, Any] | None = None
+    workspace_tool_category: str | None = None
+    workspace_tool_output_kind: str | None = None
+    workspace_tool_error_code: str | None = None
+    workspace_tool_descriptor: WorkspaceToolDescriptorInfo | None = None
+    workspace_tool_plan: WorkspaceToolPlanInfo | None = None
+    workspace_tool: WorkspaceToolInfo | None = None
     ui_status: str | None = None
     planned_nodes: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     debug_summary: AgentWorkflowDebugSummary | None = None
+    runtime_event_summary: AgentWorkflowRuntimeEventSummary | None = None
     error_context: AgentWorkflowErrorContext | None = None
     workflow_trace: list[AgentWorkflowTraceEntry] = Field(default_factory=list)
 
@@ -236,10 +290,19 @@ class AgentRunDiagnosticsResponse(BaseModel):
     run_status: str | None = None
     output: str | None = None
     error: str | None = None
+    workspace_tool_name: str | None = None
+    workspace_tool_reason: str | None = None
+    workspace_tool_category: str | None = None
+    workspace_tool_output_kind: str | None = None
+    workspace_tool_error_code: str | None = None
+    workspace_tool_descriptor: WorkspaceToolDescriptorInfo | None = None
+    workspace_tool_plan: WorkspaceToolPlanInfo | None = None
+    workspace_tool: WorkspaceToolInfo | None = None
     ui_status: str | None = None
     planned_nodes: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     debug_summary: AgentWorkflowDebugSummary | None = None
+    runtime_event_summary: AgentWorkflowRuntimeEventSummary | None = None
     error_context: AgentWorkflowErrorContext | None = None
     workflow_trace: list[AgentWorkflowTraceEntry] = Field(default_factory=list)
 

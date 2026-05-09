@@ -248,6 +248,10 @@ def test_agent_graph_captures_node_exception_with_trace(monkeypatch):
     assert "chat_node" in result.output
     assert result.workflow_trace[-2]["node"] == "chat_node"
     assert result.workflow_trace[-2]["event"] == "node_exception"
+    assert result.workflow_trace[-2]["event_type"] == "workflow.node_exception"
+    assert result.workflow_trace[-2]["event_source"] == "chat"
+    assert result.workflow_trace[-2]["event_stage"] == "chat"
+    assert result.workflow_trace[-2]["frontend_visible"] is False
     assert result.workflow_trace[-1]["node"] == "roleplay_node"
 
 
@@ -326,7 +330,8 @@ def test_agent_support_selects_route_and_builds_unknown_output():
     output = build_unknown_intent_output("???")
 
     assert "你输入的内容是：???" in output
-    assert "聊天还是想让我帮你处理代码任务" in output
+    assert "如果你只是想聊天" in output
+    assert "如果你想让我处理代码任务" in output
 
 
 def test_intent_detection_can_identify_run_inspection_prompt():
@@ -369,6 +374,8 @@ def test_agent_support_merges_context_sections_and_builds_tool_plan(monkeypatch)
     assert merged_context == "client ctx\n\ntool ctx"
     assert state["context"] == "client ctx"
     assert state["workspace_tool_name"] == "read_workspace_text"
+    assert state["workspace_tool_category"] == "context"
+    assert state["workspace_tool_output_kind"] == "file_preview"
     assert state["workspace_tool_plan"] == {
         "tool_name": "read_workspace_text",
         "tool_input": {"rel_path": "backend/app/demo.txt"},
@@ -537,11 +544,21 @@ def test_agent_support_builds_workspace_tool_state_and_merges_context(monkeypatc
     state = build_workspace_tool_state(base_state)
 
     assert state["workspace_tool_name"] == "build_workspace_overview"
+    assert state["workspace_tool_category"] == "context"
+    assert state["workspace_tool_output_kind"] == "overview_text"
+    assert state["workspace_tool_error_code"] is None
     assert state["workspace_tool_error"] is None
     assert state["workspace_tool_context"] is not None
     assert "client ctx" in str(state["context"])
     assert "Workspace overview for the coding task:" in str(state["context"])
     assert state["ui_status"] == "workspace_tool_ready"
+    assert state["workflow_trace"][-1]["event"] == "workspace_tool_applied"
+    assert state["workflow_trace"][-1]["event_type"] == "tool.applied"
+    assert state["workflow_trace"][-1]["event_source"] == "tool"
+    assert state["workflow_trace"][-1]["event_stage"] == "tools"
+    assert state["workflow_trace"][-1]["details"]["tool_title"] == "工作区概览"
+    assert state["workflow_trace"][-1]["details"]["tool_category"] == "context"
+    assert state["workflow_trace"][-1]["details"]["tool_output_kind"] == "overview_text"
 
 
 def test_agent_support_keeps_original_context_when_workspace_tool_fails(monkeypatch):
@@ -569,8 +586,15 @@ def test_agent_support_keeps_original_context_when_workspace_tool_fails(monkeypa
     state = build_workspace_tool_state(base_state)
 
     assert state["context"] == "client ctx"
+    assert state["workspace_tool_category"] == "context"
+    assert state["workspace_tool_output_kind"] == "file_preview"
     assert state["workspace_tool_error"] == "boom"
     assert state["ui_status"] == "workspace_tool_failed"
+    assert state["workflow_trace"][-1]["event"] == "workspace_tool_failed"
+    assert state["workflow_trace"][-1]["event_type"] == "tool.failed"
+    assert state["workflow_trace"][-1]["event_source"] == "tool"
+    assert state["workflow_trace"][-1]["event_stage"] == "tools"
+    assert state["workflow_trace"][-1]["details"]["tool_title"] == "读取工作区文本"
 
 
 def test_agent_support_builds_run_snapshot_states():

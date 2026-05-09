@@ -1,0 +1,378 @@
+# 2026-05-09 后端 Agent Runtime 完善方案
+
+> 说明：本文核心内容已并入 [20260506-2.md](/abs/path/docs/plan/20260506-2.md) 作为主计划的一部分。
+> 后续执行与进度维护以 `20260506-2.md` 为主，本文保留为专项思路记录。
+
+## 1. 目标
+
+当前后端已经具备聊天、任务执行、消息推送、会话存储和基础 LangGraph 工作流能力。
+
+下一阶段的重点，不是继续单点堆接口，而是把这些已有能力收束成一个更稳定的 **Agent Runtime**：
+
+1. 大模型负责推理和生成。
+2. LangGraph 负责状态编排和节点流转。
+3. tools 负责受控执行。
+4. run 链路负责后台任务生命周期。
+5. message/event 链路负责把过程状态稳定传给桌宠前端。
+
+目标不是把后端做成通用平台，而是做成一个适合本项目的、本地优先、可调试、可扩展的桌宠后端运行时。
+
+## 2. 当前后端判断
+
+结合当前代码，已有基础主要包括：
+
+1. `backend/app/main.py` 已完成 app factory、router 挂载和启动恢复。
+2. `backend/app/services/chat_interface.py` 已承担聊天入口、意图识别、会话写回和 run 调度桥接。
+3. `backend/app/services/run_interface.py` 已承担 run 创建、执行、重试、重跑、取消、读取和恢复。
+4. `backend/app/agent_workflow/` 已承担 LangGraph 节点编排和 diagnostics。
+5. `backend/app/storage/conversation_store.py` 已承担轻量会话历史与摘要缓存。
+6. `backend/app/message_queue.py`、`backend/app/messaging/`、`backend/app/services/character_interface.py` 已承担消息输出与角色表现。
+7. `backend/app/tools/` 已提供安全文件系统、命令执行和 workspace tools。
+
+因此当前问题已经不是“有没有后端”，而是：
+
+1. 状态是否清晰分层。
+2. 事件是否统一建模。
+3. tools 是否以运行时方式管理。
+4. run、chat、workflow 是否还存在边界重复。
+5. 后续如果扩展子代理或更复杂图结构，当前骨架是否扛得住。
+
+## 3. 建议吸收的设计内容
+
+以下内容适合作为本项目后端下一阶段的设计原则。
+
+### 3.1 明确区分三类状态
+
+后端内部至少要区分三种状态，而不是把它们都混在一次响应里：
+
+1. 对话语义状态：用户说了什么、AI 回了什么、当前 session 的上下文是什么。
+2. 执行运行状态：当前走到哪个 workflow 节点、是否创建了 run、是否在修复、是否被取消。
+3. 前端展示事件状态：桌宠当前应表现为思考、回复、失败、完成、动作切换还是字幕更新。
+
+这意味着：
+
+1. `conversation_store` 继续只负责对话历史。
+2. `run_store` 继续只负责任务执行工件和状态。
+3. `message_queue` / `messaging` 继续只负责前端消费事件。
+4. `agent_workflow` 只处理编排和摘要状态，不直接替代前两者的存储职责。
+
+### 3.2 用事件流描述 Agent 过程，而不是只返回最终文本
+
+桌宠项目的后端不能只产出一句最终回复，因为前端需要知道过程。
+
+建议把关键过程统一事件化，例如：
+
+1. `chat.started`
+2. `chat.intent_detected`
+3. `workflow.node_entered`
+4. `tool.called`
+5. `tool.finished`
+6. `run.created`
+7. `run.started`
+8. `run.repair_started`
+9. `run.finished`
+10. `character.expression`
+11. `character.motion`
+12. `chat.completed`
+13. `chat.failed`
+
+这些事件不一定都直接暴露给前端，但后端内部应该先形成统一模型。
+
+### 3.3 把 tools 提升为统一运行时能力
+
+现在 `backend/app/tools/` 已经有一定基础，但下一步不应把 tools 继续当作零散 helper。
+
+建议逐步统一：
+
+1. 工具注册入口。
+2. 工具描述信息。
+3. 参数结构。
+4. 返回结果结构。
+5. 工具失败结构。
+6. 审批/拦截/安全校验入口。
+7. tool trace 和 diagnostics 输出。
+
+这会让 LangGraph 的 node 编排更干净，也能减少 `workspace_tools`、`run_action`、`safe_execute_command` 各自维护相似控制流的问题。
+
+### 3.4 保留“turn / step”视角组织 Agent 执行
+
+对本项目而言，不一定需要完整实现复杂 CLI Agent 的全部循环模型，但“用户一次输入是一个 turn、turn 内可能包含多个 step”的视角值得保留。
+
+建议在 `agent_workflow` 与 diagnostics 中逐步对齐这种粒度：
+
+1. `turn` 表示一次用户请求。
+2. `step` 表示一次图内的关键推进，例如路由、工具规划、run 创建、结果总结。
+3. `trace` 记录 step 级事件，而不是只有 node 名称。
+
+这样做的好处是：
+
+1. 更容易解释当前 Agent 到底做到哪一步。
+2. 更容易给前端稳定显示“正在思考 / 正在执行 / 正在修复”。
+3. 更容易为后续多节点、多阶段流程加诊断能力。
+
+### 3.5 为子代理预留“实例”概念，而不是只预留函数调用
+
+如果后续要扩展更复杂的 LangGraph 或多 Agent 协同，建议从现在开始在架构上承认“子代理实例”这个对象，而不是等到后面临时拼接。
+
+建议预留的最小字段：
+
+1. `agent_id`
+2. `agent_type`
+3. `status`
+4. `created_at`
+5. `updated_at`
+6. `last_run_id`
+7. `summary`
+8. `artifacts_path`
+
+当前阶段不必立刻把它做成可后台并行运行的完整系统，但数据结构与目录边界最好先留出来，避免后面把 run、tool、chat 状态继续硬塞进同一层。
+
+### 3.6 让上下文存储更接近“运行时资产”
+
+现有 `conversation_store` 已经比单纯 request context 更进一步，但下一步可以继续把上下文视为持久化运行时资产，而不是只当缓存。
+
+建议继续增强：
+
+1. 系统提示词与会话历史分离。
+2. 摘要缓存与最近消息分离。
+3. 会话 metadata 更明确。
+4. 为后续 checkpoint / rewind 预留最小扩展点。
+
+这不意味着现在就要做复杂撤销系统，而是要避免把所有上下文压成一个字符串字段。
+
+### 3.7 把“工程执行链路”和“角色表现链路”隔离
+
+这是桌宠项目里非常关键的一点。
+
+建议明确：
+
+1. `run` 错误日志、attempt 输出、repair 细节属于工程执行链路。
+2. `character_interface` 发送给桌宠的字幕、表情、动作属于角色表现链路。
+3. `agent_workflow` 的 roleplay / summary 只读取前者的摘要，不直接吞全部工程噪声。
+
+否则会出现两个问题：
+
+1. 角色回复会被底层错误细节污染。
+2. prompt/context 会迅速膨胀，难以稳定。
+
+## 4. 不建议照搬的内容
+
+为了避免后端架构过重，以下内容当前阶段不建议引入：
+
+1. 多 UI 模式并存的复杂启动体系。
+2. 大量 provider / SDK 的抽象兼容层。
+3. 过早引入 MCP 全量生态。
+4. OAuth、账号体系、远程同步。
+5. 过重的产品化 telemetry 平台。
+6. 与桌宠项目主线无关的 shell/terminal 交互能力。
+
+本项目当前需要的是“稳定的本地 Agent Runtime”，不是“完整通用 Agent 平台”。
+
+## 5. 对当前代码的具体落点
+
+### 5.1 `agent_workflow/`
+
+这里应继续承担：
+
+1. LangGraph 节点定义。
+2. 状态流转。
+3. tool / run / summary 编排。
+4. diagnostics 和 trace。
+
+这里不应继续承担：
+
+1. 低层 message queue 发送细节。
+2. 具体文件读写实现。
+3. run_store 的底层存取细节。
+4. 大量临时字符串拼装。
+
+### 5.2 `services/chat_interface.py`
+
+这里应继续作为聊天入口编排层，但应尽量保持薄：
+
+1. 接收 prompt 和 session。
+2. 生成有效上下文。
+3. 调用 Agent workflow。
+4. 触发必要的后台 run 调度。
+5. 结果写回 conversation。
+
+这里不应继续膨胀为：
+
+1. intent 规则库主体。
+2. roleplay 策略主体。
+3. run 状态读取中心。
+
+### 5.3 `services/run_interface.py`
+
+这里应继续承担 run 生命周期的外观层职责：
+
+1. create / retry / rerun / cancel
+2. execute
+3. recover
+4. snapshot / log / attempts query
+
+但建议继续把以下内容压缩在子模块边界里：
+
+1. lifecycle
+2. execution
+3. recovery
+4. formatters
+5. control
+
+避免 `run_interface.py` 再回到“大而全总控文件”的状态。
+
+### 5.4 `tools/`
+
+建议逐步形成统一 registry 或统一 descriptor，而不是只靠函数名散落调用。
+
+最低目标：
+
+1. 每个 tool 有稳定名字。
+2. 每个 tool 有输入 schema。
+3. 每个 tool 有输出 schema。
+4. 每个 tool 有错误码或失败类别。
+5. 每个 tool 有安全边界说明。
+
+### 5.5 `messaging/` 与 `message_queue.py`
+
+建议把它们逐步提升为“后端事件出口层”：
+
+1. 统一事件模型。
+2. 统一消息构造。
+3. 统一发送入口。
+4. 统一 type / payload 边界。
+
+不要让业务层继续手写过多零散消息体。
+
+## 6. 分阶段执行计划
+
+### P1：统一事件模型
+
+目标：先把后端内部的 Agent 过程事件统一下来。
+
+任务：
+
+1. 梳理当前 `message_queue`、`messaging`、`character_interface`、workflow trace 的事件种类。
+2. 定义一份统一的内部事件枚举和 payload 边界。
+3. 区分“前端可见事件”和“仅后端诊断事件”。
+4. 补充事件 schema 与回归测试。
+
+完成标志：
+
+1. 新增事件不再随意拼字段。
+2. chat / run / roleplay / diagnostics 至少共享一套稳定事件模型。
+
+### P2：工具运行时收口
+
+目标：让 tools 从零散 helper 提升为统一可编排能力。
+
+任务：
+
+1. 为核心 workspace tools 建立统一 descriptor。
+2. 统一 tool input / output / error 结构。
+3. 让 diagnostics 能直接看到 tool 调用轨迹。
+4. 收口重复的安全校验和错误包装逻辑。
+
+完成标志：
+
+1. `agent_workflow` 不再为每类工具单独写太多胶水代码。
+2. `tools/` 更接近统一运行时层。
+
+### P3：会话与上下文资产化
+
+目标：让聊天上下文成为稳定运行时资产，而不是只靠 request 拼接。
+
+任务：
+
+1. 继续整理 `conversation_store` 的 metadata 结构。
+2. 分离 system prompt、recent history、summary cache。
+3. 为后续 checkpoint / 回滚预留扩展字段。
+4. 补充会话读取和恢复测试。
+
+完成标志：
+
+1. session 数据结构更稳定。
+2. 长会话和角色人格更可控。
+
+### P4：run 与 workflow 的过程边界收口
+
+目标：让 `chat -> workflow -> run -> messages` 主链路更像统一运行时，而不是多层拼接。
+
+任务：
+
+1. 继续压缩 `chat_interface` 与 `run_interface` 的重复控制流。
+2. 明确哪些状态由 workflow 持有，哪些状态只由 run 持有。
+3. 统一 run 中间态与终态的摘要输出。
+4. 统一 workflow 对 run 的读取入口。
+
+完成标志：
+
+1. `create / inspect / retry / rerun / cancel` 五类动作边界清楚。
+2. roleplay 不再读取过多工程噪声。
+
+### P5：为子代理能力预留最小骨架
+
+目标：不立即做复杂多 Agent，但给未来保留正确扩展方向。
+
+任务：
+
+1. 设计最小 `agent instance` 结构。
+2. 定义实例状态和最小存储位置。
+3. 明确它与 run、session、tool 的关系。
+4. 先补文档和 schema，不急着全面接入执行链路。
+
+完成标志：
+
+1. 后续如要扩展子代理，不需要推翻现有 run/chat 边界。
+
+### P6：持续去冗余与模块边界收紧
+
+目标：在继续加功能的同时，防止 runtime 层再次膨胀。
+
+任务：
+
+1. 保持 graph 文件只做编排。
+2. 把重复状态拼装、trace 构造、文本骨架下沉到 support/helper。
+3. 限制 facade 文件重新塞回实现细节。
+4. 为边界重构补回归测试。
+
+完成标志：
+
+1. `agent_workflow`、`services/`、`tools/` 三层职责稳定。
+2. 后续功能增长不会再次把主文件堆大。
+
+## 7. 推荐执行顺序
+
+建议顺序如下：
+
+1. P1 统一事件模型
+2. P2 工具运行时收口
+3. P3 会话与上下文资产化
+4. P4 run 与 workflow 过程边界收口
+5. P5 子代理最小骨架预留
+6. P6 持续去冗余与模块边界收紧
+
+原因：
+
+1. 事件模型和工具模型先稳定，后面的 LangGraph 编排才不会一直返工。
+2. 会话和 run 边界先清晰，角色表现链路才容易稳定。
+3. 子代理能力属于后续扩展点，应建立在前四项稳定之后。
+
+## 8. 当前阶段结论
+
+当前后端方向总体是对的：
+
+1. 已经有 LangGraph 主线。
+2. 已经有 run 生命周期主线。
+3. 已经有会话存储和消息出口主线。
+4. 已经有安全 tools 主线。
+
+下一步真正该做的，不是再额外增加很多分散功能，而是把这些已有主线收束成一个更像 Agent Runtime 的后端结构。
+
+如果这一轮方案执行到位，后端会更接近以下状态：
+
+1. 模型只是大脑，不再被误当成 Agent 本体。
+2. LangGraph 真正成为编排中心。
+3. tools、run、message、session 各自职责更清晰。
+4. 桌宠前端收到的是稳定事件流，而不是临时拼接文本。
+5. 后续如需扩展子代理或更复杂行为，不需要推翻现有骨架。

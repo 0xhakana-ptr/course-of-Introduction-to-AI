@@ -1,4 +1,3 @@
-from collections.abc import Mapping
 from functools import partial
 
 from anyio import to_thread
@@ -9,6 +8,9 @@ from ..schemas import (
     AgentWorkflowDebugSummary,
     AgentWorkflowErrorContext,
     INTENT_TYPE,
+    WorkspaceToolDescriptorInfo,
+    WorkspaceToolInfo,
+    WorkspaceToolPlanInfo,
 )
 from ..services.chat_action.intent import detect_intent
 from .agent_support import (
@@ -20,6 +22,8 @@ from .agent_support import (
     select_coding_next_node,
 )
 from .diagnostics_support import (
+    WorkspaceToolSnapshot,
+    build_runtime_event_summary,
     build_failure_descriptor,
     find_failure_trace,
     normalize_trace_items,
@@ -72,6 +76,64 @@ def _build_preview_notes(
     return ["该输入会进入 coding_node，但当前未能解析出更细的后续分支。"]
 
 
+def _build_workspace_tool_descriptor_info(
+    snapshot: WorkspaceToolSnapshot,
+) -> WorkspaceToolDescriptorInfo | None:
+    if snapshot.descriptor is None:
+        return None
+    return WorkspaceToolDescriptorInfo.model_validate(snapshot.descriptor)
+
+
+def _build_workspace_tool_plan_info(
+    snapshot: WorkspaceToolSnapshot,
+) -> WorkspaceToolPlanInfo | None:
+    if snapshot.plan is None:
+        return None
+    return WorkspaceToolPlanInfo.model_validate(snapshot.plan)
+
+
+def _build_workspace_tool_info(
+    snapshot: WorkspaceToolSnapshot,
+) -> WorkspaceToolInfo | None:
+    if (
+        snapshot.name is None
+        and snapshot.reason is None
+        and snapshot.category is None
+        and snapshot.output_kind is None
+        and snapshot.error_code is None
+        and snapshot.descriptor is None
+        and snapshot.plan is None
+    ):
+        return None
+    return WorkspaceToolInfo(
+        name=snapshot.name,
+        title=snapshot.title,
+        reason=snapshot.reason,
+        category=snapshot.category,
+        output_kind=snapshot.output_kind,
+        error_code=snapshot.error_code,
+        descriptor=_build_workspace_tool_descriptor_info(snapshot),
+        plan=_build_workspace_tool_plan_info(snapshot),
+    )
+
+
+def _build_workspace_tool_response_kwargs(
+    snapshot: WorkspaceToolSnapshot,
+) -> dict[str, object]:
+    descriptor_info = _build_workspace_tool_descriptor_info(snapshot)
+    plan_info = _build_workspace_tool_plan_info(snapshot)
+    return {
+        "workspace_tool_name": snapshot.name,
+        "workspace_tool_reason": snapshot.reason,
+        "workspace_tool_category": snapshot.category,
+        "workspace_tool_output_kind": snapshot.output_kind,
+        "workspace_tool_error_code": snapshot.error_code,
+        "workspace_tool_descriptor": descriptor_info,
+        "workspace_tool_plan": plan_info,
+        "workspace_tool": _build_workspace_tool_info(snapshot),
+    }
+
+
 def _phase_suggested_next_step(phase: str, *, blocked: bool) -> str:
     if blocked:
         return "继续使用 preview 观察路径，或改成 inspect / chat 分支进行安全运行期诊断。"
@@ -109,10 +171,12 @@ def _build_debug_summary(
         if failure_item.get("phase") is not None
         else None
     )
+    failure_details = failure_item.get("details")
     failure_descriptor = build_failure_descriptor(
         error_type="blocked" if blocked else "workflow_error",
         failure_event=failure_event,
         failure_phase=failure_phase or "unknown",
+        failure_details=failure_details if isinstance(failure_details, dict) else None,
     ) if failure_event or blocked else None
     return AgentWorkflowDebugSummary(
         trace_count=len(trace_items),
@@ -177,16 +241,20 @@ def _build_error_context(
     error: str | None,
     blocked_reason: str | None,
     debug_summary: AgentWorkflowDebugSummary,
+    trace_items: list[dict[str, object]],
 ) -> AgentWorkflowErrorContext | None:
     if not error and not blocked_reason:
         return None
     message = error or blocked_reason
     error_type = "blocked" if blocked_reason and not error else "workflow_error"
     failure_phase = debug_summary.failure_phase or debug_summary.last_phase or "unknown"
+    failure_item = find_failure_trace(trace_items) or {}
+    failure_details = failure_item.get("details")
     descriptor = build_failure_descriptor(
         error_type=error_type,
         failure_event=debug_summary.failure_event,
         failure_phase=failure_phase,
+        failure_details=failure_details if isinstance(failure_details, dict) else None,
     )
     suggested_next_step = _phase_suggested_next_step(
         failure_phase,
@@ -271,6 +339,7 @@ def preview_agent_workflow(
         ui_status=str(final_state.get("ui_status")) if final_state.get("ui_status") is not None else None,
         blocked=False,
     )
+    tool_snapshot = WorkspaceToolSnapshot.from_state(final_state)
 
     return AgentDiagnosticsResponse(
         ok=True,
@@ -283,21 +352,7 @@ def preview_agent_workflow(
             if final_state.get("target_run_id") is not None
             else None
         ),
-        workspace_tool_name=(
-            str(final_state.get("workspace_tool_name"))
-            if final_state.get("workspace_tool_name") is not None
-            else None
-        ),
-        workspace_tool_reason=(
-            str(final_state.get("workspace_tool_reason"))
-            if final_state.get("workspace_tool_reason") is not None
-            else None
-        ),
-        workspace_tool_plan=(
-            dict(final_state.get("workspace_tool_plan"))
-            if isinstance(final_state.get("workspace_tool_plan"), Mapping)
-            else None
-        ),
+        **_build_workspace_tool_response_kwargs(tool_snapshot),
         ui_status=str(final_state.get("ui_status")) if final_state.get("ui_status") is not None else None,
         planned_nodes=_build_planned_nodes(selected_route, coding_next_node),
         notes=_build_preview_notes(
@@ -306,6 +361,7 @@ def preview_agent_workflow(
             run_action=str(final_state.get("run_action")) if final_state.get("run_action") is not None else None,
         ),
         debug_summary=debug_summary,
+        runtime_event_summary=build_runtime_event_summary(trace_items),
         error_context=None,
         workflow_trace=trace_items,
     )
@@ -322,6 +378,20 @@ async def run_agent_workflow_diagnostics(
         prompt=prompt,
         context=normalized_context,
         intent=intent,
+    )
+    preview_tool_snapshot = WorkspaceToolSnapshot(
+        name=preview.workspace_tool_name,
+        title=preview.workspace_tool.title if preview.workspace_tool is not None else None,
+        reason=preview.workspace_tool_reason,
+        category=preview.workspace_tool_category,
+        output_kind=preview.workspace_tool_output_kind,
+        error_code=preview.workspace_tool_error_code,
+        descriptor=(
+            preview.workspace_tool_descriptor.model_dump(mode="python")
+            if preview.workspace_tool_descriptor is not None
+            else None
+        ),
+        plan=dict(preview.workspace_tool_plan) if preview.workspace_tool_plan is not None else None,
     )
     executable, blocked_reason = _is_runtime_executable(preview)
     if not executable:
@@ -341,14 +411,17 @@ async def run_agent_workflow_diagnostics(
             executable=False,
             executed=False,
             blocked_reason=blocked_reason,
+            **_build_workspace_tool_response_kwargs(preview_tool_snapshot),
             ui_status=preview.ui_status,
             planned_nodes=list(preview.planned_nodes),
             notes=list(preview.notes),
             debug_summary=debug_summary,
+            runtime_event_summary=build_runtime_event_summary(preview_trace),
             error_context=_build_error_context(
                 error=None,
                 blocked_reason=blocked_reason,
                 debug_summary=debug_summary,
+                trace_items=preview_trace,
             ),
             workflow_trace=preview_trace,
         )
@@ -370,6 +443,12 @@ async def run_agent_workflow_diagnostics(
         ui_status=result.ui_status,
         blocked=False,
     )
+    response_trace = runtime_trace or normalize_trace_items(
+        [item.model_dump() for item in preview.workflow_trace]
+    )
+    runtime_tool_snapshot = WorkspaceToolSnapshot.from_state(result.state).merged_with(
+        preview_tool_snapshot
+    )
     return AgentRunDiagnosticsResponse(
         ok=result.ok,
         prompt=preview.prompt,
@@ -383,16 +462,17 @@ async def run_agent_workflow_diagnostics(
         run_status=result.run_status,
         output=result.output or None,
         error=result.error,
+        **_build_workspace_tool_response_kwargs(runtime_tool_snapshot),
         ui_status=result.ui_status,
         planned_nodes=list(preview.planned_nodes),
         notes=list(preview.notes),
         debug_summary=debug_summary,
+        runtime_event_summary=build_runtime_event_summary(response_trace),
         error_context=_build_error_context(
             error=result.error,
             blocked_reason=None,
             debug_summary=debug_summary,
+            trace_items=response_trace,
         ),
-        workflow_trace=runtime_trace or normalize_trace_items(
-            [item.model_dump() for item in preview.workflow_trace]
-        ),
+        workflow_trace=response_trace,
     )

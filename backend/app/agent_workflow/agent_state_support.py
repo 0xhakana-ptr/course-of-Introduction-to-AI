@@ -2,6 +2,7 @@ import logging
 from collections.abc import Mapping
 
 from .roleplay import emit_roleplay_state
+from .trace_runtime import build_trace_runtime_event_fields
 from .workflow_nodes import AGENT_ROLEPLAY_NODE
 from .workflow_results import WorkflowAgentResult, invoke_graph_with_result
 from ..schemas import INTENT_TYPE
@@ -46,6 +47,11 @@ def append_workflow_trace(
             "step": len(trace) + 1,
             "node": node,
             "event": event,
+            **build_trace_runtime_event_fields(
+                node=node,
+                event=event,
+                frontend_visible=False,
+            ),
             "ui_status": ui_status,
             "details": dict(details) if details else None,
         }
@@ -191,6 +197,10 @@ def build_agent_initial_state(
         "workspace_tool_plan": None,
         "workspace_tool_name": None,
         "workspace_tool_reason": None,
+        "workspace_tool_descriptor": None,
+        "workspace_tool_category": None,
+        "workspace_tool_output_kind": None,
+        "workspace_tool_error_code": None,
         "workspace_tool_error": None,
         "workspace_tool_context": None,
     }

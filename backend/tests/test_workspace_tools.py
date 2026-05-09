@@ -3,17 +3,25 @@ from backend.app.tools.workspace_tools import (
     WORKSPACE_TOOL_NAME_OVERVIEW,
     WORKSPACE_TOOL_NAME_READ,
     WORKSPACE_TOOL_NAME_TEST,
+    WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW,
+    WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW,
+    WORKSPACE_TOOL_ERROR_UNREGISTERED,
     build_workspace_tool_context,
     build_workspace_overview,
     execute_workspace_tool_plan,
+    get_workspace_tool_descriptor,
     get_workspace_tool_definition,
+    list_workspace_tool_descriptors,
     list_workspace_entries,
     list_workspace_tool_names,
+    normalize_workspace_tool_plan,
+    normalize_workspace_tool_result,
     plan_workspace_tool,
     read_workspace_text,
     run_workspace_tests,
     summarize_command_failure,
 )
+from backend.app.tools.workspace_tool_models import WorkspaceToolPlan
 
 
 def test_workspace_tools_can_list_entries_and_read_text_preview():
@@ -82,6 +90,9 @@ def test_workspace_tool_planning_can_select_file_preview():
     assert plan["tool_input"] == {"rel_path": "backend/app/demo.txt"}
     assert result["ok"] is True
     assert result["tool_input"] == {"rel_path": "backend/app/demo.txt"}
+    assert result["tool_category"] == "context"
+    assert result["tool_output_kind"] == WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW
+    assert result["tool_error_code"] is None
     assert context is not None
     assert "Workspace file preview (backend/app/demo.txt)" in context
     assert "demo content" in context
@@ -116,12 +127,59 @@ def test_workspace_tool_planning_falls_back_to_workspace_overview():
 def test_workspace_tool_registry_can_resolve_registered_tools():
     names = list_workspace_tool_names()
     read_tool = get_workspace_tool_definition(WORKSPACE_TOOL_NAME_READ)
+    read_descriptor = get_workspace_tool_descriptor(WORKSPACE_TOOL_NAME_READ)
+    descriptors = list_workspace_tool_descriptors()
 
     assert WORKSPACE_TOOL_NAME_OVERVIEW in names
     assert WORKSPACE_TOOL_NAME_READ in names
     assert WORKSPACE_TOOL_NAME_TEST in names
     assert read_tool is not None
     assert read_tool.name == WORKSPACE_TOOL_NAME_READ
+    assert read_descriptor is not None
+    assert read_descriptor["category"] == "context"
+    assert read_descriptor["output_kind"] == WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW
+    assert any(item["name"] == WORKSPACE_TOOL_NAME_OVERVIEW for item in descriptors)
+    overview_descriptor = next(
+        item for item in descriptors if item["name"] == WORKSPACE_TOOL_NAME_OVERVIEW
+    )
+    assert overview_descriptor["output_kind"] == WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW
+
+
+def test_workspace_tool_helpers_normalize_plan_and_result_models():
+    plan_model = normalize_workspace_tool_plan(
+        {
+            "tool_name": "read_workspace_text",
+            "tool_input": {"rel_path": "backend/app/main.py"},
+            "reason": "Prompt references a workspace file path.",
+        }
+    )
+    assert plan_model is not None
+    assert plan_model.tool_name == "read_workspace_text"
+    assert plan_model.tool_input == {"rel_path": "backend/app/main.py"}
+
+    normalized_result = normalize_workspace_tool_result(
+        {
+            "tool_name": "read_workspace_text",
+            "tool_input": {"rel_path": "backend/app/main.py"},
+            "ok": True,
+            "reason": "Prompt references a workspace file path.",
+            "tool_category": "context",
+            "tool_output_kind": "file_preview",
+            "tool_descriptor": get_workspace_tool_descriptor("read_workspace_text"),
+            "summary": "Workspace file preview (backend/app/main.py):\nhello",
+        }
+    )
+    assert normalized_result.tool_name == "read_workspace_text"
+    assert normalized_result.tool_input == {"rel_path": "backend/app/main.py"}
+    assert normalized_result.tool_descriptor is not None
+    assert normalized_result.tool_descriptor.name == "read_workspace_text"
+
+    direct_plan = WorkspaceToolPlan(
+        tool_name="build_workspace_overview",
+        tool_input={"rel_path": "."},
+        reason="Provide a compact workspace overview before creating the run.",
+    )
+    assert normalize_workspace_tool_plan(direct_plan) is direct_plan
 
 
 def test_workspace_tool_execution_reports_unregistered_tool():
@@ -135,4 +193,6 @@ def test_workspace_tool_execution_reports_unregistered_tool():
 
     assert result["ok"] is False
     assert result["tool_input"] == {"rel_path": "."}
+    assert result["tool_error_code"] == WORKSPACE_TOOL_ERROR_UNREGISTERED
+    assert result["tool_descriptor"] is None
     assert "not registered" in str(result["summary"])

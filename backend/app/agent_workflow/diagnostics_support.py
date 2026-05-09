@@ -1,6 +1,78 @@
 from collections.abc import Mapping
+from dataclasses import dataclass
 
+from ..schemas import AgentWorkflowRuntimeEventSummary
+from ..tools.workspace_tool_models import WorkspaceToolDescriptor
+from ..tools.workspace_tools import (
+    get_workspace_tool_descriptor,
+    normalize_workspace_tool_plan,
+    WORKSPACE_TOOL_ERROR_EXECUTION_FAILED,
+    WORKSPACE_TOOL_ERROR_UNREGISTERED,
+)
+from .trace_runtime import build_trace_runtime_event_fields
 from .workflow_nodes import get_workflow_node_metadata
+
+
+def _normalize_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+@dataclass(slots=True)
+class WorkspaceToolSnapshot:
+    name: str | None = None
+    title: str | None = None
+    reason: str | None = None
+    category: str | None = None
+    output_kind: str | None = None
+    error_code: str | None = None
+    descriptor: dict[str, object] | None = None
+    plan: dict[str, object] | None = None
+
+    @classmethod
+    def from_state(cls, state: Mapping[str, object]) -> "WorkspaceToolSnapshot":
+        tool_name = _normalize_optional_text(state.get("workspace_tool_name"))
+        descriptor_model = WorkspaceToolDescriptor.from_value(
+            state.get("workspace_tool_descriptor")
+        )
+        if descriptor_model is None and tool_name is not None:
+            descriptor_model = WorkspaceToolDescriptor.from_value(
+                get_workspace_tool_descriptor(tool_name)
+            )
+
+        plan_model = normalize_workspace_tool_plan(state.get("workspace_tool_plan"))
+        return cls(
+            name=tool_name,
+            title=descriptor_model.title if descriptor_model is not None else None,
+            reason=_normalize_optional_text(state.get("workspace_tool_reason")),
+            category=(
+                _normalize_optional_text(state.get("workspace_tool_category"))
+                or (descriptor_model.category if descriptor_model is not None else None)
+            ),
+            output_kind=(
+                _normalize_optional_text(state.get("workspace_tool_output_kind"))
+                or (descriptor_model.output_kind if descriptor_model is not None else None)
+            ),
+            error_code=_normalize_optional_text(state.get("workspace_tool_error_code")),
+            descriptor=descriptor_model.as_dict() if descriptor_model is not None else None,
+            plan=plan_model.as_dict() if plan_model is not None else None,
+        )
+
+    def merged_with(self, fallback: "WorkspaceToolSnapshot | None") -> "WorkspaceToolSnapshot":
+        if fallback is None:
+            return self
+        return WorkspaceToolSnapshot(
+            name=self.name or fallback.name,
+            title=self.title or fallback.title,
+            reason=self.reason or fallback.reason,
+            category=self.category or fallback.category,
+            output_kind=self.output_kind or fallback.output_kind,
+            error_code=self.error_code or fallback.error_code,
+            descriptor=self.descriptor or fallback.descriptor,
+            plan=self.plan or fallback.plan,
+        )
 
 
 def build_failure_descriptor(
@@ -8,6 +80,7 @@ def build_failure_descriptor(
     error_type: str,
     failure_event: str | None,
     failure_phase: str,
+    failure_details: Mapping[str, object] | None = None,
 ) -> dict[str, str]:
     if error_type == "blocked":
         return {
@@ -23,16 +96,46 @@ def build_failure_descriptor(
             "failure_domain": "workflow_node",
         }
 
+    if failure_event == "workspace_tool_failed":
+        tool_error_code = _normalize_optional_text(
+            failure_details.get("tool_error_code")
+            if isinstance(failure_details, Mapping)
+            else None
+        )
+        tool_name = _normalize_optional_text(
+            failure_details.get("tool_name")
+            if isinstance(failure_details, Mapping)
+            else None
+        )
+        tool_title = _normalize_optional_text(
+            failure_details.get("tool_title")
+            if isinstance(failure_details, Mapping)
+            else None
+        )
+        tool_label = tool_title or tool_name or "工作区工具"
+        if tool_error_code == WORKSPACE_TOOL_ERROR_UNREGISTERED:
+            return {
+                "summary": f"{tool_label}未注册，无法执行当前工具规划。",
+                "error_code": WORKSPACE_TOOL_ERROR_UNREGISTERED,
+                "failure_domain": "workspace_tool_registry",
+            }
+        if tool_error_code == WORKSPACE_TOOL_ERROR_EXECUTION_FAILED:
+            return {
+                "summary": f"{tool_label}执行失败。",
+                "error_code": WORKSPACE_TOOL_ERROR_EXECUTION_FAILED,
+                "failure_domain": "workspace_tool_execution",
+            }
+        return {
+            "summary": f"{tool_label}执行失败。",
+            "error_code": "WORKSPACE_TOOL_FAILED",
+            "failure_domain": "workspace_tool",
+        }
+
     descriptor_by_event = {
         "llm_response_failed": {
             "summary": "聊天节点返回了失败结果。",
             "error_code": "CHAT_LLM_RESPONSE_FAILED",
             "failure_domain": "llm",
-        },
-        "workspace_tool_failed": {
-            "summary": "工作区工具执行失败。",
-            "error_code": "WORKSPACE_TOOL_FAILED",
-            "failure_domain": "workspace_tool",
         },
         "run_create_failed": {
             "summary": "代码任务创建失败。",
@@ -160,16 +263,48 @@ def build_trace_message(item: Mapping[str, object]) -> str | None:
     if event == "coding_request_prepared":
         run_action = str(detail_map.get("run_action") or "create").strip()
         target_run_id = str(detail_map.get("target_run_id") or "").strip()
+        tool_name = str(detail_map.get("workspace_tool_name") or "").strip()
+        tool_title = str(detail_map.get("workspace_tool_title") or "").strip()
+        tool_category = str(detail_map.get("workspace_tool_category") or "").strip()
+        tool_output_kind = str(detail_map.get("workspace_tool_output_kind") or "").strip()
         if target_run_id:
             return f"{node_label}已解析 coding 请求，动作为 `{run_action}`，目标 run_id 为 `{target_run_id}`。"
+        if tool_name:
+            tool_text = f"`{tool_name}`"
+            if tool_title:
+                tool_text += f"（{tool_title}）"
+            if tool_category and tool_output_kind:
+                tool_text += f"，类别 `{tool_category}`，输出 `{tool_output_kind}`"
+            return f"{node_label}已解析 coding 请求，动作为 `{run_action}`，并规划工作区工具 {tool_text}。"
         return f"{node_label}已解析 coding 请求，动作为 `{run_action}`。"
     if event == "workspace_tool_applied":
         tool_name = str(detail_map.get("tool_name") or "unknown").strip()
-        return f"{node_label}已执行工作区工具 `{tool_name}` 并补充上下文。"
+        tool_title = str(detail_map.get("tool_title") or "").strip()
+        tool_category = str(detail_map.get("tool_category") or "").strip()
+        tool_output_kind = str(detail_map.get("tool_output_kind") or "").strip()
+        tool_text = f"`{tool_name}`"
+        if tool_title:
+            tool_text += f"（{tool_title}）"
+        if tool_category and tool_output_kind:
+            return (
+                f"{node_label}已执行工作区工具 {tool_text}，"
+                f"类别为 `{tool_category}`，输出为 `{tool_output_kind}`，并补充上下文。"
+            )
+        return f"{node_label}已执行工作区工具 {tool_text} 并补充上下文。"
     if event == "workspace_tool_failed":
         tool_name = str(detail_map.get("tool_name") or "unknown").strip()
-        return f"{node_label}执行工作区工具 `{tool_name}` 时失败。"
+        tool_title = str(detail_map.get("tool_title") or "").strip()
+        tool_error_code = str(detail_map.get("tool_error_code") or "").strip()
+        tool_text = f"`{tool_name}`"
+        if tool_title:
+            tool_text += f"（{tool_title}）"
+        if tool_error_code:
+            return f"{node_label}执行工作区工具 {tool_text} 时失败，错误码为 `{tool_error_code}`。"
+        return f"{node_label}执行工作区工具 {tool_text} 时失败。"
     if event == "workspace_tool_skipped":
+        reason = str(detail_map.get("reason") or "").strip()
+        if reason:
+            return f"{node_label}当前跳过工作区工具，原因：{reason}"
         return f"{node_label}当前未选择工作区工具，直接进入后续流程。"
     if event == "run_created":
         run_id = str(detail_map.get("run_id") or "").strip()
@@ -224,6 +359,14 @@ def enrich_trace_item(item: Mapping[str, object]) -> dict[str, object]:
     enriched_item["node_label"] = metadata.get("label")
     enriched_item["phase"] = metadata.get("phase")
     event = str(item.get("event") or "").strip()
+    runtime_fields = build_trace_runtime_event_fields(
+        node=str(item.get("node") or ""),
+        event=event,
+        frontend_visible=bool(item.get("frontend_visible", False)),
+    )
+    for key, value in runtime_fields.items():
+        if enriched_item.get(key) is None:
+            enriched_item[key] = value
     enriched_item["event_label"] = build_trace_event_label(event)
     enriched_item["status_level"] = build_trace_status_level(event)
     enriched_item["message"] = build_trace_message(enriched_item)
@@ -255,3 +398,44 @@ def find_failure_trace(trace_items: list[dict[str, object]]) -> dict[str, object
         if "failed" in event or "exception" in event or has_error:
             return item
     return None
+
+
+def build_runtime_event_summary(
+    trace_items: list[dict[str, object]],
+) -> AgentWorkflowRuntimeEventSummary:
+    event_type_counts: dict[str, int] = {}
+    event_source_counts: dict[str, int] = {}
+    event_stage_counts: dict[str, int] = {}
+    error_event_count = 0
+    frontend_visible_count = 0
+
+    for item in trace_items:
+        event_type = _normalize_optional_text(item.get("event_type"))
+        event_source = _normalize_optional_text(item.get("event_source"))
+        event_stage = _normalize_optional_text(item.get("event_stage"))
+        status_level = _normalize_optional_text(item.get("status_level"))
+        frontend_visible = bool(item.get("frontend_visible"))
+
+        if event_type is not None:
+            event_type_counts[event_type] = event_type_counts.get(event_type, 0) + 1
+        if event_source is not None:
+            event_source_counts[event_source] = event_source_counts.get(event_source, 0) + 1
+        if event_stage is not None:
+            event_stage_counts[event_stage] = event_stage_counts.get(event_stage, 0) + 1
+        if status_level == "error":
+            error_event_count += 1
+        if frontend_visible:
+            frontend_visible_count += 1
+
+    last_item = trace_items[-1] if trace_items else {}
+    return AgentWorkflowRuntimeEventSummary(
+        event_count=len(trace_items),
+        error_event_count=error_event_count,
+        frontend_visible_count=frontend_visible_count,
+        last_event_type=_normalize_optional_text(last_item.get("event_type")),
+        last_event_source=_normalize_optional_text(last_item.get("event_source")),
+        last_event_stage=_normalize_optional_text(last_item.get("event_stage")),
+        event_type_counts=event_type_counts,
+        event_source_counts=event_source_counts,
+        event_stage_counts=event_stage_counts,
+    )

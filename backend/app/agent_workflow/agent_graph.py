@@ -62,6 +62,10 @@ class AgentState(TypedDict, total=False):
     workspace_tool_plan: dict[str, object] | None
     workspace_tool_name: str | None
     workspace_tool_reason: str | None
+    workspace_tool_descriptor: dict[str, object] | None
+    workspace_tool_category: str | None
+    workspace_tool_output_kind: str | None
+    workspace_tool_error_code: str | None
     workspace_tool_error: str | None
     workspace_tool_context: str | None
 

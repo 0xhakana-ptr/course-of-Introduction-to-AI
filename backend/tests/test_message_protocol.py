@@ -12,6 +12,10 @@ def test_message_envelope_accepts_motion_message():
             "_timestamp": "2026-05-07T00:00:00Z",
             "_channel": "agent:motion",
             "type": "motion",
+            "event_type": "character.motion",
+            "event_source": "character",
+            "event_stage": "roleplay",
+            "frontend_visible": True,
             "motion": "motion/@group/Idle/0",
             "node_name": "idle",
             "metadata": {"loop": False},
@@ -20,6 +24,9 @@ def test_message_envelope_accepts_motion_message():
 
     assert envelope.channel == "agent:motion"
     assert envelope.type == "motion"
+    assert envelope.event_type == "character.motion"
+    assert envelope.event_source == "character"
+    assert envelope.event_stage == "roleplay"
     assert envelope.motion == "motion/@group/Idle/0"
 
 
@@ -36,6 +43,9 @@ def test_message_sender_queues_motion_message(monkeypatch):
     assert len(messages) == 1
     assert messages[0]["_channel"] == "agent:motion"
     assert messages[0]["type"] == "motion"
+    assert messages[0]["event_type"] == "character.motion"
+    assert messages[0]["event_source"] == "character"
+    assert messages[0]["event_stage"] == "roleplay"
     assert messages[0]["motion"] == "motion/@group/Idle/0"
     assert messages[0]["metadata"]["loop"] is False
 
@@ -53,6 +63,9 @@ def test_message_sender_queues_chat_message_with_top_level_node_name(monkeypatch
     assert len(messages) == 1
     assert messages[0]["_channel"] == "agent:chat"
     assert messages[0]["type"] == "chat"
+    assert messages[0]["event_type"] == "chat.message"
+    assert messages[0]["event_source"] == "roleplay"
+    assert messages[0]["event_stage"] == "roleplay"
     assert messages[0]["node_name"] == "agent_roleplay"
     assert messages[0]["metadata"]["node_name"] == "agent_roleplay"
 
@@ -62,6 +75,10 @@ def test_messages_route_exposes_motion_protocol(client):
         {
             "_channel": "agent:motion",
             "type": "motion",
+            "event_type": "character.motion",
+            "event_source": "character",
+            "event_stage": "roleplay",
+            "frontend_visible": True,
             "motion": "motion/@group/Idle/0",
             "node_name": "idle",
             "metadata": {"loop": False},
@@ -76,4 +93,8 @@ def test_messages_route_exposes_motion_protocol(client):
     assert payload["count"] == 1
     assert payload["messages"][0]["_channel"] == "agent:motion"
     assert payload["messages"][0]["type"] == "motion"
+    assert payload["messages"][0]["event_type"] == "character.motion"
+    assert payload["messages"][0]["event_source"] == "character"
+    assert payload["messages"][0]["event_stage"] == "roleplay"
+    assert payload["messages"][0]["frontend_visible"] is True
     assert payload["messages"][0]["motion"] == "motion/@group/Idle/0"

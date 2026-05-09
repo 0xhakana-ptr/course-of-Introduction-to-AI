@@ -41,9 +41,9 @@ def build_run_creation_output_with_snapshot(
 
 def build_unknown_intent_output(prompt: str) -> str:
     return (
-        "抱歉，我暂时还不能很好地判断你的意图。\n\n"
+        "我这次没有完全听懂你的意思。\n\n"
         f"你输入的内容是：{prompt}\n\n"
-        "你可以继续补充信息，或者明确说明你是想聊天还是想让我帮你处理代码任务。"
+        "如果你只是想聊天，可以直接继续说；如果你想让我处理代码任务，可以补充目标、文件、报错或 run_id。"
     )
 
 

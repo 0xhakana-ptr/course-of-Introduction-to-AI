@@ -20,9 +20,13 @@ from .agent_text_support import (
     build_unknown_intent_output,
 )
 from ..services.chat_action.intent import detect_run_action, extract_run_reference
+from ..tools.workspace_tool_models import WorkspaceToolDescriptor
 from ..tools.workspace_tools import (
     build_workspace_tool_context,
     execute_workspace_tool_plan,
+    get_workspace_tool_descriptor,
+    normalize_workspace_tool_plan,
+    normalize_workspace_tool_result,
     plan_workspace_tool,
 )
 
@@ -31,18 +35,41 @@ def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, objec
     prompt = str(state.get("user_input") or "")
     run_action = detect_run_action(prompt)
     target_run_id = extract_run_reference(prompt) if run_action != RUN_ACTION_CREATE else None
-    tool_plan = plan_workspace_tool(prompt) if run_action == RUN_ACTION_CREATE else None
+    tool_plan_model = (
+        normalize_workspace_tool_plan(plan_workspace_tool(prompt))
+        if run_action == RUN_ACTION_CREATE
+        else None
+    )
     workspace_tool_name = None
     workspace_tool_reason = None
-    if isinstance(tool_plan, Mapping):
-        workspace_tool_name = normalize_optional_text(tool_plan.get("tool_name"))
-        workspace_tool_reason = normalize_optional_text(tool_plan.get("reason"))
+    workspace_tool_descriptor = None
+    workspace_tool_title = None
+    workspace_tool_category = None
+    workspace_tool_output_kind = None
+    if tool_plan_model is not None:
+        workspace_tool_name = normalize_optional_text(tool_plan_model.tool_name)
+        workspace_tool_reason = normalize_optional_text(tool_plan_model.reason)
+        if workspace_tool_name is not None:
+            descriptor_model = WorkspaceToolDescriptor.from_value(
+                get_workspace_tool_descriptor(workspace_tool_name)
+            )
+            if descriptor_model is not None:
+                workspace_tool_descriptor = descriptor_model.as_dict()
+                workspace_tool_title = normalize_optional_text(descriptor_model.title)
+                workspace_tool_category = normalize_optional_text(descriptor_model.category)
+                workspace_tool_output_kind = normalize_optional_text(
+                    descriptor_model.output_kind
+                )
 
     next_state = merge_agent_state(
         state,
-        workspace_tool_plan=tool_plan,
+        workspace_tool_plan=tool_plan_model.as_dict() if tool_plan_model is not None else None,
         workspace_tool_name=workspace_tool_name,
         workspace_tool_reason=workspace_tool_reason,
+        workspace_tool_descriptor=workspace_tool_descriptor,
+        workspace_tool_category=workspace_tool_category,
+        workspace_tool_output_kind=workspace_tool_output_kind,
+        workspace_tool_error_code=None,
         workspace_tool_error=None,
         workspace_tool_context=None,
         run_action=run_action,
@@ -58,17 +85,25 @@ def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, objec
             "run_action": run_action,
             "target_run_id": target_run_id,
             "workspace_tool_name": workspace_tool_name,
+            "workspace_tool_title": workspace_tool_title,
+            "workspace_tool_reason": workspace_tool_reason,
+            "workspace_tool_category": workspace_tool_category,
+            "workspace_tool_output_kind": workspace_tool_output_kind,
         },
     )
 
 
 def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]:
-    tool_plan = state.get("workspace_tool_plan")
-    if not isinstance(tool_plan, Mapping):
+    tool_plan_model = normalize_workspace_tool_plan(state.get("workspace_tool_plan"))
+    if tool_plan_model is None:
         next_state = merge_agent_state(
             state,
             workspace_tool_name=None,
             workspace_tool_reason="No workspace tool plan was selected.",
+            workspace_tool_descriptor=None,
+            workspace_tool_category=None,
+            workspace_tool_output_kind=None,
+            workspace_tool_error_code=None,
             workspace_tool_error=None,
             workspace_tool_context=None,
             ui_status="workspace_tool_skipped",
@@ -78,13 +113,44 @@ def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]
             node="workspace_tool_node",
             event="workspace_tool_skipped",
             ui_status="workspace_tool_skipped",
+            details={"reason": "No workspace tool plan was selected."},
         )
 
-    tool_result = execute_workspace_tool_plan(tool_plan)
-    tool_name = normalize_optional_text(tool_result.get("tool_name"))
-    tool_reason = normalize_optional_text(tool_result.get("reason"))
-    tool_error = normalize_optional_text(tool_result.get("error"))
-    tool_context = build_workspace_tool_context(tool_result)
+    tool_result = normalize_workspace_tool_result(
+        execute_workspace_tool_plan(tool_plan_model)
+    )
+    tool_name = normalize_optional_text(tool_result.tool_name)
+    tool_reason = normalize_optional_text(tool_result.reason)
+    descriptor_model = tool_result.tool_descriptor
+    if descriptor_model is None and tool_name is not None:
+        descriptor_model = WorkspaceToolDescriptor.from_value(
+            get_workspace_tool_descriptor(tool_name)
+        )
+    tool_descriptor = descriptor_model.as_dict() if descriptor_model is not None else None
+    tool_title = (
+        normalize_optional_text(descriptor_model.title)
+        if descriptor_model is not None
+        else None
+    )
+    tool_category = (
+        normalize_optional_text(tool_result.tool_category)
+        or (
+            normalize_optional_text(descriptor_model.category)
+            if descriptor_model is not None
+            else None
+        )
+    )
+    tool_output_kind = (
+        normalize_optional_text(tool_result.tool_output_kind)
+        or (
+            normalize_optional_text(descriptor_model.output_kind)
+            if descriptor_model is not None
+            else None
+        )
+    )
+    tool_error_code = normalize_optional_text(tool_result.tool_error_code)
+    tool_error = normalize_optional_text(tool_result.error)
+    tool_context = build_workspace_tool_context(tool_result.as_dict())
 
     context = state.get("context")
     if tool_error is None and tool_context is not None:
@@ -96,6 +162,10 @@ def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]
         context=context,
         workspace_tool_name=tool_name,
         workspace_tool_reason=tool_reason,
+        workspace_tool_descriptor=tool_descriptor,
+        workspace_tool_category=tool_category,
+        workspace_tool_output_kind=tool_output_kind,
+        workspace_tool_error_code=tool_error_code,
         workspace_tool_error=tool_error,
         workspace_tool_context=tool_context,
         ui_status=ui_status,
@@ -107,6 +177,12 @@ def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]
         ui_status=ui_status,
         details={
             "tool_name": tool_name,
+            "tool_title": tool_title,
+            "tool_reason": tool_reason,
+            "tool_category": tool_category,
+            "tool_output_kind": tool_output_kind,
+            "tool_input": dict(tool_result.tool_input),
+            "tool_error_code": tool_error_code,
             "has_error": tool_error is not None,
         },
     )
