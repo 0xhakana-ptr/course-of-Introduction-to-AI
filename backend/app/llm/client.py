@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -5,6 +6,8 @@ import httpx
 
 from ..core.config import settings
 from ..core.text_utils import build_preview
+
+THINKING_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 @dataclass(slots=True)
@@ -114,7 +117,7 @@ def llm_is_configured() -> bool:
 
 def normalize_message_content(content: Any) -> str:
     if isinstance(content, str):
-        return content
+        return THINKING_PATTERN.sub("", content).strip()
     if isinstance(content, list):
         parts: list[str] = []
         for item in content:
@@ -123,8 +126,9 @@ def normalize_message_content(content: Any) -> str:
                     parts.append(item["text"])
             elif isinstance(item, str):
                 parts.append(item)
-        return "\n".join(part for part in parts if part).strip()
-    return str(content or "").strip()
+        combined = "\n".join(part for part in parts if part)
+        return THINKING_PATTERN.sub("", combined).strip()
+    return THINKING_PATTERN.sub("", str(content or "")).strip()
 
 
 def preview_text(text: str, limit: int = DIAGNOSTIC_PREVIEW_LIMIT) -> str:
@@ -186,17 +190,13 @@ def unconfigured_message(prompt: str, context: str | None = None) -> LLMCallResu
 
 
 def build_messages(prompt: str, context: str | None, system_prompt: str) -> list[dict[str, str]]:
-    messages: list[dict[str, str]] = [
-        {"role": "system", "content": system_prompt},
-    ]
+    combined_system = system_prompt
     if context:
-        messages.append(
-            {
-                "role": "system",
-                "content": f"Recent conversation context:\n{context}",
-            }
-        )
-    messages.append({"role": "user", "content": prompt})
+        combined_system = f"{system_prompt}\n\nRecent conversation context:\n{context}"
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": combined_system},
+        {"role": "user", "content": prompt},
+    ]
     return messages
 
 

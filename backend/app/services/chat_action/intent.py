@@ -106,4 +106,5 @@ def detect_intent(prompt: str) -> INTENT_TYPE:
         return "coding"
     if contains_any_keyword(text, CHAT_KEYWORDS):
         return "chat"
-    return "unknown"
+    # Default to chat for general questions
+    return "chat"
