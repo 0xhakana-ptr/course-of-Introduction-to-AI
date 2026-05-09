@@ -74,6 +74,8 @@ LLM_CHAT_COMPLETIONS_URL=
 说明：
 
 - 后端只要求“OpenAI-compatible 接口”，并不限定必须是 OpenAI 官方
+- `LLM_BASE_URL` 通常填写供应商文档里的 API root，例如 `https://api.minimaxi.com/v1`；后端会自动拼成 `.../chat/completions`
+- URL 中是否包含 `/openai/` 取决于供应商自己的文档，不是后端强制要求；例如 LongCat 示例包含 `/openai/v1`，MiniMax 示例不包含
 - 当前优先稳定支持 `openai` 与 `minimax` 两类 profile；如果是其他供应商，优先先验证其 `/chat/completions` 兼容程度
 - 未配置 LLM 时，服务仍可启动，但聊天会退回占位回复，`runs` 会优先走本地模板逻辑
 

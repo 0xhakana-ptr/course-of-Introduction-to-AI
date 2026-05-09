@@ -18,6 +18,10 @@ CHANNEL_BY_MESSAGE_TYPE: dict[MESSAGE_TYPE, MESSAGE_CHANNEL] = {
 }
 
 
+def require_channel_for_message_type(message_type: MESSAGE_TYPE) -> MESSAGE_CHANNEL:
+    return CHANNEL_BY_MESSAGE_TYPE[message_type]
+
+
 class RuntimeEventInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

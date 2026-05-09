@@ -64,13 +64,22 @@ OPENAI_PROVIDER_PROFILE = "openai"
 MINIMAX_PROVIDER_PROFILE = "minimax"
 MINIMAX_MIN_TEMPERATURE = 0.01
 MINIMAX_MAX_TEMPERATURE = 1.0
+PROVIDER_PROFILE_ALIASES = {
+    "openai": OPENAI_PROVIDER_PROFILE,
+    "openai-compatible": OPENAI_PROVIDER_PROFILE,
+    "openai_compatible": OPENAI_PROVIDER_PROFILE,
+    "openai compatible": OPENAI_PROVIDER_PROFILE,
+    "minimax": MINIMAX_PROVIDER_PROFILE,
+    "minimaxi": MINIMAX_PROVIDER_PROFILE,
+    "mini-max": MINIMAX_PROVIDER_PROFILE,
+    "mini_max": MINIMAX_PROVIDER_PROFILE,
+    "mini max": MINIMAX_PROVIDER_PROFILE,
+}
 
 
 def normalize_provider_profile(value: str | None) -> str:
     text = str(value or "").strip().lower()
-    if text in {OPENAI_PROVIDER_PROFILE, MINIMAX_PROVIDER_PROFILE}:
-        return text
-    return ""
+    return PROVIDER_PROFILE_ALIASES.get(text, "")
 
 
 def infer_provider_profile(

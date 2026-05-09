@@ -12,6 +12,7 @@ from ...agent_workflow.workflow_nodes import (
     TASK_STARTED_NODE,
 )
 from ...messaging.event_types import AGENT_EVENT_SOURCE, AGENT_EVENT_STAGE, AGENT_EVENT_TYPE
+from ...schemas import MESSAGE_STATUS
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +24,7 @@ class CharacterEvent:
     quip: str | None = None
     expression: str | None = None
     motion: str | None = None
-    status: str | None = None
+    status: MESSAGE_STATUS | None = None
     progress: int | None = None
     priority: str = "medium"
     duration: int = 3000
@@ -123,4 +124,16 @@ TASK_CANCELLED_EVENT = CharacterEvent(
     quip="任务已经取消。",
     expression="thinking",
     status="cancelled",
+)
+
+CHARACTER_EVENTS: tuple[CharacterEvent, ...] = (
+    CHAT_STARTED_EVENT,
+    CHAT_DONE_EVENT,
+    CHAT_FAILED_EVENT,
+    TASK_QUEUED_EVENT,
+    TASK_STARTED_EVENT,
+    TASK_REPAIRING_EVENT,
+    TASK_DONE_EVENT,
+    TASK_FAILED_EVENT,
+    TASK_CANCELLED_EVENT,
 )

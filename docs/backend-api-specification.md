@@ -219,6 +219,9 @@
 - `target_run_id`
 - `workspace_tool_name`
 - `workspace_tool_reason`
+- `workspace_tool_category`：当前只允许 `context | execution`
+- `workspace_tool_output_kind`：当前只允许 `overview_text | entry_listing | file_preview | command_result`
+- `workspace_tool_error_code`：当前只允许 `WORKSPACE_TOOL_UNREGISTERED | WORKSPACE_TOOL_EXECUTION_FAILED`
 - `workspace_tool_plan`
 - `ui_status`
 - `planned_nodes`
@@ -834,6 +837,10 @@
 - `_timestamp`：入队时间，由后端自动生成
 - `_channel`：前端分发通道
 - `type`：消息语义类型
+- `event_type`：后端内部运行事件类型，例如 `chat.started`、`run.finished`
+- `event_source`：事件来源，例如 `chat`、`run`、`tool`、`character`
+- `event_stage`：事件阶段，例如 `chat`、`run`、`repair`、`roleplay`
+- `frontend_visible`：是否建议前端作为可见事件处理
 - `timestamp`：业务消息时间，可由发送方生成
 - `node_name`：可选，用于标识触发消息的任务节点或后端阶段
 - `metadata`：可选扩展字段
@@ -855,6 +862,19 @@
 - `chat`：聊天窗口专业回答或任务结果
 - `error`：错误消息
 - `status`：任务状态消息
+
+固定映射：
+
+| type | _channel |
+| --- | --- |
+| `quip` | `agent:quip` |
+| `expression` | `agent:expression` |
+| `motion` | `agent:motion` |
+| `chat` | `agent:chat` |
+| `error` | `agent:error` |
+| `status` | `agent:status` |
+
+后端会在消息入队时校验并归一化上述 envelope。业务代码不应新增临时 channel；如果确实需要新增消息类型，应先更新 `MessageEnvelope`、`CHANNEL_BY_MESSAGE_TYPE`、接口文档和协议测试。
 
 ### 4.1 `chat`
 

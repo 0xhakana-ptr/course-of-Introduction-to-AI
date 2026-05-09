@@ -1,3 +1,7 @@
+import pytest
+from pydantic import ValidationError
+
+from backend.app.schemas import WorkspaceToolDescriptorInfo, WorkspaceToolInfo
 from backend.app.tools.safe_fs import safe_write_file
 from backend.app.tools.workspace_tools import (
     WORKSPACE_TOOL_NAME_OVERVIEW,
@@ -143,6 +147,45 @@ def test_workspace_tool_registry_can_resolve_registered_tools():
         item for item in descriptors if item["name"] == WORKSPACE_TOOL_NAME_OVERVIEW
     )
     assert overview_descriptor["output_kind"] == WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW
+
+
+def test_workspace_tool_descriptors_follow_public_schema():
+    descriptors = list_workspace_tool_descriptors()
+
+    assert descriptors
+    for descriptor in descriptors:
+        parsed = WorkspaceToolDescriptorInfo.model_validate(descriptor)
+        assert parsed.name
+        assert parsed.category in {"context", "execution"}
+        assert parsed.output_kind in {
+            "overview_text",
+            "entry_listing",
+            "file_preview",
+            "command_result",
+        }
+
+    with pytest.raises(ValidationError):
+        WorkspaceToolDescriptorInfo.model_validate(
+            {
+                "name": "bad_tool",
+                "title": "Bad",
+                "description": "Invalid category should be rejected.",
+                "category": "misc",
+                "output_kind": "overview_text",
+            }
+        )
+
+
+def test_workspace_tool_info_rejects_unknown_error_code():
+    with pytest.raises(ValidationError):
+        WorkspaceToolInfo.model_validate(
+            {
+                "name": "read_workspace_text",
+                "category": "context",
+                "output_kind": "file_preview",
+                "error_code": "UNKNOWN_TOOL_ERROR",
+            }
+        )
 
 
 def test_workspace_tool_helpers_normalize_plan_and_result_models():

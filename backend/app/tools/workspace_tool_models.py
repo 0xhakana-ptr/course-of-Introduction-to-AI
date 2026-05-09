@@ -5,6 +5,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..schemas import (
+    WORKSPACE_TOOL_CATEGORY,
+    WORKSPACE_TOOL_ERROR_CODE,
+    WORKSPACE_TOOL_OUTPUT_KIND,
+)
+
 
 class WorkspaceToolDescriptor(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -12,8 +18,8 @@ class WorkspaceToolDescriptor(BaseModel):
     name: str
     title: str
     description: str
-    category: str
-    output_kind: str
+    category: WORKSPACE_TOOL_CATEGORY
+    output_kind: WORKSPACE_TOOL_OUTPUT_KIND
     input_keys: list[str] = Field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
@@ -57,9 +63,9 @@ class WorkspaceToolExecutionResult(BaseModel):
     tool_input: dict[str, Any] = Field(default_factory=dict)
     ok: bool = True
     reason: str | None = None
-    tool_category: str | None = None
-    tool_output_kind: str | None = None
-    tool_error_code: str | None = None
+    tool_category: WORKSPACE_TOOL_CATEGORY | None = None
+    tool_output_kind: WORKSPACE_TOOL_OUTPUT_KIND | None = None
+    tool_error_code: WORKSPACE_TOOL_ERROR_CODE | None = None
     tool_descriptor: WorkspaceToolDescriptor | None = None
     summary: str = ""
     error: str | None = None

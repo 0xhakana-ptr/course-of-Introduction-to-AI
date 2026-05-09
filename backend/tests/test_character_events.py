@@ -1,5 +1,8 @@
 from backend.app.message_queue import message_queue
+from backend.app.schemas import MessageEnvelope
+from backend.app.services.character_action.events import CHARACTER_EVENTS
 from backend.app.services.character_interface import (
+    dispatch_character_event,
     send_chat_started,
     send_task_done,
 )
@@ -42,6 +45,30 @@ def test_send_task_done_emits_done_status_and_happy_expression():
     assert messages[2]["type"] == "status"
     assert messages[2]["status"] == "done"
     assert messages[2]["progress"] == 100
+
+
+def test_all_character_events_emit_valid_protocol_messages():
+    expected_channels = {
+        "quip": "agent:quip",
+        "expression": "agent:expression",
+        "motion": "agent:motion",
+        "status": "agent:status",
+    }
+
+    for event in CHARACTER_EVENTS:
+        message_queue.clear()
+
+        assert dispatch_character_event(event) is True
+
+        messages = message_queue.get_messages()
+        assert messages
+        for message in messages:
+            envelope = MessageEnvelope.model_validate(message)
+            assert envelope.channel == expected_channels[envelope.type]
+            assert envelope.node_name == event.node_name
+            assert envelope.event_type == event.event_type
+            assert envelope.event_source == event.event_source
+            assert envelope.event_stage == event.event_stage
 
 
 def test_chat_route_emits_character_events_on_failed_reply(client):

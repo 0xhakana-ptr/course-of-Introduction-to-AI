@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import Any
 
 from ..core.text_utils import clip_text
+from ..schemas import (
+    WORKSPACE_TOOL_CATEGORY,
+    WORKSPACE_TOOL_ERROR_CODE,
+    WORKSPACE_TOOL_OUTPUT_KIND,
+)
 from .safe_execute_command import safe_execute_command
 from .safe_fs import get_workspace_dir, resolve_workspace_path, safe_list_entries, safe_read_file
 from .workspace_tool_models import (
@@ -34,14 +39,16 @@ WORKSPACE_TOOL_NAME_OVERVIEW = "build_workspace_overview"
 WORKSPACE_TOOL_NAME_LIST = "list_workspace_entries"
 WORKSPACE_TOOL_NAME_READ = "read_workspace_text"
 WORKSPACE_TOOL_NAME_TEST = "run_workspace_tests"
-WORKSPACE_TOOL_CATEGORY_CONTEXT = "context"
-WORKSPACE_TOOL_CATEGORY_EXECUTION = "execution"
-WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW = "overview_text"
-WORKSPACE_TOOL_OUTPUT_KIND_LISTING = "entry_listing"
-WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW = "file_preview"
-WORKSPACE_TOOL_OUTPUT_KIND_COMMAND_RESULT = "command_result"
-WORKSPACE_TOOL_ERROR_UNREGISTERED = "WORKSPACE_TOOL_UNREGISTERED"
-WORKSPACE_TOOL_ERROR_EXECUTION_FAILED = "WORKSPACE_TOOL_EXECUTION_FAILED"
+WORKSPACE_TOOL_CATEGORY_CONTEXT: WORKSPACE_TOOL_CATEGORY = "context"
+WORKSPACE_TOOL_CATEGORY_EXECUTION: WORKSPACE_TOOL_CATEGORY = "execution"
+WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW: WORKSPACE_TOOL_OUTPUT_KIND = "overview_text"
+WORKSPACE_TOOL_OUTPUT_KIND_LISTING: WORKSPACE_TOOL_OUTPUT_KIND = "entry_listing"
+WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW: WORKSPACE_TOOL_OUTPUT_KIND = "file_preview"
+WORKSPACE_TOOL_OUTPUT_KIND_COMMAND_RESULT: WORKSPACE_TOOL_OUTPUT_KIND = "command_result"
+WORKSPACE_TOOL_ERROR_UNREGISTERED: WORKSPACE_TOOL_ERROR_CODE = "WORKSPACE_TOOL_UNREGISTERED"
+WORKSPACE_TOOL_ERROR_EXECUTION_FAILED: WORKSPACE_TOOL_ERROR_CODE = (
+    "WORKSPACE_TOOL_EXECUTION_FAILED"
+)
 WORKSPACE_TOOL_PATH_PATTERN = re.compile(
     r"(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]*|[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+"
 )
@@ -81,8 +88,8 @@ class WorkspaceToolDefinition:
     name: str
     title: str
     description: str
-    category: str
-    output_kind: str
+    category: WORKSPACE_TOOL_CATEGORY
+    output_kind: WORKSPACE_TOOL_OUTPUT_KIND
     input_keys: tuple[str, ...]
     executor: Callable[[Mapping[str, object]], tuple[object, str]]
 

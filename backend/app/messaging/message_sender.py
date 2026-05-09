@@ -4,7 +4,8 @@ import os
 from typing import Any
 
 from .event_types import AGENT_EVENT_SOURCE, AGENT_EVENT_STAGE, AGENT_EVENT_TYPE
-from .runtime_events import build_runtime_event_fields
+from .runtime_events import build_runtime_event_fields, require_channel_for_message_type
+from ..schemas import MESSAGE_STATUS, MESSAGE_TYPE
 
 
 message_queue = None
@@ -53,7 +54,7 @@ class MessageSender:
     def _build_message(
         self,
         *,
-        message_type: str,
+        message_type: MESSAGE_TYPE,
         node_name: str | None = None,
         metadata: dict[str, Any] | None = None,
         event_type: AGENT_EVENT_TYPE,
@@ -79,6 +80,9 @@ class MessageSender:
         message.update(fields)
         return message
 
+    def _send_message(self, message_type: MESSAGE_TYPE, message: dict[str, Any]) -> bool:
+        return self._send_to_frontend(require_channel_for_message_type(message_type), message)
+
     def send_quip(
         self,
         content: str,
@@ -91,8 +95,9 @@ class MessageSender:
         event_stage: AGENT_EVENT_STAGE = "roleplay",
     ) -> bool:
         """发送 Quip 消息"""
+        message_type: MESSAGE_TYPE = "quip"
         message = self._build_message(
-            message_type='quip',
+            message_type=message_type,
             content=content,
             node_name=node_name,
             metadata={
@@ -103,7 +108,7 @@ class MessageSender:
             event_source=event_source,
             event_stage=event_stage,
         )
-        return self._send_to_frontend('agent:quip', message)
+        return self._send_message(message_type, message)
     
     def send_expression(
         self,
@@ -119,8 +124,9 @@ class MessageSender:
         event_stage: AGENT_EVENT_STAGE = "roleplay",
     ) -> bool:
         """发送表情消息"""
+        message_type: MESSAGE_TYPE = "expression"
         message = self._build_message(
-            message_type='expression',
+            message_type=message_type,
             expression=expression,
             mode=mode,
             intensity=intensity,
@@ -133,7 +139,7 @@ class MessageSender:
             event_source=event_source,
             event_stage=event_stage,
         )
-        return self._send_to_frontend('agent:expression', message)
+        return self._send_message(message_type, message)
 
     def send_motion(
         self,
@@ -150,8 +156,9 @@ class MessageSender:
         metadata: dict[str, Any] = {'loop': loop}
         if duration is not None:
             metadata['duration'] = duration
+        message_type: MESSAGE_TYPE = "motion"
         message = self._build_message(
-            message_type='motion',
+            message_type=message_type,
             motion=motion,
             node_name=node_name,
             metadata=metadata,
@@ -159,7 +166,7 @@ class MessageSender:
             event_source=event_source,
             event_stage=event_stage,
         )
-        return self._send_to_frontend('agent:motion', message)
+        return self._send_message(message_type, message)
     
     def send_chat_message(
         self,
@@ -174,8 +181,9 @@ class MessageSender:
         event_stage: AGENT_EVENT_STAGE = "roleplay",
     ) -> bool:
         """发送 Chat 消息"""
+        message_type: MESSAGE_TYPE = "chat"
         message = self._build_message(
-            message_type='chat',
+            message_type=message_type,
             role='assistant',
             content=content,
             node_name=node_name or None,
@@ -189,7 +197,7 @@ class MessageSender:
             event_source=event_source,
             event_stage=event_stage,
         )
-        return self._send_to_frontend('agent:chat', message)
+        return self._send_message(message_type, message)
     
     def send_error(
         self,
@@ -203,8 +211,9 @@ class MessageSender:
         event_stage: AGENT_EVENT_STAGE = "system",
     ) -> bool:
         """发送错误消息"""
+        message_type: MESSAGE_TYPE = "error"
         error_message = self._build_message(
-            message_type='error',
+            message_type=message_type,
             code=code,
             message=message,
             details=details,
@@ -213,11 +222,11 @@ class MessageSender:
             event_source=event_source,
             event_stage=event_stage,
         )
-        return self._send_to_frontend('agent:error', error_message)
+        return self._send_message(message_type, error_message)
     
     def send_status(
         self,
-        status: str,
+        status: MESSAGE_STATUS,
         progress: int | None = None,
         node_name: str = '',
         *,
@@ -226,8 +235,9 @@ class MessageSender:
         event_stage: AGENT_EVENT_STAGE = "system",
     ) -> bool:
         """发送状态更新"""
+        message_type: MESSAGE_TYPE = "status"
         status_message = self._build_message(
-            message_type='status',
+            message_type=message_type,
             status=status,
             progress=progress,
             node_name=node_name or None,
@@ -235,7 +245,7 @@ class MessageSender:
             event_source=event_source,
             event_stage=event_stage,
         )
-        return self._send_to_frontend('agent:status', status_message)
+        return self._send_message(message_type, status_message)
 
 
 # 全局消息发送器实例

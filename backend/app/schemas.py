@@ -20,6 +20,17 @@ MESSAGE_CHANNEL = Literal[
 MESSAGE_ROLE = Literal["user", "assistant", "system"]
 MESSAGE_STATUS = Literal["idle", "running", "paused", "done", "error", "cancelled"]
 EXPRESSION_MODE = Literal["set", "add"]
+WORKSPACE_TOOL_CATEGORY = Literal["context", "execution"]
+WORKSPACE_TOOL_OUTPUT_KIND = Literal[
+    "overview_text",
+    "entry_listing",
+    "file_preview",
+    "command_result",
+]
+WORKSPACE_TOOL_ERROR_CODE = Literal[
+    "WORKSPACE_TOOL_UNREGISTERED",
+    "WORKSPACE_TOOL_EXECUTION_FAILED",
+]
 
 
 class ChatRequest(BaseModel):
@@ -235,8 +246,8 @@ class WorkspaceToolDescriptorInfo(BaseModel):
     name: str
     title: str
     description: str
-    category: str
-    output_kind: str
+    category: WORKSPACE_TOOL_CATEGORY
+    output_kind: WORKSPACE_TOOL_OUTPUT_KIND
     input_keys: list[str] = Field(default_factory=list)
 
 
@@ -250,9 +261,9 @@ class WorkspaceToolInfo(BaseModel):
     name: str | None = None
     title: str | None = None
     reason: str | None = None
-    category: str | None = None
-    output_kind: str | None = None
-    error_code: str | None = None
+    category: WORKSPACE_TOOL_CATEGORY | None = None
+    output_kind: WORKSPACE_TOOL_OUTPUT_KIND | None = None
+    error_code: WORKSPACE_TOOL_ERROR_CODE | None = None
     descriptor: WorkspaceToolDescriptorInfo | None = None
     plan: WorkspaceToolPlanInfo | None = None
 
@@ -266,9 +277,9 @@ class AgentDiagnosticsResponse(BaseModel):
     target_run_id: str | None = None
     workspace_tool_name: str | None = None
     workspace_tool_reason: str | None = None
-    workspace_tool_category: str | None = None
-    workspace_tool_output_kind: str | None = None
-    workspace_tool_error_code: str | None = None
+    workspace_tool_category: WORKSPACE_TOOL_CATEGORY | None = None
+    workspace_tool_output_kind: WORKSPACE_TOOL_OUTPUT_KIND | None = None
+    workspace_tool_error_code: WORKSPACE_TOOL_ERROR_CODE | None = None
     workspace_tool_descriptor: WorkspaceToolDescriptorInfo | None = None
     workspace_tool_plan: WorkspaceToolPlanInfo | None = None
     workspace_tool: WorkspaceToolInfo | None = None
@@ -296,9 +307,9 @@ class AgentRunDiagnosticsResponse(BaseModel):
     error: str | None = None
     workspace_tool_name: str | None = None
     workspace_tool_reason: str | None = None
-    workspace_tool_category: str | None = None
-    workspace_tool_output_kind: str | None = None
-    workspace_tool_error_code: str | None = None
+    workspace_tool_category: WORKSPACE_TOOL_CATEGORY | None = None
+    workspace_tool_output_kind: WORKSPACE_TOOL_OUTPUT_KIND | None = None
+    workspace_tool_error_code: WORKSPACE_TOOL_ERROR_CODE | None = None
     workspace_tool_descriptor: WorkspaceToolDescriptorInfo | None = None
     workspace_tool_plan: WorkspaceToolPlanInfo | None = None
     workspace_tool: WorkspaceToolInfo | None = None

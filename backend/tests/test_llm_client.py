@@ -12,6 +12,7 @@ from backend.app.llm.client import (
     call_llm_sync,
     failure_result,
     infer_provider_profile,
+    normalize_provider_profile,
     resolve_chat_completions_url,
     success_result,
 )
@@ -64,6 +65,26 @@ def test_resolve_chat_completions_url_prefers_explicit_endpoint():
         )
         == "https://gateway.example.com/custom/chat"
     )
+
+
+def test_resolve_chat_completions_url_appends_standard_endpoint():
+    assert (
+        resolve_chat_completions_url("https://api.minimaxi.com/v1/")
+        == "https://api.minimaxi.com/v1/chat/completions"
+    )
+
+
+def test_resolve_chat_completions_url_keeps_full_chat_endpoint():
+    assert (
+        resolve_chat_completions_url("https://api.longcat.chat/openai/v1/chat/completions/")
+        == "https://api.longcat.chat/openai/v1/chat/completions"
+    )
+
+
+def test_normalize_provider_profile_accepts_common_aliases():
+    assert normalize_provider_profile("openai-compatible") == "openai"
+    assert normalize_provider_profile("MiniMax") == MINIMAX_PROVIDER_PROFILE
+    assert normalize_provider_profile("mini-max") == MINIMAX_PROVIDER_PROFILE
 
 
 def test_infer_provider_profile_detects_minimax_from_url():
