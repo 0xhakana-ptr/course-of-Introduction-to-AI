@@ -3,6 +3,7 @@ from backend.app.agent_workflow.graph.graph_support import (
     AGENT_CODING_EDGE_MAP,
     AGENT_LINEAR_EDGES,
     AGENT_ROUTER_EDGE_MAP,
+    AGENT_WORKSPACE_TOOL_EDGE_MAP,
     configure_agent_graph_edges,
     guard_node,
     register_agent_graph_nodes,
@@ -39,6 +40,7 @@ from backend.app.agent_workflow.agent_support import (
     merge_context_sections,
     merge_agent_state,
     select_coding_next_node,
+    select_workspace_tool_next_node,
     select_agent_next_node,
 )
 from backend.app.agent_workflow.output.text import describe_run_action
@@ -54,12 +56,16 @@ from backend.app.agent_workflow.trace.runtime import (
     normalize_trace_items,
 )
 from backend.app.agent_workflow.output.roleplay import emit_roleplay_message, emit_roleplay_state
+from backend.app.agent_workflow.output.node_events import emit_workflow_node_entered
 from backend.app.agent_workflow.contracts.workflow_results import WorkflowAgentResult
+from backend.app.core.config import settings
 from backend.app.message_queue import message_queue
 from backend.app.services.chat_action.intent import detect_intent, detect_run_action, extract_run_reference
 from backend.app.services.chat_action.types import ChatServiceResult
 from backend.app.services.run_action.types import WorkflowChatMessage
 from backend.app.services.run_interface import create_run, get_run
+from backend.app.tools.safe_fs import safe_write_file
+from backend.app.tools.workspace_tools import read_workspace_text
 
 
 def test_agent_graph_routes_coding_intent_to_run_tool():
@@ -322,6 +328,212 @@ def test_agent_graph_routes_coding_intent_with_workspace_tool_context(monkeypatc
     )
 
 
+def test_agent_graph_finishes_simple_workspace_text_write_without_run():
+    result = run_agent(
+        "请创建 notes/todo.txt，内容是buy milk",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.intent == "coding"
+    assert result.run_id is None
+    assert result.state["workspace_tool_name"] == "write_workspace_text"
+    assert result.state["workspace_tool_terminal"] is True
+    assert result.state["workspace_tool_error"] is None
+    assert "已在 workspace 中创建文本文件" in result.output
+    assert read_workspace_text("notes/todo.txt")["content"] == "buy milk"
+    assert [item["node"] for item in result.workflow_trace] == [
+        "router",
+        "coding_node",
+        "workspace_tool_node",
+        "roleplay_node",
+    ]
+
+
+def test_agent_graph_finishes_pure_workspace_file_read_without_run():
+    safe_write_file("backend/app/demo.txt", "demo content")
+
+    result = run_agent(
+        "请读取 backend/app/demo.txt",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id is None
+    assert result.state["workspace_tool_name"] == "read_workspace_text"
+    assert result.state["workspace_tool_terminal"] is True
+    assert "我读到了 `backend/app/demo.txt` 的内容" in result.output
+    assert "内容预览:" in result.output
+    assert "demo content" in result.output
+    assert [item["node"] for item in result.workflow_trace] == [
+        "router",
+        "coding_node",
+        "workspace_tool_node",
+        "roleplay_node",
+    ]
+
+
+def test_agent_graph_finishes_pure_workspace_listing_without_run():
+    safe_write_file("demo/nested/info.txt", "nested data")
+
+    result = run_agent(
+        "请列出 demo/nested 目录结构",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id is None
+    assert result.state["workspace_tool_name"] == "list_workspace_entries"
+    assert result.state["workspace_tool_terminal"] is True
+    assert "我列出了 `demo/nested` 下的内容" in result.output
+    assert "文件: demo/nested/info.txt" in result.output
+    assert [item["node"] for item in result.workflow_trace] == [
+        "router",
+        "coding_node",
+        "workspace_tool_node",
+        "roleplay_node",
+    ]
+
+
+def test_agent_graph_finishes_pure_workspace_test_without_run():
+    safe_write_file(
+        "backend/tests/test_demo_pass.py",
+        "def test_demo_pass():\n"
+        "    assert True\n",
+    )
+
+    result = run_agent(
+        "请运行 backend/tests/test_demo_pass.py 的测试",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id is None
+    assert result.state["workspace_tool_name"] == "run_workspace_tests"
+    assert result.state["workspace_tool_terminal"] is True
+    assert "我运行完测试了" in result.output
+    assert "结果: 通过" in result.output
+    assert "测试命令执行成功" in result.output
+    assert [item["node"] for item in result.workflow_trace] == [
+        "router",
+        "coding_node",
+        "workspace_tool_node",
+        "roleplay_node",
+    ]
+
+
+def test_agent_graph_keeps_codegen_for_file_repair_request(monkeypatch):
+    captured: dict[str, object] = {}
+    safe_write_file("backend/app/demo.txt", "broken content")
+
+    def fake_create_run(prompt: str, context: str | None):
+        captured["prompt"] = prompt
+        captured["context"] = context
+        return type("FakeRun", (), {"run_id": "repair-run-1", "status": "queued"})()
+
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.graph.agent_graph.create_run",
+        fake_create_run,
+    )
+    monkeypatch.setattr(
+        "backend.app.agent_workflow.graph.agent_graph.get_run_snapshot",
+        lambda run_id: type(
+            "FakeRunSnapshot",
+            (),
+            {
+                "status": "queued",
+                "summary": "任务已创建，等待后台执行。",
+                "next_action": "等待后台开始执行，然后继续查询任务状态。",
+            },
+        )(),
+    )
+
+    result = run_agent(
+        "请修复 backend/app/demo.txt 里的问题",
+        "client ctx",
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id == "repair-run-1"
+    assert result.state["workspace_tool_name"] == "read_workspace_text"
+    assert result.state["workspace_tool_terminal"] is False
+    assert captured["prompt"] == "请修复 backend/app/demo.txt 里的问题"
+    assert captured["context"] == (
+        "client ctx\n\n"
+        "Workspace file preview (backend/app/demo.txt):\n"
+        "broken content"
+    )
+    assert [item["node"] for item in result.workflow_trace] == [
+        "router",
+        "coding_node",
+        "workspace_tool_node",
+        "run_tool_node",
+        "roleplay_node",
+    ]
+
+
+def test_agent_graph_rejects_desktop_text_write_without_run():
+    result = run_agent(
+        "帮我在桌面创建一个txt文件",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id is None
+    assert result.ui_status == "workspace_tool_failed"
+    assert result.state["workspace_tool_name"] == "write_workspace_text"
+    assert result.state["workspace_tool_terminal"] is True
+    assert result.state["workspace_tool_error_code"] == "WORKSPACE_TOOL_TARGET_DISABLED"
+    assert "不能直接写桌面路径" in result.output
+    assert [item["node"] for item in result.workflow_trace] == [
+        "router",
+        "coding_node",
+        "workspace_tool_node",
+        "roleplay_node",
+    ]
+
+
+def test_agent_graph_exports_desktop_text_when_enabled(monkeypatch, tmp_path):
+    export_dir = tmp_path / "desktop-exports"
+    monkeypatch.setattr(settings, "desktop_export_enabled", True)
+    monkeypatch.setattr(settings, "desktop_export_dir", export_dir)
+
+    result = run_agent(
+        "帮我在桌面创建 notes/todo.txt，内容是buy milk",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    exported_file = export_dir / "todo.txt"
+    assert result.ok is True
+    assert result.run_id is None
+    assert result.state["workspace_tool_name"] == "write_workspace_text"
+    assert result.state["workspace_tool_terminal"] is True
+    assert result.state["workspace_tool_error"] is None
+    assert "已按配置导出文本文件到桌面导出目录" in result.output
+    assert exported_file.read_text(encoding="utf-8") == "buy milk"
+
+
 def test_agent_support_builds_initial_state_with_optional_intent():
     state = build_agent_initial_state(
         prompt="hello",
@@ -335,6 +547,7 @@ def test_agent_support_builds_initial_state_with_optional_intent():
     assert state["context"] == "ctx"
     assert state["session_id"] == "session-1"
     assert state["emit_chat_message"] is False
+    assert state["emit_node_events"] is True
     assert state["intent"] == "chat"
     assert state["run_id"] is None
     assert state["ui_status"] is None
@@ -436,6 +649,11 @@ def test_agent_support_builds_run_control_request_without_workspace_tool():
     assert state["workspace_tool_plan"] is None
     assert state["workspace_tool_name"] is None
     assert select_coding_next_node(state) == "run_control_node"
+
+
+def test_agent_support_routes_terminal_workspace_tool_to_roleplay():
+    assert select_workspace_tool_next_node({"workspace_tool_terminal": True}) == "roleplay_node"
+    assert select_workspace_tool_next_node({"workspace_tool_terminal": False}) == "run_tool_node"
 
 
 def test_agent_run_support_resolves_target_run_id():
@@ -659,6 +877,7 @@ def test_agent_graph_support_registers_nodes_and_edges():
         workflow,
         route_by_intent=lambda state: "chat_node",
         select_coding_next_node=lambda state: "workspace_tool_node",
+        select_workspace_tool_next_node=lambda state: "run_tool_node",
         end_node="END",
     )
 
@@ -667,6 +886,7 @@ def test_agent_graph_support_registers_nodes_and_edges():
     assert workflow.conditional_edges == [
         ("router", AGENT_ROUTER_EDGE_MAP),
         ("coding_node", AGENT_CODING_EDGE_MAP),
+        ("workspace_tool_node", AGENT_WORKSPACE_TOOL_EDGE_MAP),
     ]
     assert workflow.edges[:-1] == list(AGENT_LINEAR_EDGES)
     assert workflow.edges[-1] == ("roleplay_node", "END")
@@ -876,6 +1096,47 @@ def test_agent_support_merges_state_and_builds_node_results():
     assert queued_run_state["run_next_action"] == "等待后台开始执行，然后继续查询任务状态。"
     assert "当前快照: 任务已创建，等待后台执行。" in queued_run_state["output"]
     assert unknown_state["ui_status"] == "unknown_done"
+
+
+def test_workflow_node_entered_event_emits_quip_and_status_messages():
+    state = build_agent_initial_state(
+        prompt="write python code",
+        context=None,
+        session_id=None,
+        emit_chat_message=False,
+        emit_node_events=True,
+        intent="coding",
+    )
+
+    assert emit_workflow_node_entered(state, "workspace_tool_node") is True
+
+    messages = message_queue.get_messages()
+    assert len(messages) == 2
+    assert [message["type"] for message in messages] == ["quip", "status"]
+    assert {message["event_type"] for message in messages} == {"workflow.node_entered"}
+    assert {message["event_source"] for message in messages} == {"workflow"}
+    assert {message["event_stage"] for message in messages} == {"tools"}
+    assert {message["node_name"] for message in messages} == {"workspace_tool_node"}
+    assert messages[0]["content"] == "我先查看一下项目上下文。"
+    assert messages[0]["metadata"]["node_label"] == "工作区工具"
+    assert messages[0]["metadata"]["phase"] == "tools"
+    assert messages[1]["status"] == "running"
+    assert messages[1]["progress"] == 30
+    assert messages[1]["metadata"]["runtime_event"] == "node_entered"
+
+
+def test_workflow_node_entered_event_can_be_suppressed():
+    state = build_agent_initial_state(
+        prompt="write python code",
+        context=None,
+        session_id=None,
+        emit_chat_message=False,
+        emit_node_events=False,
+        intent="coding",
+    )
+
+    assert emit_workflow_node_entered(state, "workspace_tool_node") is False
+    assert message_queue.get_messages() == []
 
 
 def test_agent_support_roleplay_helper_emits_message():

@@ -368,7 +368,7 @@ def test_generate_chat_response_marks_coding_schedule_failure(monkeypatch):
             intent="coding",
             ok=True,
             output=(
-                "已通过 LangGraph 创建代码任务，并交给 `/runs` 链路处理。\n\n"
+                "我已经创建了代码任务，并交给后端执行。\n\n"
                 "run_id: run-1"
             ),
             run_id="run-1",

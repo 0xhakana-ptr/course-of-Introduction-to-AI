@@ -16,3 +16,11 @@ def select_coding_next_node(state: Mapping[str, object]) -> str:
     if run_action in RUN_CONTROL_ACTIONS:
         return "run_control_node"
     return "workspace_tool_node"
+
+
+def select_workspace_tool_next_node(state: Mapping[str, object]) -> str:
+    if str(state.get("ui_status") or "").strip() == WORKFLOW_NODE_FAILED_STATUS:
+        return "roleplay_node"
+    if bool(state.get("workspace_tool_terminal", False)):
+        return "roleplay_node"
+    return "run_tool_node"

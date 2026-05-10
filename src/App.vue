@@ -34,6 +34,17 @@ const isMainLive2DMode = computed(() => !isCliMode.value && !isQuipMode.value &&
 
 const quipText = ref('')
 
+type AgentQuipMessage = {
+  type: 'quip'
+  content?: string
+  node_name?: string
+  metadata?: {
+    duration?: number
+    node_label?: string
+    phase?: string
+  }
+}
+
 // Hover fade + click-through passthrough:
 // - Hovering the window fades it and enables click-through to underlying apps.
 // - Holding Ctrl while hovering keeps the window interactive (no fade, no click-through).
@@ -1397,9 +1408,14 @@ onMounted(async () => {
       const handler = (_evt: any, text: any) => {
         quipText.value = typeof text === 'string' ? text : String(text ?? '')
       }
+      const agentQuipHandler = (_evt: any, message: AgentQuipMessage) => {
+        quipText.value = typeof message?.content === 'string' ? message.content : ''
+      }
       ipcRenderer.on('quip:text', handler)
+      ipcRenderer.on('agent:quip', agentQuipHandler)
       onBeforeUnmount(() => {
         ipcRenderer.removeListener?.('quip:text', handler)
+        ipcRenderer.removeListener?.('agent:quip', agentQuipHandler)
       })
     }
     return

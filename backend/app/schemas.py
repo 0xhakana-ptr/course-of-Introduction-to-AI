@@ -26,10 +26,13 @@ WORKSPACE_TOOL_OUTPUT_KIND = Literal[
     "entry_listing",
     "file_preview",
     "command_result",
+    "file_write",
 ]
 WORKSPACE_TOOL_ERROR_CODE = Literal[
     "WORKSPACE_TOOL_UNREGISTERED",
     "WORKSPACE_TOOL_EXECUTION_FAILED",
+    "WORKSPACE_TOOL_TARGET_UNSUPPORTED",
+    "WORKSPACE_TOOL_TARGET_DISABLED",
 ]
 
 
@@ -255,6 +258,7 @@ class WorkspaceToolPlanInfo(BaseModel):
     tool_name: str
     tool_input: dict[str, Any] = Field(default_factory=dict)
     reason: str | None = None
+    terminal: bool | None = None
 
 
 class WorkspaceToolInfo(BaseModel):
@@ -360,6 +364,15 @@ class RunAttemptListResponse(BaseModel):
     attempts: list[RunAttemptResponse] = Field(default_factory=list)
 
 
+class RunDetailSection(BaseModel):
+    key: str
+    title: str
+    summary: str | None = None
+    content: str | None = None
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    technical: bool = False
+
+
 class RunResponse(BaseModel):
     run_id: str
     status: RUN_STATUS
@@ -386,6 +399,7 @@ class RunResponse(BaseModel):
     log_path: str | None = None
     artifacts: list[str] = Field(default_factory=list)
     attempts: list[RunAttemptResponse] = Field(default_factory=list)
+    detail_sections: list[RunDetailSection] = Field(default_factory=list)
 
 
 class RunStateSnapshotResponse(BaseModel):

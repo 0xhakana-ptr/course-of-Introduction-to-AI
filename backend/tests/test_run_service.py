@@ -57,12 +57,12 @@ def test_run_chat_text_builders_keep_shared_output_contract():
     assert "run_id: run_demo_1" in repair_feedback
     assert "当前结果: 第 1 次尝试失败。" in repair_feedback
     assert "下一步: 我会继续进行第 2 轮自动修复，然后再次尝试执行。" in repair_feedback
-    assert repair_feedback.endswith("查看完整结果: GET /runs/run_demo_1")
+    assert repair_feedback.endswith("查看完整结果: 可以在任务详情中使用这个 run_id 查看结果、日志和产物。")
 
     assert retry_outcome.startswith("我继续同步一下自动修复后的这轮结果。")
     assert "本轮结果: 这轮已经成功。" in retry_outcome
     assert "下一步: 我会整理最终结果。" in retry_outcome
-    assert retry_outcome.endswith("查看完整结果: GET /runs/run_demo_1")
+    assert retry_outcome.endswith("查看完整结果: 可以在任务详情中使用这个 run_id 查看结果、日志和产物。")
 
     assert completion_text.startswith("代码任务已经完成。")
     assert "run_id: run_demo_1" in completion_text
@@ -85,6 +85,18 @@ def test_run_endpoints_expose_attempt_script_output_and_logs(client):
     run_payload = run_response.json()
     assert run_payload["status"] == "done"
     assert run_payload["attempt_count"] == 1
+    detail_sections = run_payload["detail_sections"]
+    assert [section["key"] for section in detail_sections] == [
+        "overview",
+        "result",
+        "attempts",
+        "diagnostics",
+    ]
+    assert detail_sections[0]["title"] == "任务概览"
+    assert "任务执行成功" in detail_sections[0]["summary"]
+    assert detail_sections[2]["items"][0]["summary"].startswith("第 1 次尝试")
+    assert detail_sections[3]["technical"] is True
+    assert "完整内容请按需读取日志或分块输出" in detail_sections[3]["summary"]
 
     attempts_response = client.get(f"/runs/{run.run_id}/attempts")
     assert attempts_response.status_code == 200

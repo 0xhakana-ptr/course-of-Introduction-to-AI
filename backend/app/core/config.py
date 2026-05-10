@@ -32,6 +32,13 @@ def _read_env(*names: str, default: str = "") -> str:
     return default.strip()
 
 
+def _read_bool_env(name: str, *, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 class Settings:
     def __init__(self) -> None:
         backend_root = BACKEND_ROOT
@@ -45,6 +52,13 @@ class Settings:
         self.runs_dir = self.workspace_dir / "runs"
         self.conversation_dir_name = (
             os.getenv("CONVERSATION_DIR_NAME", "conversations").strip() or "conversations"
+        )
+        self.desktop_export_enabled = _read_bool_env("DESKTOP_EXPORT_ENABLED", default=False)
+        desktop_export_dir = _read_env("DESKTOP_EXPORT_DIR")
+        self.desktop_export_dir = (
+            Path(desktop_export_dir).expanduser().resolve()
+            if desktop_export_dir
+            else None
         )
 
         self.llm_base_url = _read_env("LLM_BASE_URL", "OPENAI_BASE_URL")

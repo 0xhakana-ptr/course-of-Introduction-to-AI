@@ -111,7 +111,7 @@ def test_run_success_emits_task_lifecycle_events(client):
     assert len(chat_messages) == 1
     assert chat_messages[0]["node_name"] == "task_done"
     assert run.run_id in chat_messages[0]["content"]
-    assert f"GET /runs/{run.run_id}" in chat_messages[0]["content"]
+    assert "可以在任务详情中使用这个 run_id 查看结果、日志和产物" in chat_messages[0]["content"]
 
 
 def test_chat_route_success_uses_status_events_without_queueing_duplicate_chat(

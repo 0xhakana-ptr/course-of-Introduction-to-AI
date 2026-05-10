@@ -332,3 +332,225 @@ uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend
 5. P4：用户可见输出优化。
 
 这样可以直接解决“桌宠没动静”的体验问题，也能让后端更贴合“LangGraph 是 Agent，LLM 只是脑子”的项目方向。
+
+## 8. 2026-05-10 落地记录
+
+### 8.1 已完成 P0：LangGraph 节点入口事件
+
+已新增 `workflow.node_entered` 事件类型，并新增 `agent_workflow/output/node_events.py` 统一维护节点入口 quip、状态、进度和节点元信息。
+
+当前以下节点已经在入口发送前端可消费的 JSON 消息：
+
+1. `router`
+2. `chat_node`
+3. `coding_node`
+4. `workspace_tool_node`
+5. `run_tool_node`
+6. `run_snapshot_node`
+7. `run_control_node`
+8. `unknown_node`
+9. `roleplay_node`
+
+每个节点入口会发送：
+
+1. `quip` 消息，用于桌宠简短说明当前在做什么。
+2. `status` 消息，用于前端展示运行状态和进度。
+
+同时新增 `emit_node_events` 开关：
+
+1. 正常 `/chat` 链路默认开启节点事件。
+2. diagnostics 链路关闭节点事件，避免诊断接口污染前端消息队列。
+3. `emit_chat_message` 仍只控制最终聊天消息，不再承担节点过程事件开关。
+
+### 8.2 已完成 P1：受控 workspace 文本写入工具
+
+已新增 `write_workspace_text` 工具，只允许在 `backend/workspace` 安全边界内写入文本文件。
+
+当前能力：
+
+1. 支持创建 workspace 内文本文件。
+2. 默认不覆盖已有文件。
+3. 支持内容长度限制和裁剪标记。
+4. 返回写入路径、写入字符数、是否创建、是否覆盖。
+5. 新增 `file_write` 工具输出类型。
+6. 新增 `WORKSPACE_TOOL_TARGET_UNSUPPORTED` 和 `WORKSPACE_TOOL_TARGET_DISABLED` 错误码。
+
+桌面路径仍不默认开放。如果用户要求“在桌面创建 txt 文件”，后端会明确返回不能直接写桌面路径，而不是静默等待或让模型自由生成脚本绕过安全边界。
+
+### 8.3 已完成 P2 的最小闭环：简单文件任务不再进入 codegen run
+
+已为 workspace write 工具增加终态路由：
+
+1. `coding_node` 仍负责识别 coding intent 和规划工具。
+2. `workspace_tool_node` 执行 `write_workspace_text`。
+3. 如果该工具是终态工具，直接进入 `roleplay_node`。
+4. 不再继续进入 `run_tool_node` 创建 Python codegen run。
+
+这意味着“创建一个 txt 文件”这类简单工具任务不会再被强行包装成 Python 脚本生成和执行任务。
+
+### 8.4 已完成 P3：桌面导出权限模型
+
+已把桌面写入从“永远拒绝”升级为“默认拒绝、显式配置后导出”。
+
+新增配置项：
+
+1. `DESKTOP_EXPORT_ENABLED`
+2. `DESKTOP_EXPORT_DIR`
+
+默认行为：
+
+1. `DESKTOP_EXPORT_ENABLED=false`。
+2. 用户要求写桌面时，不创建 run，不执行 Python codegen。
+3. 直接返回安全提示，说明桌面导出未开启。
+
+开启后行为：
+
+1. 只允许导出到 `DESKTOP_EXPORT_DIR`。
+2. 导出前会清洗文件名。
+3. 默认不覆盖同名文件。
+4. 返回导出路径、写入字符数和执行摘要。
+
+这保持了安全边界：模型不能自由写任意系统路径，只能通过受控工具进入明确导出目录。
+
+### 8.5 已完成 P4 第一轮：减少用户可见工程化输出
+
+已对主聊天与 run 状态输出做第一轮收口：
+
+1. 新建 run 时，不再直接告诉用户 `GET /runs/...` 或 `/snapshot`。
+2. run inspect、run progress、run terminal、run control 的 Agent 输出不再直接暴露具体 HTTP 路径。
+3. run lifecycle 的聊天消息不再使用 `查看完整结果: GET /runs/{run_id}`。
+4. 仍保留 `run_id`，方便前端任务详情、后端 diagnostics 和人工排查定位。
+5. 用户可见文案改为“任务详情”“快照”“日志”“产物”等产品化表达。
+
+这一步没有删除后端接口，只是避免在桌宠主对话里直接倾倒开发期 API 路径。
+
+### 8.6 已完成 P2 扩展：纯工具请求不再进入 codegen run
+
+已把“终态工具”从节点内硬编码，调整为由 `WorkspaceToolPlan.terminal` 在规划阶段决定。
+
+当前已覆盖：
+
+1. 纯文本写入：`write_workspace_text`，例如“请创建 notes/todo.txt，内容是 buy milk”。
+2. 纯文件读取：`read_workspace_text`，例如“请读取 backend/app/demo.txt”。
+3. 纯目录查看：`list_workspace_entries`，例如“请列出 demo/nested 目录结构”。
+4. 纯测试运行：`run_workspace_tests`，例如“请运行 backend/tests/test_demo_pass.py 的测试”。
+
+这些请求现在会走：
+
+```text
+router -> coding_node -> workspace_tool_node -> roleplay_node
+```
+
+不会继续创建 codegen run。
+
+同时保留复杂任务进入 run 链路的能力。例如：
+
+1. “请修复 backend/app/demo.txt 里的问题”
+2. “请根据目录结构实现一个功能”
+3. “请运行测试并修复失败”
+
+这些请求仍会把工具结果作为上下文，然后继续进入：
+
+```text
+router -> coding_node -> workspace_tool_node -> run_tool_node -> roleplay_node
+```
+
+这一步解决了简单 read/list/test/write 请求被过度包装成 Python 代码生成任务的问题，同时没有放松 workspace 安全边界。
+
+### 8.7 已完成 P5 第一轮：前端消费节点入口 quip/status
+
+已把后端 `workflow.node_entered` 事件接入到现有 Electron 前端桥接链路。
+
+当前链路：
+
+1. 后端 LangGraph 节点入口发送 `agent:quip` 和 `agent:status`。
+2. Electron `backend-bridge` 从 `/messages` 轮询消息。
+3. Electron 根据 `_channel` 或 `type` 分发到前端窗口。
+4. 字幕窗口现在可以直接消费 `agent:quip`，不再只依赖旧的 `quip:text`。
+5. Chat 窗口现在可以显示节点 quip，并优先显示 `metadata.node_label` 这类中文节点名。
+6. Live2D 控制台现在也能收到 backend bridge 转发的 `agent:quip`，便于调试。
+
+这一步解决的是“后端已经发节点 JSON，但前端窗口没有完整消费”的代码层问题。
+
+仍需注意：这还不是完整产品联调。后续仍要在实际 `pnpm dev` + 后端服务运行状态下确认：
+
+1. 字幕窗口是否按预期显示节点 quip。
+2. Chat 窗口状态是否按预期刷新。
+3. 频繁节点事件是否会造成聊天窗口系统消息过多。
+4. 是否需要进一步把 `event_stage` 映射成 Live2D 表情或动作。
+
+### 8.8 已完成 P6 第一轮：桌面导出前端确认
+
+已在 Chat 窗口发送请求前增加桌面文本导出确认。
+
+触发条件：
+
+1. 请求中包含 `桌面` 或 `desktop`。
+2. 请求中包含创建、写入、保存、导出等动作。
+3. 请求目标看起来是 `.txt` 或文本文件。
+
+触发后，前端会弹出确认框。用户取消时，请求不会发送给后端，并在 Chat 窗口显示取消说明。
+
+这一步只做前端误触保护，不改变后端安全边界：
+
+1. 后端仍默认 `DESKTOP_EXPORT_ENABLED=false`。
+2. 即使前端确认，后端仍只允许写入配置好的 `DESKTOP_EXPORT_DIR`。
+3. 其他客户端直接调用后端时，仍必须受后端配置限制。
+
+### 8.9 已完成 P7 第一轮：终态工具结果自然化
+
+已为直接结束的 workspace tool 输出增加用户可见结果格式，不再直接把 read/list/test 的工具上下文摘要原样展示给用户。
+
+当前处理方式：
+
+1. `build_workspace_tool_context()` 仍返回偏工程化的工具上下文，供复杂任务继续进入 codegen run 时使用。
+2. 新增 `build_workspace_tool_user_output()`，只用于终态工具直接回复用户。
+3. 纯文件读取会输出“我读到了某个文件的内容 + 内容预览”。
+4. 纯目录查看会输出“我列出了某个目录下的内容 + 文件/目录列表”。
+5. 纯测试运行会输出“我运行完测试了 + 目标 + 通过/未通过 + 必要输出预览”。
+
+这一步避免了桌宠主对话直接出现 `Workspace file preview`、`Workspace listing`、`Workspace pytest result` 这类工具内部口径，同时不影响 Agent 后续执行需要的上下文质量。
+
+### 8.10 已完成 P8 第一轮：run 详情输出分层
+
+已在 `/runs/{run_id}` 的 `RunResponse` 中新增 `detail_sections`，用于给前端详情页或调试面板提供分层数据。
+
+当前分层：
+
+1. `overview`：任务概览，包含状态、生成方式、尝试次数、自动修复次数和自然语言摘要。
+2. `result`：最终结果，包含面向用户的结果摘要和产物列表。
+3. `attempts`：尝试记录，按尝试次数列出状态、生成方式、修复轮次、返回码、脚本可用性和尝试摘要。
+4. `diagnostics`：调试信息，标记为 `technical=true`，包含命令、工作目录、日志路径、输出长度和必要输出预览。
+
+兼容策略：
+
+1. 原有 `output`、`stdout`、`stderr`、`attempts`、`logs`、`attempt output` 字段和接口保留。
+2. `detail_sections` 是新增结构化视图，不要求前端立刻迁移。
+3. 后续前端可以优先展示 `detail_sections`，再把完整 stdout/stderr/logs 放到展开项或调试页。
+
+这一步完成的是后端数据分层，不等同于已经完成前端 run 详情页面 UI。
+
+### 8.11 已完成 P9 第一轮：HTTP 级运行时联调验证
+
+已用临时端口启动真实 FastAPI 服务，走 HTTP 级链路验证关键能力。
+
+自动化验证项：
+
+1. `GET /health` 正常返回。
+2. `POST /chat` 的文本创建请求可以进入 `coding`，走 workspace tool，并且不创建 run。
+3. `GET /messages` 可以取到 `workflow.node_entered` 节点入口事件，以及对应的 `quip`、`status` 消息。
+4. `POST /chat` 的文件读取请求可以进入 `coding`，走 workspace tool，并返回自然化工具结果。
+5. `POST /chat` 的桌面文本导出请求在默认配置下会被后端拦截，不创建 run。
+6. `POST /runs` 与 `GET /runs/{run_id}` 可以返回 `detail_sections`，并包含 `overview,result,attempts,diagnostics` 四个分区。
+
+注意：
+
+1. PowerShell 对中文响应的终端显示存在编码乱码，但从行为上已确认默认桌面导出被拦截。
+2. 本轮验证覆盖后端 HTTP、消息队列和结构化详情数据。
+3. 本轮没有直接观察 Electron 窗口 UI，因此不能替代最终人工视觉联调。
+
+### 8.12 当前仍未完成
+
+后续仍需要继续处理：
+
+1. 人工视觉联调。需要在 `pnpm dev`、后端服务、真实 Chat 窗口和字幕窗口同时运行时确认节点事件显示效果、桌面导出确认弹窗、终态工具输出和 run 详情分层是否符合预期。

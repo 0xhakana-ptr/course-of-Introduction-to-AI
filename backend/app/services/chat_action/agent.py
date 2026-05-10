@@ -21,6 +21,7 @@ async def build_agent_reply(
     session_id: str | None = None,
     intent: INTENT_TYPE | None = None,
     emit_chat_message: bool = False,
+    emit_node_events: bool = True,
 ) -> ChatServiceResult:
     try:
         from ...agent_workflow.graph.agent_graph import run_agent
@@ -42,6 +43,7 @@ async def build_agent_reply(
                 session_id=session_id,
                 intent=intent,
                 emit_chat_message=emit_chat_message,
+                emit_node_events=emit_node_events,
             )
         )
     except Exception as exc:

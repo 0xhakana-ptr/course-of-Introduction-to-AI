@@ -15,9 +15,13 @@ AGENT_CODING_EDGE_MAP: dict[str, str] = {
     "roleplay_node": "roleplay_node",
 }
 
+AGENT_WORKSPACE_TOOL_EDGE_MAP: dict[str, str] = {
+    "run_tool_node": "run_tool_node",
+    "roleplay_node": "roleplay_node",
+}
+
 AGENT_LINEAR_EDGES: tuple[tuple[str, str], ...] = (
     ("chat_node", "roleplay_node"),
-    ("workspace_tool_node", "run_tool_node"),
     ("run_tool_node", "roleplay_node"),
     ("run_snapshot_node", "roleplay_node"),
     ("run_control_node", "roleplay_node"),
@@ -66,6 +70,7 @@ def configure_agent_graph_edges(
     *,
     route_by_intent: Callable[[object], str],
     select_coding_next_node: Callable[[object], str],
+    select_workspace_tool_next_node: Callable[[object], str],
     end_node: object,
 ) -> None:
     workflow.set_entry_point("router")
@@ -78,6 +83,11 @@ def configure_agent_graph_edges(
         "coding_node",
         select_coding_next_node,
         dict(AGENT_CODING_EDGE_MAP),
+    )
+    workflow.add_conditional_edges(
+        "workspace_tool_node",
+        select_workspace_tool_next_node,
+        dict(AGENT_WORKSPACE_TOOL_EDGE_MAP),
     )
     for start_node, end_target in AGENT_LINEAR_EDGES:
         workflow.add_edge(start_node, end_target)

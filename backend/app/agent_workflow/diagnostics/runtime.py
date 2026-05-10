@@ -243,6 +243,7 @@ def preview_agent_workflow(
         context=normalized_context,
         session_id=None,
         emit_chat_message=False,
+        emit_node_events=False,
         intent=intent,
     )
 
@@ -376,6 +377,7 @@ async def run_agent_workflow_diagnostics(
             session_id=None,
             intent=intent,
             emit_chat_message=False,
+            emit_node_events=False,
         )
     )
     runtime_trace = normalize_trace_items(result.workflow_trace)

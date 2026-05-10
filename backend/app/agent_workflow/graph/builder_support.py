@@ -23,13 +23,31 @@ from ..output.text import (
 from ...services.chat_action.intent import detect_run_action, extract_run_reference
 from ...tools.workspace_tool_models import WorkspaceToolDescriptor
 from ...tools.workspace_tools import (
+    WORKSPACE_TOOL_NAME_WRITE,
     build_workspace_tool_context,
+    build_workspace_tool_user_output,
     execute_workspace_tool_plan,
     get_workspace_tool_descriptor,
     normalize_workspace_tool_plan,
     normalize_workspace_tool_result,
     plan_workspace_tool,
 )
+
+
+def _build_workspace_tool_terminal_output(
+    *,
+    tool_title: str | None,
+    summary: str | None,
+    tool_error: str | None,
+    user_output: str | None = None,
+) -> str:
+    if user_output:
+        return user_output
+    if summary:
+        return summary
+    if tool_error:
+        return f"{tool_title or '工作区工具'}执行失败：{tool_error}"
+    return f"{tool_title or '工作区工具'}已执行完成。"
 
 
 def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, object]:
@@ -47,9 +65,11 @@ def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, objec
     workspace_tool_title = None
     workspace_tool_category = None
     workspace_tool_output_kind = None
+    workspace_tool_terminal = False
     if tool_plan_model is not None:
         workspace_tool_name = normalize_optional_text(tool_plan_model.tool_name)
         workspace_tool_reason = normalize_optional_text(tool_plan_model.reason)
+        workspace_tool_terminal = bool(tool_plan_model.terminal)
         if workspace_tool_name is not None:
             descriptor_model = WorkspaceToolDescriptor.from_value(
                 get_workspace_tool_descriptor(workspace_tool_name)
@@ -73,6 +93,7 @@ def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, objec
         workspace_tool_error_code=None,
         workspace_tool_error=None,
         workspace_tool_context=None,
+        workspace_tool_terminal=workspace_tool_terminal,
         **build_run_state_updates(
             run_id=None,
             run_status=None,
@@ -96,6 +117,7 @@ def build_coding_requested_state(state: Mapping[str, object]) -> dict[str, objec
             "workspace_tool_reason": workspace_tool_reason,
             "workspace_tool_category": workspace_tool_category,
             "workspace_tool_output_kind": workspace_tool_output_kind,
+            "workspace_tool_terminal": workspace_tool_terminal,
         },
     )
 
@@ -113,6 +135,7 @@ def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]
             workspace_tool_error_code=None,
             workspace_tool_error=None,
             workspace_tool_context=None,
+            workspace_tool_terminal=False,
             ui_status="workspace_tool_skipped",
         )
         return append_workflow_trace(
@@ -158,15 +181,29 @@ def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]
     tool_error_code = normalize_optional_text(tool_result.tool_error_code)
     tool_error = normalize_optional_text(tool_result.error)
     tool_context = build_workspace_tool_context(tool_result.as_dict())
+    tool_summary = normalize_optional_text(tool_result.summary)
+    tool_user_output = build_workspace_tool_user_output(tool_result.as_dict())
+    tool_terminal = bool(tool_plan_model.terminal) or tool_name == WORKSPACE_TOOL_NAME_WRITE
 
     context = state.get("context")
-    if tool_error is None and tool_context is not None:
+    if not tool_terminal and tool_error is None and tool_context is not None:
         context = merge_context_sections(context, tool_context)
 
     ui_status = "workspace_tool_failed" if tool_error else "workspace_tool_ready"
+    terminal_output = (
+        _build_workspace_tool_terminal_output(
+            tool_title=tool_title,
+            summary=tool_summary,
+            tool_error=tool_error,
+            user_output=tool_user_output,
+        )
+        if tool_terminal
+        else None
+    )
     next_state = merge_agent_state(
         state,
         context=context,
+        output=terminal_output if terminal_output is not None else state.get("output", ""),
         workspace_tool_name=tool_name,
         workspace_tool_reason=tool_reason,
         workspace_tool_descriptor=tool_descriptor,
@@ -175,6 +212,7 @@ def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]
         workspace_tool_error_code=tool_error_code,
         workspace_tool_error=tool_error,
         workspace_tool_context=tool_context,
+        workspace_tool_terminal=tool_terminal,
         ui_status=ui_status,
     )
     return append_workflow_trace(
@@ -189,6 +227,7 @@ def build_workspace_tool_state(state: Mapping[str, object]) -> dict[str, object]
             "tool_category": tool_category,
             "tool_output_kind": tool_output_kind,
             "tool_input": dict(tool_result.tool_input),
+            "terminal": tool_terminal,
             "tool_error_code": tool_error_code,
             "has_error": tool_error is not None,
         },

@@ -166,6 +166,7 @@ def build_agent_initial_state(
     context: str | None,
     session_id: str | None,
     emit_chat_message: bool,
+    emit_node_events: bool = True,
     intent: INTENT_TYPE | None = None,
 ) -> dict[str, object]:
     state: dict[str, object] = {
@@ -173,6 +174,7 @@ def build_agent_initial_state(
         "context": context,
         "session_id": session_id,
         "emit_chat_message": emit_chat_message,
+        "emit_node_events": emit_node_events,
         "output": "",
         "error": None,
         "run_id": None,
@@ -192,6 +194,7 @@ def build_agent_initial_state(
         "workspace_tool_error_code": None,
         "workspace_tool_error": None,
         "workspace_tool_context": None,
+        "workspace_tool_terminal": False,
     }
     if intent is not None:
         state["intent"] = intent
@@ -206,12 +209,14 @@ def invoke_agent_graph(
     session_id: str | None,
     intent: INTENT_TYPE | None,
     emit_chat_message: bool,
+    emit_node_events: bool = True,
 ) -> WorkflowAgentResult:
     initial_state = build_agent_initial_state(
         prompt=prompt,
         context=context,
         session_id=session_id,
         emit_chat_message=emit_chat_message,
+        emit_node_events=emit_node_events,
         intent=intent,
     )
     return invoke_graph_with_result(

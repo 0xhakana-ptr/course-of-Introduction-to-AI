@@ -90,20 +90,24 @@ class MessageSender:
         priority: str = 'medium',
         duration: int = 3000,
         *,
+        metadata: dict[str, Any] | None = None,
         event_type: AGENT_EVENT_TYPE = "character.quip",
         event_source: AGENT_EVENT_SOURCE = "character",
         event_stage: AGENT_EVENT_STAGE = "roleplay",
     ) -> bool:
         """发送 Quip 消息"""
         message_type: MESSAGE_TYPE = "quip"
+        message_metadata = {
+            'priority': priority,
+            'duration': duration,
+        }
+        if metadata:
+            message_metadata.update(metadata)
         message = self._build_message(
             message_type=message_type,
             content=content,
             node_name=node_name,
-            metadata={
-                'priority': priority,
-                'duration': duration,
-            },
+            metadata=message_metadata,
             event_type=event_type,
             event_source=event_source,
             event_stage=event_stage,
@@ -230,6 +234,7 @@ class MessageSender:
         progress: int | None = None,
         node_name: str = '',
         *,
+        metadata: dict[str, Any] | None = None,
         event_type: AGENT_EVENT_TYPE = "status.updated",
         event_source: AGENT_EVENT_SOURCE = "system",
         event_stage: AGENT_EVENT_STAGE = "system",
@@ -241,6 +246,7 @@ class MessageSender:
             status=status,
             progress=progress,
             node_name=node_name or None,
+            metadata=metadata,
             event_type=event_type,
             event_source=event_source,
             event_stage=event_stage,

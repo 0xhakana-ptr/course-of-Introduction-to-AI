@@ -42,10 +42,35 @@ type ErrorMessage = {
 
 type StatusUpdate = {
   type: 'status'
-  status: 'idle' | 'running' | 'paused' | 'done' | 'error'
+  status: 'idle' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
   progress?: number
   node_name?: string
   timestamp: string
+  event_type?: string
+  event_source?: string
+  event_stage?: string
+  metadata?: {
+    node_label?: string
+    phase?: string
+    runtime_event?: string
+  }
+}
+
+type QuipMessage = {
+  type: 'quip'
+  content: string
+  node_name?: string
+  timestamp: string
+  event_type?: string
+  event_source?: string
+  event_stage?: string
+  metadata?: {
+    priority?: 'low' | 'medium' | 'high'
+    duration?: number
+    node_label?: string
+    phase?: string
+    runtime_event?: string
+  }
 }
 
 const ipcRenderer = getIpcRenderer()
@@ -58,9 +83,13 @@ const isSending = ref(false)
 const currentStatus = ref('idle')
 const currentProgress = ref(0)
 const currentNode = ref('')
+const currentNodeLabel = ref('')
 
 // 存储部分消息
 const partialMessages = new Map<number, string>()
+const DESKTOP_EXPORT_TARGET_PATTERN = /(桌面|desktop)/i
+const TEXT_WRITE_ACTION_PATTERN = /(创建|新建|写入|保存|导出|create|new|write|save|export)/i
+const TEXT_FILE_PATTERN = /(\.txt|txt|文本文件|text file)/i
 
 const outputRef = ref<HTMLDivElement | null>(null)
 const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
@@ -82,7 +111,7 @@ function clearScreen() {
 }
 
 // 处理 Chat 消息
-function handleChat(event: any, data: ChatMessage) {
+function handleChat(_event: any, data: ChatMessage) {
   const { content, metadata } = data
   
   if (metadata?.is_partial && typeof metadata.sequence_id === 'number' && typeof metadata.total_parts === 'number') {
@@ -107,30 +136,50 @@ function handleChat(event: any, data: ChatMessage) {
 }
 
 // 处理错误消息
-function handleError(event: any, data: ErrorMessage) {
+function handleError(_event: any, data: ErrorMessage) {
   push('err', `[${data.code}] ${data.message}`)
   if (data.details) {
     push('err', JSON.stringify(data.details, null, 2))
   }
 }
 
+function getDisplayNodeName(data: Pick<StatusUpdate | QuipMessage, 'node_name' | 'metadata'>): string {
+  return data.metadata?.node_label || data.node_name || '未知'
+}
+
+function handleQuip(_event: any, data: QuipMessage) {
+  const content = String(data.content || '').trim()
+  if (!content) return
+
+  const node = getDisplayNodeName(data)
+  if (data.event_type === 'workflow.node_entered') {
+    push('system', `[过程] ${content}（${node}）`)
+    return
+  }
+  push('system', `[提示] ${content}`)
+}
+
 // 处理状态更新
-function handleStatus(event: any, data: StatusUpdate) {
+function handleStatus(_event: any, data: StatusUpdate) {
   currentStatus.value = data.status
   currentProgress.value = data.progress || 0
   currentNode.value = data.node_name || ''
+  currentNodeLabel.value = data.metadata?.node_label || ''
+  const node = getDisplayNodeName(data)
   
   if (data.status === 'running') {
-    push('system', `[状态] 正在运行... 节点: ${data.node_name || '未知'} 进度: ${data.progress || 0}%`)
+    push('system', `[状态] 正在运行... 节点: ${node} 进度: ${data.progress || 0}%`)
   } else if (data.status === 'done') {
     push('system', '[状态] 任务完成')
   } else if (data.status === 'error') {
     push('system', '[状态] 发生错误')
+  } else if (data.status === 'cancelled') {
+    push('system', '[状态] 任务已取消')
   }
 }
 
 // 处理表情消息
-function handleExpression(event: any, data: ExpressionMessage) {
+function handleExpression(_event: any, data: ExpressionMessage) {
   push('system', `[表情] 切换到: ${data.expression} (强度: ${data.intensity})`)
 }
 
@@ -150,12 +199,34 @@ function buildContext(maxChars = 4000): string {
   return joined.length > maxChars ? joined.slice(joined.length - maxChars) : joined
 }
 
+function needsDesktopExportConfirmation(prompt: string): boolean {
+  return (
+    DESKTOP_EXPORT_TARGET_PATTERN.test(prompt)
+    && TEXT_WRITE_ACTION_PATTERN.test(prompt)
+    && TEXT_FILE_PATTERN.test(prompt)
+  )
+}
+
+function confirmDesktopExportRequest(prompt: string): boolean {
+  if (!needsDesktopExportConfirmation(prompt)) return true
+  return window.confirm(
+    '这个请求可能会触发桌面文本导出。\n\n'
+    + '后端仍会限制只能写入配置好的 DESKTOP_EXPORT_DIR，'
+    + '但为了避免误操作，请确认是否继续发送这个请求。',
+  )
+}
+
 async function sendPrompt(prompt: string) {
   const trimmed = prompt.trim()
   if (!trimmed) return
 
   if (!ipcRenderer?.invoke) {
     push('err', '当前窗口没有可用的 ipcRenderer.invoke（请确认在 Electron 中运行）')
+    return
+  }
+
+  if (!confirmDesktopExportRequest(trimmed)) {
+    push('system', '已取消发送：桌面导出请求没有通过前端确认。')
     return
   }
 
@@ -229,7 +300,8 @@ onMounted(() => {
   if (!canInvoke.value) push('err', '（仅 Electron 可用：请通过 pnpm dev 启动桌面端）')
   
   // 监听消息
-  if (ipcRenderer) {
+  if (ipcRenderer?.on) {
+    ipcRenderer.on('agent:quip', handleQuip)
     ipcRenderer.on('agent:chat', handleChat)
     ipcRenderer.on('agent:error', handleError)
     ipcRenderer.on('agent:status', handleStatus)
@@ -240,10 +312,12 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (ipcRenderer) {
+  if (ipcRenderer?.removeListener) {
+    ipcRenderer.removeListener('agent:quip', handleQuip)
     ipcRenderer.removeListener('agent:chat', handleChat)
     ipcRenderer.removeListener('agent:error', handleError)
     ipcRenderer.removeListener('agent:status', handleStatus)
+    ipcRenderer.removeListener('agent:expression', handleExpression)
   }
 })
 </script>
@@ -257,7 +331,7 @@ onUnmounted(() => {
         <div class="status-info" v-if="currentStatus !== 'idle'">
           <span class="status-badge" :class="currentStatus">{{ currentStatus }}</span>
           <span v-if="currentProgress > 0" class="progress">{{ currentProgress }}%</span>
-          <span v-if="currentNode" class="node">{{ currentNode }}</span>
+          <span v-if="currentNodeLabel || currentNode" class="node">{{ currentNodeLabel || currentNode }}</span>
         </div>
         <div class="status" :class="{ busy: isSending }">{{ isSending ? 'thinking…' : 'ready' }}</div>
         <button class="btn" type="button" @click="clearScreen">清屏</button>

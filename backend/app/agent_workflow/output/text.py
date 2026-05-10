@@ -12,6 +12,18 @@ def build_run_creation_output(*, run_id: str, status: str) -> str:
     return build_run_creation_output_with_snapshot(run_id=run_id, status=status)
 
 
+def build_run_tracking_hint(
+    *,
+    terminal: bool = False,
+    include_attempts: bool = False,
+) -> str:
+    if terminal:
+        return "我会保留这个任务编号；需要看详情时，可以在任务详情里查看最终结果、日志和产物。"
+    if include_attempts:
+        return "我会继续同步进展；需要排查时，可以在任务详情里查看快照、尝试记录和日志。"
+    return "我会继续通过桌宠状态同步进展；需要排查时，可以在任务详情里用这个任务编号查看快照和日志。"
+
+
 def build_run_creation_output_with_snapshot(
     *,
     run_id: str,
@@ -20,7 +32,7 @@ def build_run_creation_output_with_snapshot(
     next_action: str | None = None,
 ) -> str:
     lines = [
-        "已通过 LangGraph 创建代码任务，并交给 `/runs` 链路处理。",
+        "我已经创建了代码任务，并交给后端执行。",
         "",
         f"run_id: {run_id}",
         f"status: {status}",
@@ -29,13 +41,7 @@ def build_run_creation_output_with_snapshot(
         lines.append(f"当前快照: {snapshot_summary}")
     if next_action:
         lines.append(f"下一步: {next_action}")
-    lines.extend(
-        [
-            "",
-            f"你可以通过 `GET /runs/{run_id}` 查询任务状态，"
-            f"也可以通过 `GET /runs/{run_id}/snapshot` 查看结构化快照，并通过 `/messages` 接收桌宠状态反馈。",
-        ]
-    )
+    lines.extend(["", build_run_tracking_hint()])
     return "\n".join(lines)
 
 
@@ -63,8 +69,7 @@ def build_run_snapshot_output(
             f"当前快照: {snapshot_summary}",
             f"下一步: {next_action}",
             "",
-            f"你可以继续通过 `GET /runs/{run_id}/snapshot` 查看结构化快照，"
-            f"也可以通过 `GET /runs/{run_id}/attempts` 或 `/messages` 继续观察执行进展。",
+            build_run_tracking_hint(include_attempts=True),
         ]
     )
 
@@ -98,8 +103,7 @@ def build_run_snapshot_progress_output(
         [
             f"下一步: {next_action}",
             "",
-            f"你可以继续通过 `GET /runs/{run_id}/snapshot` 查看结构化快照，"
-            f"也可以通过 `GET /runs/{run_id}/attempts` 或 `/messages` 继续观察执行进展。",
+            build_run_tracking_hint(include_attempts=True),
         ]
     )
     return "\n".join(lines)
@@ -121,8 +125,7 @@ def build_run_terminal_output(
             f"最终总结: {summary_text}",
             f"下一步: {next_action}",
             "",
-            f"你可以通过 `GET /runs/{run_id}` 或 `GET /runs/{run_id}/snapshot` 继续查看结果详情，"
-            f"也可以按需要继续执行 retry / rerun。",
+            build_run_tracking_hint(terminal=True),
         ]
     )
 
@@ -151,8 +154,7 @@ def build_run_control_output(
             f"当前快照: {snapshot_summary}",
             f"下一步: {next_action}",
             "",
-            f"你可以通过 `GET /runs/{run_id}/snapshot` 查看结构化快照，"
-            f"也可以通过 `GET /runs/{run_id}/attempts` 或 `/messages` 继续观察执行进展。",
+            build_run_tracking_hint(include_attempts=True),
         ]
     )
     return "\n".join(lines)

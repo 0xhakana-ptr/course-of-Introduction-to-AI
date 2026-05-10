@@ -1028,6 +1028,20 @@
 - `log_path`
 - `artifacts`
 - `attempts`
+- `detail_sections`
+
+`detail_sections` 是面向前端展示的分层视图，当前包含：
+
+- `overview`：任务概览，适合放在详情页顶部
+- `result`：最终结果和产物摘要
+- `attempts`：执行尝试摘要
+- `diagnostics`：命令、日志路径、stdout/stderr/error 预览等调试信息，`technical=true`
+
+兼容说明：
+
+- `output`、`stdout`、`stderr`、`attempts` 等原字段继续保留
+- 前端主视图优先使用 `detail_sections`
+- 完整日志和大段输出仍建议通过 `/runs/{run_id}/logs`、`/attempts/{attempt_number}/output` 分块读取
 
 ### 5.2 `RunAttemptResponse`
 

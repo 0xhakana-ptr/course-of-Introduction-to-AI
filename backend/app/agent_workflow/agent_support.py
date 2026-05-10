@@ -21,7 +21,11 @@ from .state.constants import (
     RUN_CONTROL_ACTIONS,
     WORKFLOW_NODE_FAILED_STATUS,
 )
-from .state.routing import select_agent_next_node, select_coding_next_node
+from .state.routing import (
+    select_agent_next_node,
+    select_coding_next_node,
+    select_workspace_tool_next_node,
+)
 from .state.state_support import (
     append_workflow_trace,
     build_agent_initial_state,

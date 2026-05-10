@@ -3,6 +3,7 @@ from typing import Literal
 
 AGENT_EVENT_TYPE = Literal[
     "workflow.trace",
+    "workflow.node_entered",
     "workflow.intent_routed",
     "workflow.coding_prepared",
     "workflow.unknown_intent_completed",

@@ -37,9 +37,15 @@ type QuipMessage = {
   content: string
   node_name: string
   timestamp: string
+  event_type?: string
+  event_source?: string
+  event_stage?: string
   metadata?: {
     priority: 'low' | 'medium' | 'high'
     duration?: number
+    node_label?: string
+    phase?: string
+    runtime_event?: string
   }
 }
 
@@ -79,10 +85,18 @@ type ErrorMessage = {
 
 type StatusUpdate = {
   type: 'status'
-  status: 'idle' | 'running' | 'paused' | 'done' | 'error'
+  status: 'idle' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
   progress?: number
   node_name?: string
   timestamp: string
+  event_type?: string
+  event_source?: string
+  event_stage?: string
+  metadata?: {
+    node_label?: string
+    phase?: string
+    runtime_event?: string
+  }
 }
 
 type AgentMessage = QuipMessage | ExpressionMessage | ChatMessage | ErrorMessage | StatusUpdate
@@ -622,6 +636,12 @@ function dispatchAgentMessage(message: AgentMessageEnvelope) {
         case 'agent:quip':
             if (quipWindow && !quipWindow.isDestroyed()) {
                 quipWindow.webContents.send('agent:quip', message)
+            }
+            if (chatWindow && !chatWindow.isDestroyed()) {
+                chatWindow.webContents.send('agent:quip', message)
+            }
+            if (consoleWindow && !consoleWindow.isDestroyed()) {
+                consoleWindow.webContents.send('agent:quip', message)
             }
             break
         case 'agent:expression':

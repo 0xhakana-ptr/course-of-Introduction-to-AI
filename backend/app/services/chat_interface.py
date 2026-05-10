@@ -11,8 +11,8 @@ RunScheduler = Callable[[str], None]
 SCHEDULABLE_RUN_ACTIONS = {"create", "retry", "rerun"}
 SCHEDULED_OUTPUT_REPLACEMENTS = {
     "create": (
-        "已通过 LangGraph 创建代码任务，并交给 `/runs` 链路处理。",
-        "已通过 LangGraph 创建代码任务，并开始后台执行。",
+        "我已经创建了代码任务，并交给后端执行。",
+        "我已经创建了代码任务，并开始后台执行。",
     ),
     "retry": (
         "我已为这个代码任务创建重试任务。",

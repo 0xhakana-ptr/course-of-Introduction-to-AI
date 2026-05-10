@@ -5,6 +5,7 @@ from langgraph.graph import END, StateGraph
 from ...llm.client import call_llm_sync
 from ...schemas import INTENT_TYPE
 from ...services.chat_action.intent import detect_intent
+from ..output.node_events import emit_workflow_node_entered
 from .graph_support import (
     configure_agent_graph_edges,
     register_agent_graph_nodes,
@@ -38,6 +39,7 @@ from ..agent_support import (
     invoke_agent_graph,
     select_coding_next_node,
     select_agent_next_node,
+    select_workspace_tool_next_node,
 )
 from ..summary.run_summary_graph import summarize_run_record
 from ..contracts.workflow_results import WorkflowAgentResult
@@ -68,8 +70,11 @@ class AgentState(TypedDict, total=False):
     workspace_tool_error_code: str | None
     workspace_tool_error: str | None
     workspace_tool_context: str | None
+    emit_node_events: bool
+    workspace_tool_terminal: bool
 
 def router_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "router")
     prompt = state.get("user_input", "")
     intent = state.get("intent") or detect_intent(prompt)
     return build_routed_state(state, intent=intent)
@@ -82,6 +87,7 @@ def route_by_intent(state: AgentState) -> str:
 
 
 def chat_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "chat_node")
     prompt = state.get("user_input", "")
     result = call_llm_sync(prompt, state.get("context"))
     return build_chat_result_state(
@@ -92,14 +98,17 @@ def chat_node(state: AgentState) -> AgentState:
 
 
 def coding_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "coding_node")
     return build_coding_requested_state(state)
 
 
 def workspace_tool_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "workspace_tool_node")
     return build_workspace_tool_state(state)
 
 
 def run_tool_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "run_tool_node")
     try:
         run = create_run(
             prompt=state.get("user_input", ""),
@@ -125,6 +134,7 @@ def run_tool_node(state: AgentState) -> AgentState:
 
 
 def run_snapshot_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "run_snapshot_node")
     target_run_id = resolve_target_run_id(state)
     if not target_run_id:
         return build_run_snapshot_failure_state(
@@ -169,6 +179,7 @@ def run_snapshot_node(state: AgentState) -> AgentState:
 
 
 def run_control_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "run_control_node")
     action = str(state.get("run_action") or "").strip()
     target_run_id = resolve_target_run_id(state)
     if not target_run_id:
@@ -221,11 +232,13 @@ def run_control_node(state: AgentState) -> AgentState:
 
 
 def unknown_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "unknown_node")
     prompt = state.get("user_input", "")
     return build_unknown_intent_state(state, prompt=prompt)
 
 
 def roleplay_node(state: AgentState) -> AgentState:
+    emit_workflow_node_entered(state, "roleplay_node")
     return emit_agent_roleplay_state(state)
 
 def create_agent_graph():
@@ -250,6 +263,7 @@ def create_agent_graph():
         workflow,
         route_by_intent=route_by_intent,
         select_coding_next_node=select_coding_next_node,
+        select_workspace_tool_next_node=select_workspace_tool_next_node,
         end_node=END,
     )
 
@@ -266,6 +280,7 @@ def run_agent(
     session_id: str | None = None,
     intent: INTENT_TYPE | None = None,
     emit_chat_message: bool = True,
+    emit_node_events: bool = True,
 ) -> WorkflowAgentResult:
     return invoke_agent_graph(
         agent_graph,
@@ -274,4 +289,5 @@ def run_agent(
         session_id=session_id,
         intent=intent,
         emit_chat_message=emit_chat_message,
+        emit_node_events=emit_node_events,
     )

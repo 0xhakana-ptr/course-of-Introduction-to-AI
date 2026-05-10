@@ -51,6 +51,7 @@ class WorkspaceToolPlan(BaseModel):
     tool_name: str
     tool_input: dict[str, Any] = Field(default_factory=dict)
     reason: str | None = None
+    terminal: bool | None = None
 
     def as_dict(self) -> dict[str, object]:
         return self.model_dump(mode="python", exclude_none=True)

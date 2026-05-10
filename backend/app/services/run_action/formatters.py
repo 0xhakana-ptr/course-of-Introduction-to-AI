@@ -1,5 +1,6 @@
 from ...core.text_utils import build_preview, clip_text
 from ...schemas import (
+    RunDetailSection,
     RunAttemptResponse,
     RunResponse,
     RunStateSnapshotResponse,
@@ -30,7 +31,7 @@ def build_run_chat_text(
         lines.append(f"run_id: {run_id}")
     lines.extend(f"{label}: {value}" for label, value in fields if value)
     if include_run_link and run_id:
-        lines.append(f"查看完整结果: GET /runs/{run_id}")
+        lines.append("查看完整结果: 可以在任务详情中使用这个 run_id 查看结果、日志和产物。")
     return "\n".join(lines)
 
 
@@ -231,6 +232,130 @@ def to_run_attempt_response(record: AttemptRecord) -> RunAttemptResponse:
     )
 
 
+def _item(label: str, value: object) -> dict[str, object]:
+    return {"label": label, "value": value}
+
+
+def _has_display_value(value: object) -> bool:
+    return value is not None and value != ""
+
+
+def _format_duration_ms(value: object) -> str | None:
+    if not isinstance(value, int):
+        return None
+    if value < 1000:
+        return f"{value} ms"
+    return f"{value / 1000:.2f} s"
+
+
+def _build_overview_section(record: RunRecord) -> RunDetailSection:
+    generator = (
+        describe_generator(str(record.get("generator") or "unknown"))
+        if record.get("generator") is not None
+        else None
+    )
+    duration = _format_duration_ms(record.get("duration_ms"))
+    items = [
+        _item("状态", str(record.get("status") or "")),
+        _item("生成方式", generator),
+        _item("尝试次数", int(record.get("attempt_count") or 0)),
+        _item("自动修复次数", int(record.get("repair_count") or 0)),
+        _item("耗时", duration),
+    ]
+    return RunDetailSection(
+        key="overview",
+        title="任务概览",
+        summary=build_run_summary_text(record),
+        items=[item for item in items if _has_display_value(item["value"])],
+        technical=False,
+    )
+
+
+def _build_result_section(record: RunRecord) -> RunDetailSection:
+    output = str(record.get("output") or "").strip()
+    error = str(record.get("error") or "").strip()
+    artifacts = [
+        {"path": str(artifact)}
+        for artifact in record.get("artifacts", [])
+        if isinstance(artifact, str) and artifact.strip()
+    ]
+    summary_source = output or error or "任务还没有可展示的最终结果。"
+    return RunDetailSection(
+        key="result",
+        title="最终结果",
+        summary=preview_single_line(summary_source, limit=300),
+        items=artifacts,
+        technical=False,
+    )
+
+
+def _build_attempts_section(attempts: list[AttemptRecord]) -> RunDetailSection:
+    return RunDetailSection(
+        key="attempts",
+        title="尝试记录",
+        summary=(
+            f"共记录 {len(attempts)} 次执行尝试。"
+            if attempts
+            else "这个任务还没有开始执行尝试。"
+        ),
+        items=[
+            {
+                "attempt_number": int(attempt.get("attempt_number") or 0),
+                "status": str(attempt.get("status") or ""),
+                "generator": describe_generator(str(attempt.get("generator") or "unknown")),
+                "repair_round": int(attempt.get("repair_round") or 0),
+                "returncode": attempt.get("returncode"),
+                "duration_ms": attempt.get("duration_ms"),
+                "script_available": attempt.get("script_rel_path") is not None,
+                "summary": build_attempt_summary(attempt),
+            }
+            for attempt in attempts
+        ],
+        technical=False,
+    )
+
+
+def _build_diagnostics_section(record: RunRecord, attempts: list[AttemptRecord]) -> RunDetailSection:
+    latest_attempt = attempts[-1] if attempts else {}
+    latest_stdout = str(latest_attempt.get("stdout") or record.get("stdout") or "")
+    latest_stderr = str(latest_attempt.get("stderr") or record.get("stderr") or "")
+    latest_error = str(latest_attempt.get("error") or record.get("error") or "")
+    items = [
+        _item("命令", latest_attempt.get("command") or record.get("command")),
+        _item("工作目录", latest_attempt.get("cwd")),
+        _item("返回码", latest_attempt.get("returncode") or record.get("returncode")),
+        _item("日志路径", record.get("log_path")),
+        _item("stdout 长度", len(latest_stdout) if latest_stdout else 0),
+        _item("stderr 长度", len(latest_stderr) if latest_stderr else 0),
+        _item("error 长度", len(latest_error) if latest_error else 0),
+    ]
+    content_parts: list[str] = []
+    if latest_stdout.strip():
+        content_parts.append(f"stdout preview:\n{preview_single_line(latest_stdout, limit=600)}")
+    if latest_stderr.strip():
+        content_parts.append(f"stderr preview:\n{preview_single_line(latest_stderr, limit=600)}")
+    if latest_error.strip():
+        content_parts.append(f"error preview:\n{preview_single_line(latest_error, limit=600)}")
+    return RunDetailSection(
+        key="diagnostics",
+        title="调试信息",
+        summary="这里保留命令、日志路径和输出长度，完整内容请按需读取日志或分块输出。",
+        content="\n\n".join(content_parts) or None,
+        items=[item for item in items if _has_display_value(item["value"])],
+        technical=True,
+    )
+
+
+def build_run_detail_sections(record: RunRecord) -> list[RunDetailSection]:
+    attempts = get_attempt_records(record)
+    return [
+        _build_overview_section(record),
+        _build_result_section(record),
+        _build_attempts_section(attempts),
+        _build_diagnostics_section(record, attempts),
+    ]
+
+
 def to_run_response(record: RunRecord) -> RunResponse:
     attempts = get_attempt_records(record)
     return RunResponse(
@@ -259,6 +384,7 @@ def to_run_response(record: RunRecord) -> RunResponse:
         log_path=str(record["log_path"]) if record.get("log_path") is not None else None,
         artifacts=[str(item) for item in record.get("artifacts", []) if isinstance(item, str)],
         attempts=[to_run_attempt_response(item) for item in attempts],
+        detail_sections=build_run_detail_sections(record),
     )
 
 

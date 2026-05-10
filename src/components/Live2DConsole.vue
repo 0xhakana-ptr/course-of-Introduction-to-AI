@@ -46,7 +46,7 @@ function push(kind: ConsoleLine['kind'], text: string) {
 }
 
 // 处理 Quip 消息
-function handleQuip(event: any, data: QuipMessage) {
+function handleQuip(_event: any, data: QuipMessage) {
   currentQuip.value = data.content
   push('out', `[Quip] ${data.content} (from node: ${data.node_name})`)
   
@@ -58,16 +58,17 @@ function handleQuip(event: any, data: QuipMessage) {
 }
 
 // 处理表情消息
-function handleExpression(event: any, data: ExpressionMessage) {
+function handleExpression(_event: any, data: ExpressionMessage) {
   currentExpression.value = data.expression
   push('out', `[Expression] ${data.expression} (intensity: ${data.intensity})`)  
   // 实际切换 Live2D 表情
-  if (ipcRenderer) {
-    ipcRenderer.invoke('live2d:command', `expr ${data.expression}`).then((res) => {
-      if (res?.ok) {
+  if (ipcRenderer?.invoke) {
+    ipcRenderer.invoke('live2d:command', `expr ${data.expression}`).then((res: unknown) => {
+      const commandResult = res as CommandResponse | null
+      if (commandResult?.ok) {
         push('out', `已切换到表情: ${data.expression}`)
       } else {
-        push('err', `切换表情失败: ${res?.output || '未知错误'}`)
+        push('err', `切换表情失败: ${commandResult?.output || '未知错误'}`)
       }
     }).catch((e) => {
       push('err', `切换表情异常: ${String(e)}`)
@@ -107,7 +108,7 @@ onMounted(() => {
   if (input.value.trim() === 'help') void runCommand('help')
   
   // 监听 Quip 和表情消息
-  if (ipcRenderer) {
+  if (ipcRenderer?.on) {
     ipcRenderer.on('agent:quip', handleQuip)
     ipcRenderer.on('agent:expression', handleExpression)
   } else {
@@ -116,7 +117,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (ipcRenderer) {
+  if (ipcRenderer?.removeListener) {
     ipcRenderer.removeListener('agent:quip', handleQuip)
     ipcRenderer.removeListener('agent:expression', handleExpression)
   }

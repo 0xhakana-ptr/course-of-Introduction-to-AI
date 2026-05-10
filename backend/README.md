@@ -92,6 +92,25 @@ uv run uvicorn backend.app.main:app --reload --port 8000
 
 ## 3. 常用命令
 
+### 3.0 可选：桌面导出
+
+默认情况下，后端不会直接写入桌面或任意系统路径。简单文本文件任务会优先写入 `backend/workspace`；如果用户要求写到桌面，默认会返回安全提示。
+
+如果确实需要让后端把文本文件导出到桌面附近的指定目录，需要在 `backend/.env` 中显式开启：
+
+```text
+DESKTOP_EXPORT_ENABLED=true
+DESKTOP_EXPORT_DIR=C:\Users\<you>\Desktop\AI-Agent-Exports
+```
+
+说明：
+
+- `DESKTOP_EXPORT_ENABLED=false` 是默认值
+- `DESKTOP_EXPORT_DIR` 必须是明确的本地目录
+- 后端只会导出到该目录下，并会清洗文件名
+- 默认不覆盖同名文件
+- 不建议直接把整个真实桌面作为随意写入目录
+
 ### 3.1 运行测试
 
 ```powershell
