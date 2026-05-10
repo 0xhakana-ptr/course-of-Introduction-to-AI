@@ -1,13 +1,13 @@
-from backend.app.agent_workflow.repair_decision_graph import (
+from backend.app.agent_workflow.repair.repair_decision_graph import (
     evaluate_repair_decision,
     run_repair_workflow,
 )
-from backend.app.agent_workflow.retry_guidance import (
+from backend.app.agent_workflow.repair.retry_guidance import (
     build_retry_guidance,
     build_terminal_retry_guidance,
     resolve_retry_guidance_from_repair_result,
 )
-from backend.app.agent_workflow.repair_support import (
+from backend.app.agent_workflow.repair.support import (
     build_failure_inspected_state,
     build_feedback_composed_state,
     build_repair_codegen_state,
@@ -16,7 +16,7 @@ from backend.app.agent_workflow.repair_support import (
     build_repair_feedback_message,
     select_repair_graph_next_step,
 )
-from backend.app.agent_workflow.workflow_nodes import (
+from backend.app.agent_workflow.contracts.workflow_nodes import (
     TASK_CANCELLED_NODE,
     TASK_DONE_NODE,
     TASK_FAILED_NODE,
@@ -28,7 +28,7 @@ from backend.app.agent_workflow.workflow_nodes import (
     TASK_RETRY_REPAIRING_NODE,
     get_run_terminal_node_name,
 )
-from backend.app.agent_workflow.workflow_results import WorkflowRepairResult
+from backend.app.agent_workflow.contracts.workflow_results import WorkflowRepairResult
 from backend.app.services.run_action.types import ScriptGenerationResult, WorkflowChatMessage
 
 
@@ -83,11 +83,11 @@ def test_repair_decision_graph_allows_repair_when_budget_remains():
 
 def test_repair_decision_graph_uses_llm_analysis_when_available(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.llm_is_configured",
+        "backend.app.agent_workflow.repair.repair_decision_graph.llm_is_configured",
         lambda: True,
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.call_llm_sync",
+        "backend.app.agent_workflow.repair.repair_decision_graph.call_llm_sync",
         lambda *args, **kwargs: type(
             "FakeLLMResult",
             (),
@@ -124,11 +124,11 @@ def test_repair_decision_graph_uses_llm_analysis_when_available(monkeypatch):
 
 def test_repair_decision_graph_keeps_fallback_analysis_when_llm_analysis_fails(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.llm_is_configured",
+        "backend.app.agent_workflow.repair.repair_decision_graph.llm_is_configured",
         lambda: True,
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.call_llm_sync",
+        "backend.app.agent_workflow.repair.repair_decision_graph.call_llm_sync",
         lambda *args, **kwargs: type(
             "FakeLLMResult",
             (),
@@ -164,7 +164,7 @@ def test_repair_decision_graph_keeps_fallback_analysis_when_llm_analysis_fails(m
 
 def test_repair_workflow_graph_returns_generated_script(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
+        "backend.app.agent_workflow.repair.repair_decision_graph.generate_repaired_script_with_llm",
         lambda **kwargs: ScriptGenerationResult(
             ok=True,
             file_name="repaired_demo.py",
@@ -218,7 +218,7 @@ def test_repair_workflow_graph_skips_generation_when_repair_is_blocked(monkeypat
         return ScriptGenerationResult(ok=False, error="should not be called")
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
+        "backend.app.agent_workflow.repair.repair_decision_graph.generate_repaired_script_with_llm",
         fake_generate,
     )
 
@@ -515,7 +515,7 @@ def test_repair_workflow_returns_failed_result_when_graph_invoke_fails(monkeypat
         },
     )()
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.repair_decision_graph",
+        "backend.app.agent_workflow.repair.repair_decision_graph.repair_decision_graph",
         fake_graph,
     )
 

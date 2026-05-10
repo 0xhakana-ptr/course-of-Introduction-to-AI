@@ -23,7 +23,7 @@ async def build_agent_reply(
     emit_chat_message: bool = False,
 ) -> ChatServiceResult:
     try:
-        from ...agent_workflow.agent_graph import run_agent
+        from ...agent_workflow.graph.agent_graph import run_agent
     except ImportError as exc:
         resolved_intent = intent or "unknown"
         return ChatServiceResult(

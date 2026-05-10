@@ -2,15 +2,15 @@ from functools import partial
 
 from anyio import to_thread
 
-from ..schemas import (
+from ...schemas import (
     AgentDiagnosticsResponse,
     AgentRunDiagnosticsResponse,
     AgentWorkflowDebugSummary,
     AgentWorkflowErrorContext,
     INTENT_TYPE,
 )
-from ..services.chat_action.intent import detect_intent
-from .agent_support import (
+from ...services.chat_action.intent import detect_intent
+from ..agent_support import (
     append_workflow_trace,
     build_agent_initial_state,
     build_coding_requested_state,
@@ -18,13 +18,13 @@ from .agent_support import (
     select_agent_next_node,
     select_coding_next_node,
 )
-from .diagnostics_support import (
+from .support import (
     WorkspaceToolSnapshot,
     build_workspace_tool_response_kwargs,
 )
-from .diagnostics_failure import build_failure_descriptor
-from .agent_graph import run_agent
-from .trace_runtime import (
+from .failure import build_failure_descriptor
+from ..agent_graph import run_agent
+from ..trace.runtime import (
     build_runtime_event_summary,
     find_failure_trace,
     normalize_trace_items,

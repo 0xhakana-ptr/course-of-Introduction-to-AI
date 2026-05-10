@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from ...schemas import INTENT_TYPE
-from ...agent_workflow.workflow_results import WorkflowAgentResult
+from ...agent_workflow.contracts.workflow_results import WorkflowAgentResult
 
 
 VALID_CHAT_SERVICE_INTENTS: set[str] = {"chat", "coding", "unknown"}

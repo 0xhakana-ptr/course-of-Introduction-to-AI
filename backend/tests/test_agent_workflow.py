@@ -1,5 +1,5 @@
-from backend.app.agent_workflow.agent_graph import run_agent
-from backend.app.agent_workflow.agent_graph_support import (
+from backend.app.agent_workflow.graph.agent_graph import run_agent
+from backend.app.agent_workflow.graph.graph_support import (
     AGENT_CODING_EDGE_MAP,
     AGENT_LINEAR_EDGES,
     AGENT_ROUTER_EDGE_MAP,
@@ -7,16 +7,16 @@ from backend.app.agent_workflow.agent_graph_support import (
     guard_node,
     register_agent_graph_nodes,
 )
-from backend.app.agent_workflow.agent_run_support import (
+from backend.app.agent_workflow.state.run_support import (
     build_run_control_fallback_next_action,
     execute_run_control_action,
     resolve_target_run_id,
 )
-from backend.app.agent_workflow.agent_run_state import (
+from backend.app.agent_workflow.state.run_state import (
     WorkflowRunStateSnapshot,
     build_run_state_updates,
 )
-from backend.app.agent_workflow.agent_state_support import (
+from backend.app.agent_workflow.state.state_support import (
     append_workflow_trace,
     normalize_optional_text,
 )
@@ -41,20 +41,20 @@ from backend.app.agent_workflow.agent_support import (
     select_coding_next_node,
     select_agent_next_node,
 )
-from backend.app.agent_workflow.agent_text_support import describe_run_action
-from backend.app.agent_workflow.trace_messages import (
+from backend.app.agent_workflow.output.text import describe_run_action
+from backend.app.agent_workflow.trace.messages import (
     build_trace_event_label,
     build_trace_message,
     build_trace_status_level,
 )
-from backend.app.agent_workflow.trace_runtime import (
+from backend.app.agent_workflow.trace.runtime import (
     build_runtime_event_summary,
     build_workflow_trace_entry,
     find_failure_trace,
     normalize_trace_items,
 )
-from backend.app.agent_workflow.roleplay import emit_roleplay_message, emit_roleplay_state
-from backend.app.agent_workflow.workflow_results import WorkflowAgentResult
+from backend.app.agent_workflow.output.roleplay import emit_roleplay_message, emit_roleplay_state
+from backend.app.agent_workflow.contracts.workflow_results import WorkflowAgentResult
 from backend.app.message_queue import message_queue
 from backend.app.services.chat_action.intent import detect_intent, detect_run_action, extract_run_reference
 from backend.app.services.chat_action.types import ChatServiceResult
@@ -104,7 +104,7 @@ def test_agent_graph_can_inspect_terminal_run_and_return_summary(monkeypatch):
     run_id = "123e4567-e89b-12d3-a456-426614174000"
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.get_run_snapshot",
+        "backend.app.agent_workflow.graph.agent_graph.get_run_snapshot",
         lambda target_run_id: type(
             "FakeRunSnapshot",
             (),
@@ -119,7 +119,7 @@ def test_agent_graph_can_inspect_terminal_run_and_return_summary(monkeypatch):
         )(),
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.get_run",
+        "backend.app.agent_workflow.graph.agent_graph.get_run",
         lambda target_run_id: type(
             "FakeRunResponse",
             (),
@@ -139,7 +139,7 @@ def test_agent_graph_can_inspect_terminal_run_and_return_summary(monkeypatch):
         )(),
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.summarize_run_record",
+        "backend.app.agent_workflow.graph.agent_graph.summarize_run_record",
         lambda record, emit_chat_message=False: type(
             "FakeSummaryResult",
             (),
@@ -189,11 +189,11 @@ def test_agent_graph_can_retry_existing_run(monkeypatch):
         )()
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.retry_run",
+        "backend.app.agent_workflow.graph.agent_graph.retry_run",
         fake_retry_run,
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.get_run_snapshot",
+        "backend.app.agent_workflow.graph.agent_graph.get_run_snapshot",
         lambda run_id: type(
             "FakeRunSnapshot",
             (),
@@ -225,7 +225,7 @@ def test_agent_graph_can_retry_existing_run(monkeypatch):
 
 def test_agent_graph_routes_chat_intent_to_llm(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.call_llm_sync",
+        "backend.app.agent_workflow.graph.agent_graph.call_llm_sync",
         lambda prompt, context: type(
             "FakeLLMResult",
             (),
@@ -253,7 +253,7 @@ def test_agent_graph_routes_chat_intent_to_llm(monkeypatch):
 
 def test_agent_graph_captures_node_exception_with_trace(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.call_llm_sync",
+        "backend.app.agent_workflow.graph.agent_graph.call_llm_sync",
         lambda prompt, context: (_ for _ in ()).throw(RuntimeError("llm raised boom")),
     )
 
@@ -287,11 +287,11 @@ def test_agent_graph_routes_coding_intent_with_workspace_tool_context(monkeypatc
         return type("FakeRun", (), {"run_id": "run-tool-1", "status": "queued"})()
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.create_run",
+        "backend.app.agent_workflow.graph.agent_graph.create_run",
         fake_create_run,
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.get_run_snapshot",
+        "backend.app.agent_workflow.graph.agent_graph.get_run_snapshot",
         lambda run_id: type(
             "FakeRunSnapshot",
             (),
@@ -371,7 +371,7 @@ def test_intent_detection_can_identify_run_control_prompts():
 
 def test_agent_support_merges_context_sections_and_builds_tool_plan(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_builder_support.plan_workspace_tool",
+        "backend.app.agent_workflow.graph.builder_support.plan_workspace_tool",
         lambda prompt: {
             "tool_name": "read_workspace_text",
             "tool_input": {"rel_path": "backend/app/demo.txt"},
@@ -674,7 +674,7 @@ def test_agent_graph_support_registers_nodes_and_edges():
 
 def test_agent_support_builds_workspace_tool_state_and_merges_context(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_builder_support.execute_workspace_tool_plan",
+        "backend.app.agent_workflow.graph.builder_support.execute_workspace_tool_plan",
         lambda plan: {
             "tool_name": "build_workspace_overview",
             "reason": "Provide a compact workspace overview before creating the run.",
@@ -715,7 +715,7 @@ def test_agent_support_builds_workspace_tool_state_and_merges_context(monkeypatc
 
 def test_agent_support_keeps_original_context_when_workspace_tool_fails(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_builder_support.execute_workspace_tool_plan",
+        "backend.app.agent_workflow.graph.builder_support.execute_workspace_tool_plan",
         lambda plan: {
             "tool_name": "read_workspace_text",
             "reason": "Prompt references a workspace file path.",

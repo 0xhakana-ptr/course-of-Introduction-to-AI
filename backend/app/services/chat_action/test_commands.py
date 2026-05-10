@@ -1,4 +1,4 @@
-from ...agent_workflow.node_mappings import get_node_quip_and_expression
+from ...agent_workflow.contracts.node_mappings import get_node_quip_and_expression
 from ...messaging.message_sender import message_sender
 
 

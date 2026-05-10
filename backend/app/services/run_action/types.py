@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from ...agent_workflow.workflow_results import WorkflowRepairResult
+from ...agent_workflow.contracts.workflow_results import WorkflowRepairResult
 
 
 LLM_PREVIEW_LIMIT = 400

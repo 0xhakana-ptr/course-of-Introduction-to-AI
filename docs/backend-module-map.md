@@ -209,84 +209,181 @@ backend/app/services/
 
 这是当前后端最复杂的目录，建议按“职责簇”理解，而不是按单文件硬记。
 
+当前 `agent_workflow/` 根目录下仍保留若干旧模块名，它们主要是兼容导出层。后端内部新代码应优先使用各子包下的真实实现路径；兼容层用于保护团队旧代码、历史测试路径和短期分支合并。
+
 ### 6.1 图构建与主流程
 
-- `agent_graph.py`
-- `workflow_nodes.py`
-- `workflow_results.py`
-- `agent_builder_support.py`
-- `agent_graph_support.py`
+```text
+agent_workflow/
+  graph/
+    agent_graph.py
+    builder_support.py
+    graph_support.py
+  agent_graph.py
+  agent_builder_support.py
+  agent_graph_support.py
+```
 
 职责：
 
-- 搭 LangGraph 图
-- 定义节点之间如何衔接
-- 统一工作流结果结构
+- `graph/agent_graph.py`：搭建主 LangGraph Agent Brain，包含 router、chat、coding、tool、run 和 roleplay 主节点
+- `graph/builder_support.py`：组装 coding/run/tool 节点所需的 state 更新
+- `graph/graph_support.py`：注册节点、保护节点异常、配置图边
+- 根目录下的 `agent_graph.py`、`agent_builder_support.py`、`agent_graph_support.py` 是兼容导出层
 
-### 6.2 路由、状态与基础常量
+### 6.2 共享契约与节点映射
 
-- `agent_support.py`
-- `agent_routing_support.py`
-- `agent_state_support.py`
-- `agent_constants.py`
-- `node_mappings.py`
-
-职责：
-
-- 统一工作流状态
-- 管理节点名、状态名、映射关系
-- 处理路由与节点级辅助逻辑
-
-### 6.3 run 相关工作流
-
-- `agent_run_support.py`
-- `run_summary_graph.py`
-- `attempt_summary_graph.py`
-- `repair_decision_graph.py`
-- `repair_support.py`
-- `summary_support.py`
-- `retry_guidance.py`
+```text
+agent_workflow/
+  contracts/
+    workflow_nodes.py
+    workflow_results.py
+    node_mappings.py
+  workflow_nodes.py
+  workflow_results.py
+  node_mappings.py
+```
 
 职责：
 
-- 生成 run 摘要
-- 生成 attempt 摘要
-- 决定失败后是否修复、如何修复
-- 提供 retry / repair 辅助信息
+- `contracts/workflow_nodes.py`：保存 workflow 节点常量、终态节点映射和节点元信息
+- `contracts/workflow_results.py`：保存 Agent / Summary / Repair workflow 的结构化结果模型与 graph invoke 收口 helper
+- `contracts/node_mappings.py`：保存节点到 quip / expression 的映射和是否发送 chat message 的规则
+- 根目录下的 `workflow_nodes.py`、`workflow_results.py`、`node_mappings.py` 是兼容导出层，暂时用于保护旧导入路径和测试路径
 
-### 6.4 输出与文案收口
+### 6.3 路由、状态与基础常量
 
-- `roleplay.py`
-- `agent_text_support.py`
+```text
+agent_workflow/
+  state/
+    constants.py
+    routing.py
+    run_state.py
+    run_support.py
+    state_support.py
+  agent_constants.py
+  agent_routing_support.py
+  agent_run_state.py
+  agent_run_support.py
+  agent_state_support.py
+  agent_support.py
+```
 
 职责：
 
-- 把工作流结果整理为最终对话输出
-- 做面向用户的文案收口
+- `state/constants.py`：保存 Agent workflow 内部 action/status 常量
+- `state/routing.py`：根据 intent、run action 和 ui_status 选择下一个节点
+- `state/run_state.py`：封装 run 相关状态字段快照与更新
+- `state/run_support.py`：封装 run_id 解析、snapshot 读取和 run control 调度
+- `state/state_support.py`：封装 Agent state merge、trace 追加、初始 state 和 graph invoke
+- 根目录下的 `agent_*` state/support 文件是兼容导出层，`agent_support.py` 继续作为主 Agent helper facade
 
-### 6.5 诊断
+### 6.4 summary 工作流
 
-- `diagnostics.py`
-- `diagnostics_failure.py`
-- `diagnostics_support.py`
-- `trace_runtime.py`
-- `trace_messages.py`
+```text
+agent_workflow/
+  summary/
+    run_summary_graph.py
+    attempt_summary_graph.py
+    support.py
+  run_summary_graph.py
+  attempt_summary_graph.py
+  summary_support.py
+```
 
 职责：
 
-- `diagnostics.py`：提供 Agent 诊断入口，负责 preview / runtime diagnostics 的流程编排
-- `diagnostics_failure.py`：把失败事件转换成稳定 `error_code`、`failure_domain` 和中文摘要
-- `diagnostics_support.py`：负责 workspace tool 诊断快照，以及 workspace tool 相关响应字段组装
-- `trace_runtime.py`：负责 `workflow_trace` 的 runtime metadata、entry 构造、归一化、失败 trace 查找和事件聚合
-- `trace_messages.py`：负责 trace 的中文标签、严重级别和可读节点日志文案
+- `summary/run_summary_graph.py`：读取终态 run record，生成用户可读 run 总结
+- `summary/attempt_summary_graph.py`：整理 repair retry attempt 的结果和下一步建议
+- `summary/support.py`：收口 summary prompt、文本解析、roleplay 节点和 fallback 发消息逻辑
+- 根目录下的 `run_summary_graph.py`、`attempt_summary_graph.py`、`summary_support.py` 是兼容导出层，暂时用于保护旧导入路径和测试 monkeypatch 路径
 
 边界约束：
 
-- 新增 trace 事件元信息，优先改 `trace_runtime.py`
-- 新增 trace 展示文案，优先改 `trace_messages.py`
-- 新增 diagnostics 失败类型，优先改 `diagnostics_failure.py`
-- 新增 workspace tool 诊断字段，优先改 `diagnostics_support.py`
-- `diagnostics.py` 应尽量保持为流程编排，不再堆叠字段组装和文案分支
+- 新增 summary 类子图，优先放入 `summary/`
+- 修改 run / attempt summary 行为，优先改 `summary/run_summary_graph.py` 或 `summary/attempt_summary_graph.py`
+- 修改通用 summary helper，优先改 `summary/support.py`
+- 兼容导出层只保留路径兼容，不继续承载真实业务逻辑
+
+### 6.5 repair 工作流
+
+```text
+agent_workflow/
+  repair/
+    repair_decision_graph.py
+    support.py
+    retry_guidance.py
+  repair_decision_graph.py
+  repair_support.py
+  retry_guidance.py
+```
+
+职责：
+
+- `repair/repair_decision_graph.py`：分析执行失败，决定是否进入自动修复，并在执行模式下生成修复脚本
+- `repair/support.py`：收口 repair state、eligibility、feedback、invoke 和 graph next-step 逻辑
+- `repair/retry_guidance.py`：根据 retry / repair 节点生成下一步指导
+- 根目录下的 `repair_decision_graph.py`、`repair_support.py`、`retry_guidance.py` 是兼容导出层，暂时用于保护旧导入路径和测试 monkeypatch 路径
+
+边界约束：
+
+- 修改失败分析与修复决策，优先改 `repair/repair_decision_graph.py`
+- 修改 repair state 或 graph 控制流 helper，优先改 `repair/support.py`
+- 修改 retry 节点下一步文案，优先改 `repair/retry_guidance.py`
+- 兼容导出层只保留路径兼容，不继续承载真实业务逻辑
+
+### 6.6 输出与文案收口
+
+```text
+agent_workflow/
+  output/
+    roleplay.py
+    text.py
+  roleplay.py
+  agent_text_support.py
+```
+
+职责：
+
+- `output/roleplay.py`：把工作流结果发送为用户可见聊天消息
+- `output/text.py`：收口 run 创建、查询、控制、未知意图等用户可见文案
+- 根目录下的 `roleplay.py`、`agent_text_support.py` 是兼容导出层，暂时用于保护旧导入路径和测试路径
+
+### 6.7 诊断
+
+```text
+agent_workflow/
+  diagnostics/
+    runtime.py
+    failure.py
+    support.py
+  trace/
+    runtime.py
+    messages.py
+  diagnostics_failure.py
+  diagnostics_support.py
+  trace_runtime.py
+  trace_messages.py
+```
+
+职责：
+
+- `diagnostics/runtime.py`：提供 Agent 诊断入口，负责 preview / runtime diagnostics 的流程编排
+- `diagnostics/failure.py`：把失败事件转换成稳定 `error_code`、`failure_domain` 和中文摘要
+- `diagnostics/support.py`：负责 workspace tool 诊断快照，以及 workspace tool 相关响应字段组装
+- `trace/runtime.py`：负责 `workflow_trace` 的 runtime metadata、entry 构造、归一化、失败 trace 查找和事件聚合
+- `trace/messages.py`：负责 trace 的中文标签、严重级别和可读节点日志文案
+- `diagnostics.py` 已由 `diagnostics/` 包替代，`from agent_workflow.diagnostics import ...` 会进入新包
+- 根目录下的 `diagnostics_failure.py`、`diagnostics_support.py`、`trace_runtime.py`、`trace_messages.py` 是兼容导出层，暂时用于保护旧导入路径和测试 monkeypatch 路径
+
+边界约束：
+
+- 新增 trace 事件元信息，优先改 `trace/runtime.py`
+- 新增 trace 展示文案，优先改 `trace/messages.py`
+- 新增 diagnostics 失败类型，优先改 `diagnostics/failure.py`
+- 新增 workspace tool 诊断字段，优先改 `diagnostics/support.py`
+- `diagnostics/runtime.py` 应尽量保持为流程编排，不再堆叠字段组装和文案分支
+- 兼容导出层后续可以逐步清理，但不要和真实逻辑修改混在同一个提交里
 
 ## 7. `llm/`、`storage/`、`tools/`、`messaging/`
 

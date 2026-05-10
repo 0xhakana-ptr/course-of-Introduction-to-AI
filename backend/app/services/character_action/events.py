@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from ...agent_workflow.workflow_nodes import (
+from ...agent_workflow.contracts.workflow_nodes import (
     CHAT_DONE_NODE,
     CHAT_ERROR_NODE,
     CHAT_NODE,

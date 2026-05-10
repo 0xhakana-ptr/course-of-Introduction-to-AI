@@ -259,7 +259,7 @@ def test_run_repair_flow_can_succeed_after_initial_failure(monkeypatch, client):
         ),
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
+        "backend.app.agent_workflow.repair.repair_decision_graph.generate_repaired_script_with_llm",
         lambda **kwargs: ScriptGenerationResult(
             ok=True,
             file_name="repaired_demo.py",
@@ -336,7 +336,7 @@ def test_run_repair_flow_fails_when_repaired_script_is_unusable(monkeypatch, cli
         ),
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
+        "backend.app.agent_workflow.repair.repair_decision_graph.generate_repaired_script_with_llm",
         lambda **kwargs: ScriptGenerationResult(
             ok=False,
             error="simulated repair parse failure",
@@ -388,7 +388,7 @@ def test_run_repair_retry_failure_emits_retry_outcome_before_final_failure(
         ),
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.repair_decision_graph.generate_repaired_script_with_llm",
+        "backend.app.agent_workflow.repair.repair_decision_graph.generate_repaired_script_with_llm",
         lambda **kwargs: ScriptGenerationResult(
             ok=True,
             file_name="repaired_but_still_broken.py",

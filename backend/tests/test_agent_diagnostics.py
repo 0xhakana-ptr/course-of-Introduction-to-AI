@@ -1,5 +1,5 @@
-from backend.app.agent_workflow.diagnostics_failure import build_failure_descriptor
-from backend.app.agent_workflow.diagnostics_support import (
+from backend.app.agent_workflow.diagnostics.failure import build_failure_descriptor
+from backend.app.agent_workflow.diagnostics.support import (
     WorkspaceToolSnapshot,
     build_workspace_tool_response_kwargs,
 )
@@ -8,7 +8,7 @@ from backend.app.services.run_interface import create_run
 
 def test_agent_diagnostics_preview_route_returns_coding_plan(monkeypatch, client):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_builder_support.plan_workspace_tool",
+        "backend.app.agent_workflow.graph.builder_support.plan_workspace_tool",
         lambda prompt: {
             "tool_name": "read_workspace_text",
             "tool_input": {"rel_path": "backend/app/main.py"},
@@ -109,7 +109,7 @@ def test_agent_diagnostics_preview_route_returns_run_control_plan(client):
 
 def test_agent_diagnostics_run_route_executes_chat_branch(monkeypatch, client):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.call_llm_sync",
+        "backend.app.agent_workflow.graph.agent_graph.call_llm_sync",
         lambda prompt, context: type(
             "FakeLLMResult",
             (),
@@ -284,7 +284,7 @@ def test_agent_diagnostics_run_route_blocks_side_effecting_coding_paths(client):
 
 def test_agent_diagnostics_run_route_returns_error_context_for_chat_failure(monkeypatch, client):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.call_llm_sync",
+        "backend.app.agent_workflow.graph.agent_graph.call_llm_sync",
         lambda prompt, context: type(
             "FakeLLMResult",
             (),
@@ -334,7 +334,7 @@ def test_agent_diagnostics_run_route_returns_error_context_for_chat_failure(monk
 
 def test_agent_diagnostics_run_route_returns_error_context_for_chat_exception(monkeypatch, client):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.agent_graph.call_llm_sync",
+        "backend.app.agent_workflow.graph.agent_graph.call_llm_sync",
         lambda prompt, context: (_ for _ in ()).throw(RuntimeError("llm raised boom")),
     )
 
