@@ -23,7 +23,7 @@ from .support import (
     build_workspace_tool_response_kwargs,
 )
 from .failure import build_failure_descriptor
-from ..agent_graph import run_agent
+from ..graph.agent_graph import run_agent
 from ..trace.runtime import (
     build_runtime_event_summary,
     find_failure_trace,

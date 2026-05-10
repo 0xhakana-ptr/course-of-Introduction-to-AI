@@ -170,8 +170,8 @@
 
 - `backend/app/services/character_interface.py`
 - `backend/app/services/character_action/events.py`
-- `backend/app/agent_workflow/agent_graph.py`
-- `backend/app/agent_workflow/roleplay.py`
+- `backend/app/agent_workflow/graph/agent_graph.py`
+- `backend/app/agent_workflow/output/roleplay.py`
 
 完成标准：
 
@@ -196,7 +196,7 @@
 
 - `backend/app/services/chat_action/intent.py`
 - `backend/app/services/chat_interface.py`
-- `backend/app/agent_workflow/agent_graph.py`
+- `backend/app/agent_workflow/graph/agent_graph.py`
 - `backend/tests/test_chat_intent.py`
 
 完成标准：
@@ -226,7 +226,7 @@
 
 建议落点：
 
-- `backend/app/agent_workflow/agent_text_support.py`
+- `backend/app/agent_workflow/output/text.py`
 - `backend/app/services/run_action/formatters.py`
 - `docs/backend-api-specification.md`
 - `backend/README.md`
@@ -309,7 +309,7 @@
 
 建议落点：
 
-- `backend/app/agent_workflow/agent_text_support.py`
+- `backend/app/agent_workflow/output/text.py`
 - `backend/app/services/run_action/formatters.py`
 - `backend/app/api/route_support.py`
 
