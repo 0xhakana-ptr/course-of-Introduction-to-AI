@@ -1,6 +1,6 @@
 # AI Agent Backend API Specification
 
-本文档描述的是当前仓库中已经实现并验证过的后端接口与内部通信边界，基于 2026-05-07 当前代码状态整理。
+本文档描述的是当前仓库中已经实现并验证过的后端接口与内部通信边界，基于 2026-05-11 当前代码状态整理。
 
 ## 1. 当前后端结构
 
@@ -32,7 +32,7 @@
 
 ### 2.1 聊天链路
 
-`/chat` 当前支持三类意图：
+`/chat` 当前统一进入 Agent Loop 主路径。意图仍会被归一化为三类，供 `plan` 阶段选择动作：
 
 - `chat`
 - `coding`
@@ -40,20 +40,21 @@
 
 其中：
 
-- `chat` 会进入最小 LangGraph Agent Brain，由 Chat Node 调用 OpenAI-compatible LLM 接口，并复用后端会话记忆。
-- `coding` 会进入最小 LangGraph Agent Brain，再由 Run Tool Node 创建 run。
+- `chat` 通常规划为 `chat.reply`，由 OpenAI-compatible LLM 生成自然回复，并复用后端会话记忆。
+- `coding` 会由 Agent Loop 规划为 workspace、run 或确认类动作；简单文件任务优先走 workspace action，不一定创建 run。
 - `unknown` 会返回引导性回复。
 
 说明：
 
-- 普通聊天和 coding 分支都已经不再绕开 `agent_workflow`，而是进入最小 LangGraph 图。
-- 当前主路径分别是 `router -> chat_node -> roleplay_node` 与 `router -> coding_node -> run_tool_node -> roleplay_node`。
-- `agent_workflow` 当前已经开始记录统一的 `workflow_trace`，用于后续 diagnostics/debug 观察节点路由、阶段状态与 run action 决策。
-- `/chat` 命中 coding intent 时会返回 `run_id`，并通过 FastAPI 后台任务触发 `execute_run`。
-- 当前实现是最小 LangGraph Agent Brain，不等同于完整的多 Agent 公司化协同系统。
+- 普通聊天、workspace 文件任务、run 控制和 unknown 收口都不再绕开 `agent_workflow`。
+- 当前主路径是 `perceive -> plan -> act -> observe -> decide -> finalize / failure`。
+- `agent_workflow` 会记录统一的 `workflow_trace`，用于 diagnostics/debug 观察节点、阶段状态、动作规划、工具结果和失败原因。
+- `/chat` 只有在规划为 `run.create` 时才会返回 `run_id`，并通过 FastAPI 后台任务触发 `execute_run`。
+- 当前实现是单 Agent Loop，不等同于完整的多 Agent 公司化协同系统；后续多 Agent 协同应在该主线基础上扩展。
 - `agent_workflow` 通过 lazy import 暴露，缺少依赖时不会阻塞主服务启动。
 - `/chat` 支持轻量会话记忆。请求可传 `session_id`，响应会返回 `session_id`。
 - 后端会保存同一会话中的最近若干轮消息，并在下一次聊天时自动拼入上下文。
+- 上下文进入 LLM 前会经过长度限制：外部 `context`、最近消息预览、合并后的 conversation context 和最终 LLM payload 都有截断边界。
 - 会话元信息当前可以通过 `GET /chat/sessions` 和 `GET /chat/sessions/{session_id}` 直接观察；其中会暴露 `has_summary_cache` 与 `context_strategy_version`，便于排查长会话压缩和摘要缓存是否生效。
 
 ### 2.2 任务执行链路
@@ -124,6 +125,8 @@
 - 队列上限 `1000`
 - 支持桌宠消息类型：`quip`、`expression`、`motion`、`chat`、`error`、`status`
 - WebSocket 连接建立后会先发送一次当前快照，此后再持续推送增量消息批次
+- Agent Loop 会在节点入口发送 `workflow.node_entered`，在动作执行前后发送 `workflow.action_started / workflow.action_completed / workflow.action_failed`
+- 每次 `/chat` 正常收口应产生 `workflow.completed`，失败收口应产生 `workflow.failed`；前端 loading 应以这两个终态事件为主要解除条件
 
 ### 2.5 LLM 能力
 
@@ -547,13 +550,14 @@
 - 如果请求不传 `session_id`，后端会自动创建新会话。
 - 如果请求传入已有 `session_id`，后端会把该会话最近消息作为上下文传给 LLM。
 - 请求中的 `context` 仍然保留，用于兼容当前前端传入的临时上下文。
-- 当 `intent` 为 `coding` 时，`run_id` 会返回本次创建的任务 ID；普通聊天和 unknown intent 通常为 `null`。
+- 当 `intent` 为 `coding` 且动作规划为 `run.create` 时，`run_id` 会返回本次创建的任务 ID；workspace 文件操作、普通聊天和 unknown intent 通常为 `null`。
 - coding 任务的执行状态继续通过 `GET /runs/{run_id}`、`GET /runs/{run_id}/snapshot`、`GET /runs/{run_id}/attempts` 和 `GET /messages` 查询。
 - 对于直接通过 `/chat` 返回的聊天正文，后端不会再额外向消息队列重复写入同一条 `agent:chat`，以避免聊天窗口重复显示。
 - 如果 coding 请求中包含合法 `run_id` 且语义更接近“查看状态 / 快照 / 日志 / 进度”，LangGraph 会直接读取已有 run 的 snapshot 并返回，而不是再次创建新任务。
 - `runtime_mode` 表示本次 `/chat` 使用的 Agent runtime；默认是 `loop`。
 - `route_scope` 当前固定为 `primary_loop`。
 - `runtime_warning` 当前固定为 `null`；旧 route fallback 已移除。
+- 前端如果使用消息流显示过程，应监听 `workflow.node_entered`、`workflow.action_*` 和最终 `workflow.completed / workflow.failed`，不要依赖某个固定节点名作为终态。
 
 ### 3.4.1 `GET /chat/sessions`
 
@@ -895,6 +899,21 @@
 - `error`：错误消息
 - `status`：任务状态消息
 
+Agent Loop 相关 `status` 消息的常见 `event_type`：
+
+- `workflow.node_entered`：进入 LangGraph 节点，通常同时发送 `agent:quip` 与 `agent:status`
+- `workflow.action_started`：动作开始执行，`metadata.action_name` 标识动作名
+- `workflow.action_completed`：动作成功完成，状态仍为 `running`，不代表整个工作流结束
+- `workflow.action_failed`：动作执行失败，后续应继续等待 `workflow.failed`
+- `workflow.completed`：本次 `/chat` 工作流正常终态
+- `workflow.failed`：本次 `/chat` 工作流失败终态
+
+前端终态规则：
+
+- 解除输入框 loading 应优先看 `workflow.completed` 或 `workflow.failed`
+- `workflow.action_completed` 只表示某一步工具完成，不能当作整轮对话结束
+- 如果长时间没有终态事件，应先检查 `/messages` 是否正常轮询、后端日志是否出现异常、`/agent/diagnostics/run` 是否能复现该输入
+
 固定映射：
 
 | type | _channel |
@@ -1152,12 +1171,13 @@
 
 - `chat intent`
 - `llm client` 主备链路
+- `conversation store` 会话记忆、摘要缓存和上下文长度限制
 - `logging config`
 - `message queue`
-- `run` 成功 / 失败 / 修复 / 启动恢复
-- `run cancel`
+- `agent loop` 普通聊天、workspace 文件动作、run 动作、终态事件
+- `run` 成功 / 失败 / 修复 / 启动恢复 / 控制动作
 - `text utils`
-- `safe tools`
+- `safe tools` 与 `workspace tools`
 
 ## 8. 当前已知定位
 
@@ -1170,7 +1190,10 @@
 - `/chat`
 - `/runs`
 - `/messages`
-- 最小 LangGraph coding intent 链路
+- Agent Loop 主链路
+- workspace 文件工具基线
+- run 生命周期与控制动作基线
+- 消息流节点、动作、终态事件基线
 
 ### 8.2 实验性部分
 
@@ -1200,4 +1223,4 @@
 
 - `safe tools` 的更细测试结果
 - `runs` 生命周期进一步扩展，例如更细粒度的 LLM 阶段取消
-- 最小 LangGraph coding 链路继续扩展为 QA / Repair / Summary 节点后的契约变化
+- Agent Loop 后续扩展为更完整多 Agent 协同时的契约变化

@@ -27,6 +27,8 @@ def isolate_backend_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(settings, "conversation_context_recent_messages", 8)
     monkeypatch.setattr(settings, "conversation_summary_max_chars", 1200)
     monkeypatch.setattr(settings, "chat_context_max_chars", 6000)
+    monkeypatch.setattr(settings, "chat_external_context_max_chars", 2000)
+    monkeypatch.setattr(settings, "conversation_recent_message_max_chars", 800)
     monkeypatch.setattr(settings, "desktop_export_enabled", False)
     monkeypatch.setattr(settings, "desktop_export_dir", None)
     monkeypatch.setattr(settings, "conversation_cleanup_interval_seconds", 0)

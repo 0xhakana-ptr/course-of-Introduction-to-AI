@@ -36,9 +36,15 @@ def test_default_action_registry_exposes_required_actions():
         descriptor for descriptor in descriptors
         if descriptor["name"] == "run.cancel"
     )
+    test_descriptor = next(
+        descriptor for descriptor in descriptors
+        if descriptor["name"] == "workspace.test"
+    )
     assert export_descriptor["requires_confirmation"] is True
     assert export_descriptor["safety_level"] == "high"
     assert cancel_descriptor["requires_confirmation"] is True
+    assert test_descriptor["requires_confirmation"] is True
+    assert test_descriptor["safety_level"] == "high"
 
 
 def test_action_registry_executes_workspace_write_action():

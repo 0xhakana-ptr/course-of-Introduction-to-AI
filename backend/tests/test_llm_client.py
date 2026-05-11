@@ -2,19 +2,23 @@ import asyncio
 
 import httpx
 
+from backend.app.core.config import settings
 from backend.app.llm.client import (
     LLMProviderConfig,
+    LLM_CONTEXT_TRUNCATED_MARKER,
     MINIMAX_PROVIDER_PROFILE,
     build_request_error_message,
     build_messages,
     build_payload,
     call_llm,
     call_llm_sync,
+    clip_context_for_prompt,
     failure_result,
     infer_provider_profile,
     normalize_provider_profile,
     resolve_chat_completions_url,
     success_result,
+    unconfigured_message,
 )
 
 
@@ -55,6 +59,46 @@ def test_build_messages_combines_context_into_single_system_message():
     assert "你是助手" in messages[0]["content"]
     assert "Recent conversation context:\n上一轮对话" in messages[0]["content"]
     assert messages[1] == {"role": "user", "content": "你好"}
+
+
+def test_clip_context_for_prompt_keeps_recent_tail(monkeypatch):
+    monkeypatch.setattr(settings, "chat_context_max_chars", 80)
+    context = "old-context-" + ("x" * 120) + "-recent-tail"
+
+    clipped = clip_context_for_prompt(context)
+
+    assert clipped is not None
+    assert len(clipped) <= 80
+    assert clipped.startswith(LLM_CONTEXT_TRUNCATED_MARKER)
+    assert clipped.endswith("-recent-tail")
+    assert "old-context-" not in clipped
+
+
+def test_build_messages_clips_context_before_payload(monkeypatch):
+    monkeypatch.setattr(settings, "chat_context_max_chars", 90)
+    messages = build_messages(
+        "你好",
+        "old-context-" + ("x" * 160) + "-recent-tail",
+        "你是助手",
+    )
+
+    system_content = messages[0]["content"]
+
+    assert LLM_CONTEXT_TRUNCATED_MARKER in system_content
+    assert "-recent-tail" in system_content
+    assert "old-context-" not in system_content
+
+
+def test_unconfigured_message_uses_context_preview(monkeypatch):
+    monkeypatch.setattr(settings, "chat_context_max_chars", 2000)
+
+    result = unconfigured_message("hello", "context-" + ("z" * 900))
+
+    assert result.ok is False
+    assert result.error_kind == "unconfigured"
+    assert result.output is not None
+    assert len(result.output) < 900
+    assert "z" * 700 not in result.output
 
 
 def test_resolve_chat_completions_url_prefers_explicit_endpoint():

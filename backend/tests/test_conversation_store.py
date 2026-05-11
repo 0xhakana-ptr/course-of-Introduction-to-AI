@@ -3,7 +3,7 @@ import time
 import json
 
 from backend.app.core.config import settings
-from backend.app.storage.conversation_store import ConversationStore
+from backend.app.storage.conversation_store import CONTEXT_TRUNCATED_MARKER, ConversationStore
 
 
 def test_conversation_store_builds_context_with_external_context():
@@ -23,6 +23,64 @@ def test_conversation_store_builds_context_with_external_context():
     assert "Stored conversation history:" in context
     assert "User: hello" in context
     assert "Assistant: hi there" in context
+
+
+def test_conversation_store_limits_external_context_before_combining(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "chat_external_context_max_chars", 48)
+    monkeypatch.setattr(settings, "chat_context_max_chars", 1000)
+    session_id = store.get_or_create_session_id("session-external-context-limit-demo")
+
+    context = store.build_context(
+        session_id,
+        "external-prefix-" + ("x" * 120),
+    )
+
+    assert context is not None
+    assert "Client provided context:" in context
+    assert "external-prefix-" in context
+    assert CONTEXT_TRUNCATED_MARKER in context
+    assert "x" * 80 not in context
+
+
+def test_conversation_store_limits_recent_message_context(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "conversation_recent_message_max_chars", 32)
+    session_id = store.get_or_create_session_id("session-recent-message-limit-demo")
+    store.append_exchange(
+        session_id,
+        user_prompt="short question",
+        assistant_output="answer-" + ("y" * 120),
+    )
+
+    context = store.build_context(session_id)
+
+    assert context is not None
+    assert "Stored conversation history:" in context
+    assert "Assistant: answer-" in context
+    assert "..." in context
+    assert "y" * 80 not in context
+
+
+def test_conversation_store_limits_combined_context(monkeypatch):
+    store = ConversationStore()
+    monkeypatch.setattr(settings, "chat_external_context_max_chars", 1000)
+    monkeypatch.setattr(settings, "chat_context_max_chars", 96)
+    session_id = store.get_or_create_session_id("session-combined-context-limit-demo")
+    store.append_exchange(
+        session_id,
+        user_prompt="question-" + ("a" * 120),
+        assistant_output="answer-" + ("b" * 120),
+    )
+
+    context = store.build_context(
+        session_id,
+        "external-" + ("c" * 120),
+    )
+
+    assert context is not None
+    assert len(context) <= 96
+    assert CONTEXT_TRUNCATED_MARKER in context
 
 
 def test_conversation_store_compresses_older_history_in_context(monkeypatch):

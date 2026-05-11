@@ -321,14 +321,26 @@ agent_workflow/
 ```text
 agent_workflow/
   output/
+    action_events.py
+    completion_events.py
+    node_events.py
     roleplay.py
     text.py
 ```
 
 职责：
 
+- `output/node_events.py`：节点入口 `workflow.node_entered` 事件，负责 quip、status、节点进度和节点元信息
+- `output/action_events.py`：动作开始、完成、失败事件，负责 `workflow.action_started / completed / failed`
+- `output/completion_events.py`：Agent Loop 终态事件，负责 `workflow.completed / workflow.failed`
 - `output/roleplay.py`：把工作流结果发送为用户可见聊天消息
 - `output/text.py`：收口 run 创建、查询、控制、未知意图等用户可见文案
+
+边界约束：
+
+- 前端 loading 解除应依赖 `workflow.completed / workflow.failed`，不要依赖单个 action 事件
+- 新增节点级可见反馈，优先改 `output/node_events.py`
+- 新增动作级可见反馈，优先改 `output/action_events.py`
 
 ### 6.7 诊断
 

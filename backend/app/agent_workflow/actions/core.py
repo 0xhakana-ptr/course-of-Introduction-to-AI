@@ -33,6 +33,12 @@ def _final_answer(action_input: Mapping[str, object]) -> AgentActionResult:
 
 def _ask_user_confirmation(action_input: Mapping[str, object]) -> AgentActionResult:
     prompt = _normalize_text(action_input.get("prompt"), default="请确认是否继续。")
+    blocked_action_name = _normalize_text(action_input.get("blocked_action_name")) or None
+    blocked_action_input = (
+        dict(action_input.get("blocked_action_input"))
+        if isinstance(action_input.get("blocked_action_input"), Mapping)
+        else None
+    )
     return AgentActionResult(
         action_name="ask_user_confirmation",
         ok=True,
@@ -40,8 +46,13 @@ def _ask_user_confirmation(action_input: Mapping[str, object]) -> AgentActionRes
         data={
             "prompt": prompt,
             "requires_confirmation": True,
+            "blocked_action_name": blocked_action_name,
+            "blocked_action_input": blocked_action_input,
         },
-        metadata={"requires_confirmation": True},
+        metadata={
+            "requires_confirmation": True,
+            "blocked_action_name": blocked_action_name,
+        },
     )
 
 

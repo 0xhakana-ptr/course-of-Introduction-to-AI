@@ -41,6 +41,14 @@ def test_detect_intent_returns_coding_for_workspace_operation_prompt():
     assert detect_intent("把这个组件改一下") == "coding"
 
 
+def test_detect_intent_returns_coding_for_directory_listing_prompt():
+    assert detect_intent("请列出 notes/listed 目录结构") == "coding"
+
+
+def test_detect_intent_returns_coding_for_demo_build_prompt():
+    assert detect_intent("请实现一个简单的计算器 demo") == "coding"
+
+
 def test_detect_intent_returns_coding_for_runtime_error_prompt():
     assert detect_intent("pnpm dev 报错") == "coding"
 

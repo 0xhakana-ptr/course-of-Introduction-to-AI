@@ -185,7 +185,7 @@ $env:AI_AGENT_MESSAGES_ENDPOINT="http://127.0.0.1:8000/messages"
 - 桌面文本导出请求是否先弹出确认框
 - `/runs/{run_id}` 是否返回 `detail_sections`
 
-更完整的验收步骤见 [`docs/plan/20260510-2.md`](../docs/plan/20260510-2.md) 的 P10 部分。
+更完整的验收步骤见 [`docs/backend-agent-acceptance.md`](../docs/backend-agent-acceptance.md)。
 
 ## 4. 后端目录概览
 
@@ -224,5 +224,6 @@ backend/
 
 - 接口说明：[`docs/backend-api-specification.md`](../docs/backend-api-specification.md)
 - 目录与模块地图：[`docs/backend-module-map.md`](../docs/backend-module-map.md)
+- 功能验收与排障：[`docs/backend-agent-acceptance.md`](../docs/backend-agent-acceptance.md)
 
 如果你要继续开发后端，优先看“模块地图”；如果你要联调接口，优先看“API 说明”。

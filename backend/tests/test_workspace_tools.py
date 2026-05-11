@@ -13,6 +13,7 @@ from backend.app.tools.workspace_tools import (
     WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW,
     WORKSPACE_TOOL_OUTPUT_KIND_FILE_WRITE,
     WORKSPACE_TOOL_OUTPUT_KIND_OVERVIEW,
+    WORKSPACE_TOOL_ERROR_EXECUTION_FAILED,
     WORKSPACE_TOOL_ERROR_TARGET_DISABLED,
     WORKSPACE_TOOL_ERROR_UNREGISTERED,
     build_workspace_tool_context,
@@ -221,6 +222,62 @@ def test_workspace_tool_planning_can_select_workspace_write_tool():
     assert read_workspace_text("notes/todo.txt")["content"] == "buy milk"
 
 
+def test_workspace_tool_planning_supports_quoted_chinese_space_path():
+    plan = plan_workspace_tool("请创建 `notes/中文 文件.txt`，内容是你好")
+    result = execute_workspace_tool_plan(plan)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_WRITE
+    assert plan["tool_input"] == {
+        "rel_path": "notes/中文 文件.txt",
+        "content": "你好",
+        "overwrite": False,
+        "target_location": "workspace",
+    }
+    assert result["ok"] is True
+    assert read_workspace_text("notes/中文 文件.txt")["content"] == "你好"
+
+
+def test_workspace_tool_planning_can_read_quoted_chinese_space_path():
+    safe_write_file("notes/中文 文件.txt", "你好")
+
+    plan = plan_workspace_tool("请读取 `notes/中文 文件.txt`")
+    result = execute_workspace_tool_plan(plan)
+    user_output = build_workspace_tool_user_output(result)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_READ
+    assert plan["tool_input"] == {"rel_path": "notes/中文 文件.txt"}
+    assert plan["terminal"] is True
+    assert result["ok"] is True
+    assert user_output is not None
+    assert "你好" in user_output
+
+
+def test_workspace_tool_planning_reports_missing_read_path():
+    plan = plan_workspace_tool("请读取 notes/missing.txt")
+    result = execute_workspace_tool_plan(plan)
+    user_output = build_workspace_tool_user_output(result)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_READ
+    assert plan["tool_input"] == {"rel_path": "notes/missing.txt"}
+    assert result["ok"] is False
+    assert result["tool_error_code"] == WORKSPACE_TOOL_ERROR_EXECUTION_FAILED
+    assert user_output is not None
+    assert "没有找到 workspace 路径 `notes/missing.txt`" in user_output
+
+
+def test_workspace_tool_planning_reports_missing_list_path():
+    plan = plan_workspace_tool("请列出 notes/missing-dir 目录结构")
+    result = execute_workspace_tool_plan(plan)
+    user_output = build_workspace_tool_user_output(result)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_LIST
+    assert plan["tool_input"]["rel_path"] == "notes/missing-dir"
+    assert result["ok"] is True
+    assert result["data"]["exists"] is False
+    assert user_output is not None
+    assert "没有找到 workspace 路径 `notes/missing-dir`" in user_output
+
+
 def test_workspace_tool_rejects_desktop_write_target():
     plan = plan_workspace_tool("帮我在桌面创建一个txt文件")
     result = execute_workspace_tool_plan(plan)
@@ -238,9 +295,9 @@ def test_workspace_tool_can_export_text_to_configured_desktop_dir(monkeypatch, t
     monkeypatch.setattr(settings, "desktop_export_enabled", True)
     monkeypatch.setattr(settings, "desktop_export_dir", export_dir)
 
-    plan = plan_workspace_tool("帮我在桌面创建 notes/todo.txt，内容是buy milk")
+    plan = plan_workspace_tool("帮我在桌面创建 `notes/桌面 文件.txt`，内容是buy milk")
     result = execute_workspace_tool_plan(plan)
-    exported_file = export_dir / "todo.txt"
+    exported_file = export_dir / "桌面 文件.txt"
 
     assert plan["tool_name"] == WORKSPACE_TOOL_NAME_WRITE
     assert plan["terminal"] is True

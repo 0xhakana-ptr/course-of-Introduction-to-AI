@@ -60,6 +60,7 @@ class LLMDiagnosticsResult:
 
 DIAGNOSTIC_PREVIEW_LIMIT = 200
 DIAGNOSTIC_ERROR_LIMIT = 500
+LLM_CONTEXT_TRUNCATED_MARKER = "... (context truncated before LLM request)\n"
 OPENAI_PROVIDER_PROFILE = "openai"
 MINIMAX_PROVIDER_PROFILE = "minimax"
 MINIMAX_MIN_TEMPERATURE = 0.01
@@ -202,6 +203,30 @@ def preview_text(text: str, limit: int = DIAGNOSTIC_PREVIEW_LIMIT) -> str:
     return build_preview(text, limit=limit)
 
 
+def clip_context_for_prompt(context: str | None, *, limit: int | None = None) -> str | None:
+    raw = str(context or "").strip()
+    if not raw:
+        return None
+
+    resolved_limit = settings.chat_context_max_chars if limit is None else limit
+    if resolved_limit <= 0 or len(raw) <= resolved_limit:
+        return raw
+
+    marker = LLM_CONTEXT_TRUNCATED_MARKER
+    content_limit = max(resolved_limit - len(marker), 0)
+    if content_limit <= 0:
+        return raw[-resolved_limit:]
+    return f"{marker}{raw[-content_limit:]}"
+
+
+def preview_context_for_error(context: str | None) -> str:
+    raw = str(context or "").strip()
+    if not raw:
+        return "(none)"
+    limit = min(max(settings.chat_context_max_chars, 1), DIAGNOSTIC_ERROR_LIMIT)
+    return preview_text(raw, limit=limit)
+
+
 def failure_result(
     message: str,
     *,
@@ -251,14 +276,14 @@ def unconfigured_message(prompt: str, context: str | None = None) -> LLMCallResu
         "- LLM_FALLBACK_BASE_URL（可选，默认继承主模型）\n"
         "- LLM_FALLBACK_API_KEY（可选，默认继承主模型）\n\n"
         f"收到的 prompt: {prompt}\n"
-        f"context: {context or '(none)'}",
+        f"context: {preview_context_for_error(context)}",
         error_kind="unconfigured",
     )
 
 
 def build_messages(prompt: str, context: str | None, system_prompt: str) -> list[dict[str, str]]:
     combined_system = system_prompt.strip()
-    normalized_context = str(context or "").strip()
+    normalized_context = clip_context_for_prompt(context)
     if normalized_context:
         if combined_system:
             combined_system = f"{combined_system}\n\nRecent conversation context:\n{normalized_context}"

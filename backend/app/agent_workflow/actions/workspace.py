@@ -39,7 +39,7 @@ def _descriptor_for_workspace_action(
     input_keys = tuple(tool_descriptor.input_keys) if tool_descriptor else ()
     output_keys = ("summary", "data", "error")
     safety_level = "medium" if tool_name in {WORKSPACE_TOOL_NAME_WRITE, WORKSPACE_TOOL_NAME_TEST} else "low"
-    if action_name == "workspace.export_desktop":
+    if action_name == "workspace.export_desktop" or tool_name == WORKSPACE_TOOL_NAME_TEST:
         safety_level = "high"
     return AgentActionDescriptor(
         name=action_name,
@@ -103,7 +103,10 @@ def list_workspace_action_definitions() -> list[AgentActionDefinition]:
                     action_name=action_name,
                     tool_name=tool_name,
                     user_visible_label=labels[action_name],
-                    requires_confirmation=action_name == "workspace.export_desktop",
+                    requires_confirmation=action_name in {
+                        "workspace.export_desktop",
+                        "workspace.test",
+                    },
                 ),
                 executor=lambda action_input, action_name=action_name, tool_name=tool_name: _execute_workspace_action(
                     action_name,

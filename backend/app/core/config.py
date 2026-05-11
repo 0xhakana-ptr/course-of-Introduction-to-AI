@@ -122,6 +122,24 @@ class Settings:
         self.chat_context_max_chars = (
             int(chat_context_max_raw) if chat_context_max_raw.isdigit() else 6000
         )
+        chat_external_context_max_raw = os.getenv(
+            "CHAT_EXTERNAL_CONTEXT_MAX_CHARS",
+            "2000",
+        ).strip()
+        self.chat_external_context_max_chars = (
+            int(chat_external_context_max_raw)
+            if chat_external_context_max_raw.isdigit()
+            else 2000
+        )
+        recent_message_max_raw = os.getenv(
+            "CONVERSATION_RECENT_MESSAGE_MAX_CHARS",
+            "800",
+        ).strip()
+        self.conversation_recent_message_max_chars = (
+            int(recent_message_max_raw)
+            if recent_message_max_raw.isdigit()
+            else 800
+        )
 
         cleanup_interval_raw = os.getenv("CONVERSATION_CLEANUP_INTERVAL_SECONDS", "60").strip()
         self.conversation_cleanup_interval_seconds = (

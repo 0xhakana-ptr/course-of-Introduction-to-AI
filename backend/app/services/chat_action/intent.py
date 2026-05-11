@@ -24,6 +24,7 @@ CODING_ACTION_KEYWORDS = (
     "实现",
     "测试",
     "读取",
+    "列出",
     "重构",
     "优化",
     "补",
@@ -62,6 +63,7 @@ STRONG_OPERATION_ACTION_KEYWORDS = (
     "实现",
     "测试",
     "读取",
+    "列出",
     "重构",
     "add",
     "build",
@@ -101,6 +103,7 @@ WORKSPACE_OBJECT_KEYWORDS = (
     "前端",
     "组件",
     "页面",
+    "功能",
     "函数",
     "方法",
     "类",
@@ -132,6 +135,27 @@ WORKSPACE_OBJECT_KEYWORDS = (
     "shell",
     "test",
     "terminal",
+)
+
+DELIVERABLE_OBJECT_KEYWORDS = (
+    "demo",
+    "示例",
+    "例子",
+    "功能",
+    "工具",
+    "应用",
+    "网页",
+    "页面",
+    "组件",
+    "插件",
+    "接口",
+    "服务",
+    "脚本",
+    "程序",
+    "项目",
+    "工程",
+    "calculator",
+    "计算器",
 )
 
 TECH_CONTEXT_KEYWORDS = (
@@ -208,6 +232,10 @@ FILE_REFERENCE_PATTERN = re.compile(
     r"(?:^|[\s`\"'(<\[])[\w./\\-]+\.(?:py|pyi|js|jsx|ts|tsx|vue|json|yaml|yml|toml|ini|md|txt|c|cc|cpp|h|hpp|java|rs|go|sh|ps1|bat)(?:$|[\s`\"')>\],:;，。！？、；：])",
     re.IGNORECASE,
 )
+WORKSPACE_PATH_REFERENCE_PATTERN = re.compile(
+    r"(?:^|[\s`\"'(<\[])(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]*(?:$|[\s`\"')>\],:;，。！？、；：])",
+    re.IGNORECASE,
+)
 COMMAND_REFERENCE_PATTERN = re.compile(
     r"(?:^|[\s`\"'(<\[])(?:pytest|pnpm|npm|yarn|uv|uvicorn|python|node|git|pip|poetry|curl|powershell|cmd|bash|sh)(?:$|[\s`\"')>\],:;])",
     re.IGNORECASE,
@@ -268,6 +296,10 @@ def has_file_reference(prompt: str) -> bool:
     return FILE_REFERENCE_PATTERN.search(str(prompt or "")) is not None
 
 
+def has_workspace_path_reference(prompt: str) -> bool:
+    return WORKSPACE_PATH_REFERENCE_PATTERN.search(str(prompt or "")) is not None
+
+
 def has_command_reference(prompt: str) -> bool:
     text = str(prompt or "")
     return COMMAND_REFERENCE_PATTERN.search(text) is not None or _contains_keyword_casefold(
@@ -304,6 +336,10 @@ def _has_workspace_object(prompt: str) -> bool:
     return _contains_keyword_casefold(str(prompt or ""), WORKSPACE_OBJECT_KEYWORDS)
 
 
+def _has_deliverable_object(prompt: str) -> bool:
+    return _contains_keyword_casefold(str(prompt or ""), DELIVERABLE_OBJECT_KEYWORDS)
+
+
 def _has_tech_context(prompt: str) -> bool:
     return _contains_keyword_casefold(str(prompt or ""), TECH_CONTEXT_KEYWORDS)
 
@@ -330,15 +366,22 @@ def looks_like_coding_prompt(prompt: str) -> bool:
     has_action = _has_coding_action(text)
     has_strong_action = _has_strong_operation_action(text)
     has_workspace_object = _has_workspace_object(text)
+    has_deliverable_object = _has_deliverable_object(text)
+    has_path_reference = has_workspace_path_reference(text)
     has_command = has_command_reference(text)
     has_issue = _has_issue_keyword(text)
     has_tech_context = _has_tech_context(text)
 
     if has_issue and (has_workspace_object or has_command or has_tech_context):
         return True
-    if has_action and (has_workspace_object or has_command):
+    if has_action and (
+        has_workspace_object
+        or has_deliverable_object
+        or has_path_reference
+        or has_command
+    ):
         return True
-    if has_strong_action and has_tech_context:
+    if has_strong_action and (has_tech_context or has_deliverable_object):
         return True
     return False
 

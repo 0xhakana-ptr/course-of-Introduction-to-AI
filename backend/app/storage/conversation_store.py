@@ -17,6 +17,7 @@ ConversationContextSnapshot = dict[str, object]
 CONTEXT_SUMMARY_PREVIEW_LIMIT = 120
 SESSION_SUMMARY_PREVIEW_LIMIT = 240
 CONTEXT_STRATEGY_VERSION = 1
+CONTEXT_TRUNCATED_MARKER = "\n... (context truncated)"
 
 
 class ConversationStore:
@@ -118,7 +119,10 @@ class ConversationStore:
         external_context: str | None = None,
     ) -> str | None:
         chunks: list[str] = []
-        client_context = (external_context or "").strip()
+        client_context = self._clip_context_chunk(
+            external_context,
+            limit=settings.chat_external_context_max_chars,
+        )
         if client_context:
             chunks.append(f"Client provided context:\n{client_context}")
 
@@ -129,10 +133,11 @@ class ConversationStore:
         if not combined:
             return None
 
-        max_chars = settings.chat_context_max_chars
-        if max_chars > 0 and len(combined) > max_chars:
-            return combined[-max_chars:]
-        return combined
+        return self._clip_context_chunk(
+            combined,
+            limit=settings.chat_context_max_chars,
+            keep_tail=True,
+        )
 
     def _load_session_state_locked(
         self,
@@ -296,6 +301,27 @@ class ConversationStore:
             content = build_preview(content, limit=preview_limit)
         return f"{role.title()}: {content}"
 
+    def _clip_context_chunk(
+        self,
+        text: str | None,
+        *,
+        limit: int,
+        keep_tail: bool = False,
+    ) -> str | None:
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        if limit <= 0 or len(raw) <= limit:
+            return raw
+
+        marker = CONTEXT_TRUNCATED_MARKER
+        content_limit = max(limit - len(marker), 0)
+        if content_limit <= 0:
+            return raw[-limit:] if keep_tail else raw[:limit]
+
+        clipped = raw[-content_limit:] if keep_tail else raw[:content_limit]
+        return f"{clipped}{marker}"
+
     def _build_history_summary(self, messages: list[ConversationMessage]) -> str | None:
         if not messages:
             return None
@@ -338,7 +364,12 @@ class ConversationStore:
             history_lines = [
                 line
                 for message in messages
-                if (line := self._build_history_line(message)) is not None
+                if (
+                    line := self._build_history_line(
+                        message,
+                        preview_limit=settings.conversation_recent_message_max_chars,
+                    )
+                ) is not None
             ]
             if not history_lines:
                 return []
@@ -362,7 +393,12 @@ class ConversationStore:
         recent_lines = [
             line
             for message in recent_messages
-            if (line := self._build_history_line(message)) is not None
+            if (
+                line := self._build_history_line(
+                    message,
+                    preview_limit=settings.conversation_recent_message_max_chars,
+                )
+            ) is not None
         ]
         if recent_lines:
             sections.append("Recent stored conversation history:\n" + "\n".join(recent_lines))

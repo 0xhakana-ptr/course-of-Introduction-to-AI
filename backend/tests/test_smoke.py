@@ -149,7 +149,7 @@ def test_chat_can_cancel_existing_run(client):
 
     cancel_response = client.post(
         "/chat",
-        json={"prompt": f"请取消 run_id {run_id}", "context": None},
+        json={"prompt": f"请确认取消 run_id {run_id}", "context": None},
     )
     assert cancel_response.status_code == 200
     cancel_payload = cancel_response.json()

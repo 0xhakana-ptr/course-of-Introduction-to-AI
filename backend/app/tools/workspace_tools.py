@@ -68,7 +68,10 @@ WORKSPACE_TOOL_ERROR_TARGET_DISABLED: WORKSPACE_TOOL_ERROR_CODE = (
     "WORKSPACE_TOOL_TARGET_DISABLED"
 )
 WORKSPACE_TOOL_PATH_PATTERN = re.compile(
-    r"(?:[A-Za-z0-9_.-]+[\\/])+[A-Za-z0-9_.-]*|[A-Za-z0-9_.-]+\.[A-Za-z0-9_-]+"
+    r"(?:[\w\u4e00-\u9fff_.-]+[\\/])+[\w\u4e00-\u9fff_.-]*|[\w\u4e00-\u9fff_.-]+\.[A-Za-z0-9_-]+"
+)
+WORKSPACE_TOOL_QUOTED_PATH_PATTERN = re.compile(
+    r"[`\"'“”‘’]([^`\"'“”‘’]+)[`\"'“”‘’]"
 )
 WORKSPACE_TOOL_TEST_KEYWORDS = (
     "pytest",
@@ -245,20 +248,31 @@ def _contains_keyword(prompt: str, keywords: Sequence[str]) -> bool:
 
 
 def _clean_prompt_path_candidate(candidate: str) -> str:
-    cleaned = candidate.strip().strip("`'\".,:;()[]{}<>")
+    cleaned = candidate.strip().strip("`'\"“”‘’.,:;()[]{}<>，。！？、；：")
     return cleaned.replace("\\", "/")
 
 
+def _looks_like_path_candidate(candidate: str) -> bool:
+    cleaned = _clean_prompt_path_candidate(candidate)
+    if not cleaned:
+        return False
+    if "/" in cleaned or "\\" in cleaned:
+        return True
+    return bool(Path(cleaned).suffix)
+
+
+def _append_unique_path(paths: list[str], seen: set[str], candidate: str) -> None:
+    rel_path = _clean_prompt_path_candidate(candidate)
+    if not rel_path or rel_path in seen or not _looks_like_path_candidate(rel_path):
+        return
+    seen.add(rel_path)
+    paths.append(rel_path)
+
+
 def _iter_existing_workspace_paths(prompt: str) -> list[tuple[str, Path]]:
-    seen: set[str] = set()
     paths: list[tuple[str, Path]] = []
 
-    for matched in WORKSPACE_TOOL_PATH_PATTERN.findall(prompt):
-        rel_path = _clean_prompt_path_candidate(matched)
-        if not rel_path or rel_path in seen:
-            continue
-        seen.add(rel_path)
-
+    for rel_path in _iter_prompt_path_candidates(prompt):
         try:
             target = resolve_workspace_path(rel_path)
         except PermissionError:
@@ -274,12 +288,11 @@ def _iter_existing_workspace_paths(prompt: str) -> list[tuple[str, Path]]:
 def _iter_prompt_path_candidates(prompt: str) -> list[str]:
     seen: set[str] = set()
     paths: list[str] = []
+    for matched in WORKSPACE_TOOL_QUOTED_PATH_PATTERN.findall(prompt):
+        _append_unique_path(paths, seen, matched)
+
     for matched in WORKSPACE_TOOL_PATH_PATTERN.findall(prompt):
-        rel_path = _clean_prompt_path_candidate(matched)
-        if not rel_path or rel_path in seen:
-            continue
-        seen.add(rel_path)
-        paths.append(rel_path)
+        _append_unique_path(paths, seen, matched)
     return paths
 
 
@@ -369,7 +382,7 @@ def _sanitize_desktop_export_file_name(rel_path: str | None) -> str:
     raw_name = Path(str(rel_path or "").replace("\\", "/")).name.strip()
     if not raw_name:
         raw_name = DEFAULT_DESKTOP_EXPORT_FILE_NAME
-    cleaned = re.sub(r"[^A-Za-z0-9._ -]", "_", raw_name).strip(" .")
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", raw_name).strip(" .")
     if not cleaned:
         cleaned = DEFAULT_DESKTOP_EXPORT_FILE_NAME
     if not cleaned.lower().endswith(".txt"):
@@ -434,6 +447,26 @@ def _build_workspace_tool_plan(
     ).as_dict()
 
 
+def _workspace_tool_failure_summary(
+    tool_name: str,
+    tool_input: Mapping[str, object],
+    exc: Exception,
+) -> str:
+    rel_path = _normalize_optional_text(tool_input.get("rel_path"))
+    if isinstance(exc, FileNotFoundError):
+        target = rel_path or "目标路径"
+        return (
+            f"没有找到 workspace 路径 `{target}`。\n\n"
+            "请检查文件名和目录层级，或先让我列出上一级目录。"
+        )
+    if isinstance(exc, PermissionError):
+        return (
+            "该路径不允许访问。请确认目标仍在项目 workspace 内，"
+            "不要使用绝对路径或 `..` 跳出工作区。"
+        )
+    return f"Workspace tool `{tool_name}` failed: {exc}"
+
+
 def normalize_workspace_tool_plan(value: object) -> WorkspaceToolPlan | None:
     if value is None:
         return None
@@ -496,10 +529,24 @@ def list_workspace_entries(
     max_entries: int = DEFAULT_TOOL_ENTRY_LIMIT,
 ) -> dict[str, object]:
     normalized_path = _resolve_workspace_rel_path(rel_path)
+    target = resolve_workspace_path(normalized_path)
+    if not target.exists():
+        return {
+            "path": normalized_path,
+            "exists": False,
+            "kind": "missing",
+            "recursive": recursive,
+            "total": 0,
+            "truncated": False,
+            "items": [],
+        }
+
     entries = safe_list_entries(normalized_path, recursive=recursive)
     limit = _normalize_positive_limit(max_entries, default=DEFAULT_TOOL_ENTRY_LIMIT)
     return {
         "path": normalized_path,
+        "exists": True,
+        "kind": "file" if target.is_file() else "dir",
         "recursive": recursive,
         "total": len(entries),
         "truncated": len(entries) > limit,
@@ -748,6 +795,12 @@ def _format_file_preview_for_user(data: Mapping[str, object]) -> str:
 
 def _format_listing_for_user(data: Mapping[str, object]) -> str:
     path = str(data.get("path") or ".").strip() or "."
+    if data.get("exists") is False:
+        return (
+            f"没有找到 workspace 路径 `{path}`。\n\n"
+            "请检查文件名和目录层级，或先让我列出上一级目录。"
+        )
+
     total = int(data.get("total") or 0)
     items = data.get("items")
     lines = [f"我列出了 `{path}` 下的内容，共找到 {total} 项。"]
@@ -1027,6 +1080,7 @@ def build_workspace_overview(
 
 def plan_workspace_tool(prompt: str) -> dict[str, object]:
     normalized_prompt = str(prompt or "").strip()
+    path_candidates = _iter_prompt_path_candidates(normalized_prompt)
     matched_paths = _iter_existing_workspace_paths(normalized_prompt)
 
     if _looks_like_text_file_write_request(normalized_prompt):
@@ -1042,6 +1096,8 @@ def plan_workspace_tool(prompt: str) -> dict[str, object]:
 
     if _contains_keyword(normalized_prompt, WORKSPACE_TOOL_TEST_KEYWORDS):
         target_paths = [rel_path for rel_path, _ in matched_paths]
+        if not target_paths:
+            target_paths = path_candidates
         if not target_paths:
             target_paths = _default_test_paths()
         if target_paths:
@@ -1061,13 +1117,22 @@ def plan_workspace_tool(prompt: str) -> dict[str, object]:
             rel_path=matched_file,
         )
 
+    if _contains_keyword(normalized_prompt, WORKSPACE_TOOL_READ_KEYWORDS) and path_candidates:
+        return _build_workspace_tool_plan(
+            WORKSPACE_TOOL_NAME_READ,
+            reason="Prompt asks to read a workspace path.",
+            terminal=_looks_like_pure_read_request(normalized_prompt),
+            rel_path=path_candidates[0],
+        )
+
     if _contains_keyword(normalized_prompt, WORKSPACE_TOOL_LIST_KEYWORDS):
-        matched_dir = _first_matching_path(matched_paths, want_file=False) or "."
+        matched_dir = _first_matching_path(matched_paths, want_file=False)
+        rel_path = matched_dir or (path_candidates[0] if path_candidates else ".")
         return _build_workspace_tool_plan(
             WORKSPACE_TOOL_NAME_LIST,
             reason="Prompt asks for workspace structure.",
             terminal=_looks_like_pure_list_request(normalized_prompt),
-            rel_path=matched_dir,
+            rel_path=rel_path,
             recursive=False,
             max_entries=DEFAULT_WORKSPACE_OVERVIEW_ENTRY_LIMIT,
         )
@@ -1169,6 +1234,7 @@ def execute_workspace_tool_plan(plan: Mapping[str, object] | WorkspaceToolPlan) 
             data=data,
         ).as_dict()
     except Exception as exc:
+        failure_summary = _workspace_tool_failure_summary(tool_name, tool_input, exc)
         return WorkspaceToolExecutionResult(
             tool_name=tool_name,
             tool_input=tool_input,
@@ -1178,7 +1244,7 @@ def execute_workspace_tool_plan(plan: Mapping[str, object] | WorkspaceToolPlan) 
             tool_output_kind=tool_definition.output_kind,
             tool_error_code=WORKSPACE_TOOL_ERROR_EXECUTION_FAILED,
             tool_descriptor=WorkspaceToolDescriptor.from_value(tool_descriptor),
-            summary=f"Workspace tool `{tool_name}` failed: {exc}",
+            summary=failure_summary,
             error=str(exc),
             data=None,
         ).as_dict()

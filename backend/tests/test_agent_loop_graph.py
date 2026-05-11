@@ -3,6 +3,7 @@ import importlib
 import anyio
 
 from backend.app.agent_workflow.loop.agent_loop_graph import run_agent_loop
+from backend.app.core.config import settings
 from backend.app.services.chat_action.agent import build_agent_reply
 from backend.app.services.run_interface import create_run, execute_run, get_run
 from backend.app.tools.safe_fs import safe_write_file
@@ -69,6 +70,30 @@ def test_agent_loop_graph_executes_workspace_write_action():
     assert read_workspace_text("notes/loop.txt")["content"] == "loop ok"
 
 
+def test_agent_loop_graph_executes_workspace_write_then_read_multistep():
+    result = run_agent_loop(
+        "请创建 notes/loop-multistep.txt，内容是hello multi，然后读出来确认",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    action_names = [step["action"]["name"] for step in result.runtime_steps]
+
+    assert result.ok is True
+    assert result.intent == "coding"
+    assert result.run_id is None
+    assert result.state["step_count"] == 2
+    assert result.state["action_name"] == "workspace.read"
+    assert result.state["action_queue"] == []
+    assert [item["node"] for item in result.workflow_trace].count("plan_node") == 2
+    assert "workspace.write" in action_names
+    assert "workspace.read" in action_names
+    assert "我读到了 `notes/loop-multistep.txt` 的内容" in result.output
+    assert "hello multi" in result.output
+
+
 def test_agent_loop_graph_executes_workspace_read_action():
     safe_write_file("backend/app/demo.txt", "demo content")
 
@@ -107,7 +132,7 @@ def test_agent_loop_graph_executes_workspace_list_action():
     assert "文件: demo/nested/info.txt" in result.output
 
 
-def test_agent_loop_graph_executes_workspace_test_action():
+def test_agent_loop_graph_asks_before_workspace_test_action():
     safe_write_file(
         "backend/tests/test_demo_pass.py",
         "def test_demo_pass():\n"
@@ -116,6 +141,28 @@ def test_agent_loop_graph_executes_workspace_test_action():
 
     result = run_agent_loop(
         "请运行 backend/tests/test_demo_pass.py 的测试",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id is None
+    assert result.state["action_name"] == "ask_user_confirmation"
+    assert result.state["action_input"]["blocked_action_name"] == "workspace.test"
+    assert "需要你明确确认" in result.output
+
+
+def test_agent_loop_graph_executes_confirmed_workspace_test_action():
+    safe_write_file(
+        "backend/tests/test_demo_pass.py",
+        "def test_demo_pass():\n"
+        "    assert True\n",
+    )
+
+    result = run_agent_loop(
+        "确认执行，请运行 backend/tests/test_demo_pass.py 的测试",
         None,
         intent="coding",
         emit_chat_message=False,
@@ -224,11 +271,33 @@ def test_agent_loop_graph_executes_run_rerun_action():
     assert follow_up.trigger_mode == "rerun"
 
 
-def test_agent_loop_graph_executes_run_cancel_action():
+def test_agent_loop_graph_asks_before_run_cancel_action():
     run = create_run("build a calculator demo", None)
 
     result = run_agent_loop(
         f"请取消 run_id {run.run_id}",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.run_id is None
+    assert result.state["action_name"] == "ask_user_confirmation"
+    assert result.state["action_input"]["blocked_action_name"] == "run.cancel"
+    assert "需要你明确确认" in result.output
+    unchanged = get_run(run.run_id)
+    assert unchanged is not None
+    assert unchanged.status == "queued"
+    assert unchanged.cancel_requested is False
+
+
+def test_agent_loop_graph_executes_confirmed_run_cancel_action():
+    run = create_run("build a calculator demo", None)
+
+    result = run_agent_loop(
+        f"请确认取消 run_id {run.run_id}",
         None,
         intent="coding",
         emit_chat_message=False,
@@ -298,6 +367,43 @@ def test_agent_loop_graph_recovers_desktop_export_disabled():
     assert "workspace.export_desktop" in action_names
     assert "final.answer" in action_names
     assert "DESKTOP_EXPORT_ENABLED=true" in result.output
+
+
+def test_agent_loop_graph_asks_before_configured_desktop_export(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "desktop_export_enabled", True)
+    monkeypatch.setattr(settings, "desktop_export_dir", tmp_path)
+
+    result = run_agent_loop(
+        "帮我在桌面创建 notes/desk-safe.txt，内容是hello desk",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.state["action_name"] == "ask_user_confirmation"
+    assert result.state["action_input"]["blocked_action_name"] == "workspace.export_desktop"
+    assert "需要你明确确认" in result.output
+    assert not (tmp_path / "desk-safe.txt").exists()
+
+
+def test_agent_loop_graph_executes_confirmed_desktop_export(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "desktop_export_enabled", True)
+    monkeypatch.setattr(settings, "desktop_export_dir", tmp_path)
+
+    result = run_agent_loop(
+        "确认执行，帮我在桌面创建 notes/desk-confirmed.txt，内容是hello desk",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.state["action_name"] == "workspace.export_desktop"
+    assert "已按配置导出文本文件到桌面导出目录" in result.output
+    assert (tmp_path / "desk-confirmed.txt").read_text(encoding="utf-8") == "hello desk"
 
 
 def test_agent_loop_graph_asks_before_overwriting_existing_file():
