@@ -185,7 +185,7 @@ $env:AI_AGENT_MESSAGES_ENDPOINT="http://127.0.0.1:8000/messages"
 - 桌面文本导出请求是否先弹出确认框
 - `/runs/{run_id}` 是否返回 `detail_sections`
 
-更完整的验收步骤见 [`docs/plan/20260510-backend-runtime-review.md`](../docs/plan/20260510-backend-runtime-review.md) 的 P10 部分。
+更完整的验收步骤见 [`docs/plan/20260510-2.md`](../docs/plan/20260510-2.md) 的 P10 部分。
 
 ## 4. 后端目录概览
 
