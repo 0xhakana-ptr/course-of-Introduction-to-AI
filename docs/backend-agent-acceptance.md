@@ -170,11 +170,13 @@ Invoke-RestMethod "http://127.0.0.1:8000/runs/$runId"
 - `run.cancel` 需要明确确认。
 - `workspace.test` 需要明确确认。
 - 已启用桌面导出的 `workspace.export_desktop` 需要明确确认。
+- 已存在文件默认不覆盖；只有用户明确写出“覆盖 / 替换 / overwrite / replace”时，`workspace.write` 或 `workspace.export_desktop` 才允许覆盖。
 
 确认类动作合格标准：
 
 - 未确认时返回 `ask_user_confirmation`。
 - 用户明确输入“确认执行”或 `confirm/proceed` 后才继续。
+- 文件覆盖确认必须使用覆盖类表达，不应把普通“确认执行”误当作覆盖授权。
 - 缺少 `run_id` 时优先提示补充参数，不应进入假确认。
 
 ## 7. Diagnostics 验收

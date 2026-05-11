@@ -22,51 +22,6 @@ class WorkflowNodeEvent:
 
 
 WORKFLOW_NODE_EVENTS: dict[str, WorkflowNodeEvent] = {
-    "router": WorkflowNodeEvent(
-        node_name="router",
-        quip="我先判断一下该怎么处理。",
-        progress=3,
-    ),
-    "chat_node": WorkflowNodeEvent(
-        node_name="chat_node",
-        quip="我正在组织回复。",
-        progress=15,
-    ),
-    "coding_node": WorkflowNodeEvent(
-        node_name="coding_node",
-        quip="我在分析这个任务。",
-        progress=15,
-    ),
-    "workspace_tool_node": WorkflowNodeEvent(
-        node_name="workspace_tool_node",
-        quip="我先查看一下项目上下文。",
-        progress=30,
-    ),
-    "run_tool_node": WorkflowNodeEvent(
-        node_name="run_tool_node",
-        quip="我准备创建并执行任务。",
-        progress=45,
-    ),
-    "run_snapshot_node": WorkflowNodeEvent(
-        node_name="run_snapshot_node",
-        quip="我在读取任务状态。",
-        progress=40,
-    ),
-    "run_control_node": WorkflowNodeEvent(
-        node_name="run_control_node",
-        quip="我在处理任务控制请求。",
-        progress=40,
-    ),
-    "unknown_node": WorkflowNodeEvent(
-        node_name="unknown_node",
-        quip="我需要先把这句话整理清楚。",
-        progress=80,
-    ),
-    "roleplay_node": WorkflowNodeEvent(
-        node_name="roleplay_node",
-        quip="我整理一下结果再告诉你。",
-        progress=90,
-    ),
     "perceive_node": WorkflowNodeEvent(
         node_name="perceive_node",
         quip="我先理解你的目标。",
@@ -102,6 +57,11 @@ WORKFLOW_NODE_EVENTS: dict[str, WorkflowNodeEvent] = {
         quip="这一步遇到了问题，我先收口说明。",
         progress=95,
         status="error",
+    ),
+    "roleplay_node": WorkflowNodeEvent(
+        node_name="roleplay_node",
+        quip="我整理一下结果再告诉你。",
+        progress=90,
     ),
 }
 

@@ -27,7 +27,7 @@ SCHEDULED_OUTPUT_REPLACEMENTS = {
 
 def _agent_intent_hint(detected_intent: str) -> str | None:
     # Natural chat should enter the Agent graph without being forced by the
-    # frontend-facing deterministic router. Keep deterministic operational
+    # frontend-facing deterministic intent gate. Keep operational
     # paths pinned so run control and file/tool tasks stay stable.
     return detected_intent if detected_intent in {"coding", "unknown"} else None
 

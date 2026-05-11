@@ -203,6 +203,7 @@ backend/
     main.py
     message_queue.py
     schemas.py
+  dev/
   tests/
   workspace/
   .env.example
@@ -218,6 +219,7 @@ backend/
 - `app/tools/`：受限文件系统与命令执行工具
 - `app/llm/`：OpenAI-compatible LLM 客户端
 - `app/messaging/` 与 `app/message_queue.py`：统一消息投递
+- `backend/dev/`：开发期手动调试脚本，不属于正式后端入口
 - `backend/workspace/`：运行时数据目录，不是源码目录
 
 ## 5. 详细文档

@@ -1,6 +1,10 @@
 """
-模拟后端测试脚本
-用于在不启动完整后端的情况下测试前端消息接收功能
+Legacy developer-only mock backend.
+
+This script is not imported by backend.app and is not part of the official
+FastAPI runtime. Prefer `uv run uvicorn backend.app.main:app --reload --port
+8000` for normal development. Keep this file only for manual frontend message
+transport experiments.
 """
 
 from typing import List, Dict, Any

@@ -113,6 +113,26 @@ def test_acceptance_workspace_write_returns_terminal_and_creates_file(client):
     _assert_workflow_terminal(messages)
 
 
+def test_acceptance_workspace_explicit_overwrite_returns_terminal_and_updates_file(client):
+    safe_write_file("notes/p1-overwrite.txt", "old")
+
+    response = client.post(
+        "/chat",
+        json={"prompt": "请覆盖 notes/p1-overwrite.txt，内容是new", "context": None},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["intent"] == "coding"
+    assert "已在 workspace 中覆盖文本文件" in payload["output"]
+    assert read_workspace_text("notes/p1-overwrite.txt")["content"] == "new"
+
+    messages = _messages(client)
+    _assert_action_event(messages, action_name="workspace.write")
+    _assert_workflow_terminal(messages)
+
+
 def test_acceptance_workspace_write_supports_quoted_chinese_space_path(client):
     response = client.post(
         "/chat",

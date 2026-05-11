@@ -42,6 +42,7 @@ from ..state.state_support import (
     merge_agent_state,
 )
 from ..runtime.graph_nodes import register_agent_graph_nodes
+from .action_plan import ActionPlan
 
 
 class AgentLoopState(TypedDict, total=False):
@@ -134,6 +135,24 @@ READ_CONFIRMATION_KEYWORDS = (
     "read",
     "show",
     "preview",
+)
+OVERWRITE_CONFIRMATION_KEYWORDS = (
+    "覆盖",
+    "替换",
+    "overwrite",
+    "replace",
+)
+NEGATED_OVERWRITE_KEYWORDS = (
+    "不要覆盖",
+    "不覆盖",
+    "别覆盖",
+    "不要替换",
+    "不替换",
+    "别替换",
+    "do not overwrite",
+    "don't overwrite",
+    "dont overwrite",
+    "without overwriting",
 )
 
 
@@ -241,6 +260,42 @@ def _prompt_confirms_action(prompt: str) -> bool:
     )
 
 
+def _prompt_confirms_overwrite(prompt: str) -> bool:
+    text = str(prompt or "").strip().lower()
+    if any(keyword.lower() in text for keyword in NEGATED_OVERWRITE_KEYWORDS):
+        return False
+    return any(keyword.lower() in text for keyword in OVERWRITE_CONFIRMATION_KEYWORDS)
+
+
+def _apply_overwrite_confirmation_to_action(
+    *,
+    prompt: str,
+    action_name: str,
+    action_input: dict[str, object],
+    workspace_plan: dict[str, object] | None = None,
+) -> tuple[dict[str, object], dict[str, object] | None]:
+    if action_name not in {"workspace.write", "workspace.export_desktop"}:
+        return action_input, workspace_plan
+    if not _prompt_confirms_overwrite(prompt):
+        return action_input, workspace_plan
+    if not _normalize_text(action_input.get("rel_path")):
+        return action_input, workspace_plan
+
+    confirmed_input = {**action_input, "overwrite": True}
+    if workspace_plan is None:
+        return confirmed_input, None
+
+    tool_input = workspace_plan.get("tool_input")
+    confirmed_plan = {
+        **workspace_plan,
+        "tool_input": {
+            **(dict(tool_input) if isinstance(tool_input, dict) else {}),
+            "overwrite": True,
+        },
+    }
+    return confirmed_input, confirmed_plan
+
+
 def _desktop_export_confirmation_is_needed(action_input: dict[str, object]) -> bool:
     target_location = _normalize_text(action_input.get("target_location")).lower()
     if target_location != "desktop":
@@ -260,6 +315,36 @@ def _action_requires_runtime_confirmation(
     if action_name == "workspace.export_desktop":
         return _desktop_export_confirmation_is_needed(action_input)
     return bool(definition.descriptor.requires_confirmation)
+
+
+def _action_safety_level(action_name: str) -> str:
+    definition = default_action_registry.get(action_name)
+    if definition is None:
+        return "unknown"
+    return definition.descriptor.safety_level
+
+
+def _make_action_plan(
+    action_name: str,
+    action_input: dict[str, object],
+    *,
+    reason: str,
+    planner_source: str = "rules",
+    terminal: bool = True,
+    next_action_queue: list[dict[str, object]] | None = None,
+    details: dict[str, object] | None = None,
+) -> ActionPlan:
+    return ActionPlan(
+        action_name=action_name,
+        action_input=dict(action_input),
+        reason=reason,
+        safety_level=_action_safety_level(action_name),
+        requires_confirmation=_action_requires_runtime_confirmation(action_name, action_input),
+        next_action_queue=next_action_queue,
+        planner_source=planner_source,
+        terminal=terminal,
+        details=dict(details or {}),
+    )
 
 
 def _confirmation_target_label(
@@ -295,27 +380,32 @@ def _build_action_confirmation_prompt(
 def _with_confirmation_guard(
     *,
     prompt: str,
-    action_name: str,
-    action_input: dict[str, object],
-    plan_details: dict[str, object],
-) -> tuple[str, dict[str, object], dict[str, object]]:
+    plan: ActionPlan,
+) -> ActionPlan:
     if (
-        action_name == "ask_user_confirmation"
-        or not _action_requires_runtime_confirmation(action_name, action_input)
+        plan.action_name == "ask_user_confirmation"
+        or not _action_requires_runtime_confirmation(plan.action_name, plan.action_input)
         or _prompt_confirms_action(prompt)
     ):
-        return action_name, action_input, plan_details
+        return plan
 
-    confirmation_prompt = _build_action_confirmation_prompt(action_name, action_input)
-    return "ask_user_confirmation", {
-        "prompt": confirmation_prompt,
-        "blocked_action_name": action_name,
-        "blocked_action_input": action_input,
-    }, {
-        **plan_details,
-        "confirmation_required": True,
-        "blocked_action_name": action_name,
-    }
+    confirmation_prompt = _build_action_confirmation_prompt(plan.action_name, plan.action_input)
+    return _make_action_plan(
+        "ask_user_confirmation",
+        {
+            "prompt": confirmation_prompt,
+            "blocked_action_name": plan.action_name,
+            "blocked_action_input": plan.action_input,
+        },
+        reason="Runtime confirmation is required before executing a risky action.",
+        planner_source=plan.planner_source,
+        details={
+            **plan.details,
+            "confirmation_required": True,
+            "blocked_action_name": plan.action_name,
+            "blocked_action_plan": plan.as_dict(),
+        },
+    )
 
 
 def _is_file_exists_error(action_result: dict[str, object]) -> bool:
@@ -411,27 +501,33 @@ def _should_replan_after_failure(
     return True, reason, message
 
 
-def _build_recovery_plan(state: AgentLoopState) -> tuple[str, dict[str, object], dict[str, object]]:
+def _build_recovery_action_plan(state: AgentLoopState) -> ActionPlan:
     reason = _normalize_text(state.get("recovery_reason"))
     message = _normalize_text(state.get("recovery_message"), default="这一步需要你补充确认后才能继续。")
 
     if reason == RECOVERY_REASON_FILE_EXISTS:
-        return "ask_user_confirmation", {"prompt": message}, {
-            "reason": "Recoverable tool failure asks the user before overwrite.",
-            "recovery_reason": reason,
-            "next_action_queue": [],
-        }
+        return _make_action_plan(
+            "ask_user_confirmation",
+            {"prompt": message},
+            reason="Recoverable tool failure asks the user before overwrite.",
+            planner_source="recovery",
+            next_action_queue=[],
+            details={"recovery_reason": reason},
+        )
 
-    return "final.answer", {"content": message}, {
-        "reason": "Recoverable tool failure is converted to a clear final answer.",
-        "recovery_reason": reason,
-        "next_action_queue": [],
-    }
+    return _make_action_plan(
+        "final.answer",
+        {"content": message},
+        reason="Recoverable tool failure is converted to a clear final answer.",
+        planner_source="recovery",
+        next_action_queue=[],
+        details={"recovery_reason": reason},
+    )
 
 
-def _build_plan(state: AgentLoopState) -> tuple[str, dict[str, object], dict[str, object]]:
+def _build_action_plan(state: AgentLoopState) -> ActionPlan:
     if _coerce_bool(state.get("recovery_attempted")) and _normalize_text(state.get("recovery_reason")):
-        return _build_recovery_plan(state)
+        return _build_recovery_action_plan(state)
 
     prompt = _normalize_text(state.get("user_input"))
     intent = _normalize_text(state.get("intent"), default=detect_intent(prompt))
@@ -441,22 +537,33 @@ def _build_plan(state: AgentLoopState) -> tuple[str, dict[str, object], dict[str
         remaining_queue = action_queue[1:]
         action_name = _normalize_text(next_action.get("action_name"))
         action_input = dict(next_action.get("action_input") or {})
-        return _with_confirmation_guard(
+        action_input, _ = _apply_overwrite_confirmation_to_action(
             prompt=prompt,
             action_name=action_name,
             action_input=action_input,
-            plan_details={
-                "intent": intent,
-                "queued_action": True,
-                "next_action_queue": remaining_queue,
-            },
+        )
+        return _with_confirmation_guard(
+            prompt=prompt,
+            plan=_make_action_plan(
+                action_name,
+                action_input,
+                reason="Agent Loop continues with the next queued action.",
+                planner_source="queue",
+                next_action_queue=remaining_queue,
+                details={
+                    "intent": intent,
+                    "queued_action": True,
+                },
+            ),
         )
 
     if intent == "chat":
-        return "chat.reply", {"prompt": prompt, "context": state.get("context")}, {
-            "intent": intent,
-            "reason": "Chat intent uses direct LLM reply action.",
-        }
+        return _make_action_plan(
+            "chat.reply",
+            {"prompt": prompt, "context": state.get("context")},
+            reason="Chat intent uses direct LLM reply action.",
+            details={"intent": intent},
+        )
 
     if intent == "coding":
         run_action = detect_run_action(prompt)
@@ -465,16 +572,25 @@ def _build_plan(state: AgentLoopState) -> tuple[str, dict[str, object], dict[str
             action_name = RUN_ACTION_TO_AGENT_ACTION.get(run_action, "run.inspect")
             return _with_confirmation_guard(
                 prompt=prompt,
-                action_name=action_name,
-                action_input={"run_id": target_run_id},
-                plan_details={
-                    "intent": intent,
-                    "run_action": run_action,
-                    "target_run_id": target_run_id,
-                },
+                plan=_make_action_plan(
+                    action_name,
+                    {"run_id": target_run_id},
+                    reason=f"Coding prompt selected run control action `{run_action}`.",
+                    details={
+                        "intent": intent,
+                        "run_action": run_action,
+                        "target_run_id": target_run_id,
+                    },
+                ),
             )
 
         action_name, action_input, workspace_plan = _workspace_action_from_prompt(prompt)
+        action_input, workspace_plan = _apply_overwrite_confirmation_to_action(
+            prompt=prompt,
+            action_name=action_name,
+            action_input=action_input,
+            workspace_plan=workspace_plan,
+        )
         if action_name == "run.create":
             action_input = {
                 "prompt": prompt,
@@ -487,23 +603,39 @@ def _build_plan(state: AgentLoopState) -> tuple[str, dict[str, object], dict[str
         )
         return _with_confirmation_guard(
             prompt=prompt,
-            action_name=action_name,
-            action_input=action_input,
-            plan_details={
-                "intent": intent,
-                "run_action": run_action,
-                "workspace_tool_plan": workspace_plan,
-                "next_action_queue": followup_queue,
-            },
+            plan=_make_action_plan(
+                action_name,
+                action_input,
+                reason=(
+                    "Coding prompt selected a workspace action."
+                    if workspace_plan is not None and action_name != "run.create"
+                    else "Coding prompt selected run creation."
+                ),
+                next_action_queue=followup_queue,
+                details={
+                    "intent": intent,
+                    "run_action": run_action,
+                    "workspace_tool_plan": workspace_plan,
+                },
+            ),
         )
 
-    return "final.answer", {
-        "content": (
-            "我这次没有完全听懂你的意思。"
-            "\n\n如果你只是想聊天，可以直接继续说；"
-            "如果你想让我处理代码任务，可以补充目标、文件、报错或 run_id。"
-        )
-    }, {"intent": intent, "reason": "Unknown intent falls back to final answer."}
+    return _make_action_plan(
+        "final.answer",
+        {
+            "content": (
+                "我这次没有完全听懂你的意思。"
+                "\n\n如果你只是想聊天，可以直接继续说；"
+                "如果你想让我处理代码任务，可以补充目标、文件、报错或 run_id。"
+            )
+        },
+        reason="Unknown intent falls back to final answer.",
+        details={"intent": intent},
+    )
+
+
+def _build_plan(state: AgentLoopState) -> tuple[str, dict[str, object], dict[str, object]]:
+    return _build_action_plan(state).as_legacy_tuple()
 
 
 def perceive_node(state: AgentLoopState) -> AgentLoopState:

@@ -183,13 +183,13 @@ def _phase_suggested_next_step(phase: str, *, blocked: bool) -> str:
         return "继续使用 preview 观察路径，或改成 inspect / chat 分支进行安全运行期诊断。"
 
     return {
-        "routing": "优先检查 intent 判断是否符合预期，再确认后续 route 是否正确。",
-        "chat": "优先检查 LLM 配置、模型连通性和 chat_node 的 error/output。",
-        "coding": "优先检查 run_action、target_run_id 和 coding 侧输入清洗是否符合预期。",
-        "tools": "优先检查 workspace tool 规划结果、目标路径和工具执行错误信息。",
-        "run_create": "优先检查 create_run 调用参数、run 快照读取结果和任务创建收口。",
-        "run_read": "优先检查 run_id、snapshot 读取结果和终态/中间态分支判断。",
-        "run_control": "优先检查 run_action、目标 run 当前状态和控制动作是否允许执行。",
+        "routing": "优先检查 perceive/plan 的 intent、action_name 和 action_input 是否符合预期。",
+        "chat": "优先检查 LLM 配置、模型连通性和 chat.reply 的 error/output。",
+        "coding": "优先检查 plan_node 生成的 action、run_id 和 workspace 输入清洗是否符合预期。",
+        "tools": "优先检查 act/observe 的工具执行结果、目标路径和错误信息。",
+        "run_create": "优先检查 run.create 调用参数、run 快照读取结果和任务创建收口。",
+        "run_read": "优先检查 run_id、run.inspect 读取结果和终态/中间态分支判断。",
+        "run_control": "优先检查 run action、目标 run 当前状态和控制动作是否允许执行。",
         "roleplay": "优先检查 output、node_name 和 emit_chat_message 是否符合预期。",
         "diagnostics": "优先检查 diagnostics 预览路径是否与真实运行路径一致。",
     }.get(phase, "优先检查 failure_node 对应的 trace、ui_status 和输出内容。")

@@ -18,15 +18,6 @@ TASK_RETRY_FAILED_NODE = "task_retry_failed"
 TASK_RETRY_REPAIRING_NODE = "task_retry_repairing"
 
 WORKFLOW_NODE_METADATA: dict[str, dict[str, str]] = {
-    "router": {"label": "意图路由", "phase": "routing"},
-    "chat_node": {"label": "聊天回复", "phase": "chat"},
-    "coding_node": {"label": "代码任务预处理", "phase": "coding"},
-    "workspace_tool_node": {"label": "工作区工具", "phase": "tools"},
-    "run_tool_node": {"label": "任务创建", "phase": "run_create"},
-    "run_snapshot_node": {"label": "任务读取", "phase": "run_read"},
-    "run_control_node": {"label": "任务控制", "phase": "run_control"},
-    "unknown_node": {"label": "未知意图收口", "phase": "fallback"},
-    "roleplay_node": {"label": "角色收口", "phase": "roleplay"},
     "perceive_node": {"label": "理解请求", "phase": "routing"},
     "plan_node": {"label": "规划动作", "phase": "routing"},
     "act_node": {"label": "执行动作", "phase": "tools"},
@@ -34,6 +25,7 @@ WORKFLOW_NODE_METADATA: dict[str, dict[str, str]] = {
     "decide_continue_node": {"label": "判断是否继续", "phase": "routing"},
     "finalize_node": {"label": "最终收口", "phase": "roleplay"},
     "failure_node": {"label": "失败收口", "phase": "fallback"},
+    "roleplay_node": {"label": "角色收口", "phase": "roleplay"},
     "diagnostics_preview": {"label": "诊断预览", "phase": "diagnostics"},
 }
 

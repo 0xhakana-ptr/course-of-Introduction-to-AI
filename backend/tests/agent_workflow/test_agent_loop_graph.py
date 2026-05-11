@@ -4,6 +4,7 @@ import anyio
 
 from backend.app.agent_workflow.loop.agent_loop_graph import run_agent_loop
 from backend.app.core.config import settings
+from backend.app.message_queue import message_queue
 from backend.app.services.chat_action.agent import build_agent_reply
 from backend.app.services.run_interface import create_run, execute_run, get_run
 from backend.app.tools.safe_fs import safe_write_file
@@ -431,6 +432,44 @@ def test_agent_loop_graph_asks_before_overwriting_existing_file():
     assert read_workspace_text("notes/existing.txt")["content"] == "old"
 
 
+def test_agent_loop_graph_executes_explicit_workspace_overwrite():
+    safe_write_file("notes/existing.txt", "old")
+
+    result = run_agent_loop(
+        "请覆盖 notes/existing.txt，内容是new",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.error is None
+    assert result.runtime_turn["stop_reason"] == "completed"
+    assert result.state["action_name"] == "workspace.write"
+    assert result.state["action_input"]["overwrite"] is True
+    assert result.state["workspace_tool_name"] == "write_workspace_text"
+    assert "已在 workspace 中覆盖文本文件" in result.output
+    assert read_workspace_text("notes/existing.txt")["content"] == "new"
+
+
+def test_agent_loop_graph_does_not_treat_negated_overwrite_as_confirmation():
+    safe_write_file("notes/existing.txt", "old")
+
+    result = run_agent_loop(
+        "请创建 notes/existing.txt，内容是new，不要覆盖已有文件",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert result.ok is True
+    assert result.state["recovery_reason"] == "file_exists"
+    assert result.state["action_name"] == "ask_user_confirmation"
+    assert read_workspace_text("notes/existing.txt")["content"] == "old"
+
+
 def test_agent_loop_graph_asks_for_run_id_when_run_action_lacks_reference(monkeypatch):
     loop_module = importlib.import_module("backend.app.agent_workflow.loop.agent_loop_graph")
     monkeypatch.setattr(loop_module, "detect_run_action", lambda prompt: "inspect")
@@ -486,3 +525,38 @@ def test_chat_agent_uses_loop_graph(monkeypatch):
     assert result.ok is True
     assert result.intent == "chat"
     assert result.output == "loop mode reply"
+
+
+def test_chat_agent_emits_failed_terminal_when_loop_outer_guard_catches_exception(monkeypatch):
+    agent_module = importlib.import_module("backend.app.services.chat_action.agent")
+
+    async def raise_run_sync(*args, **kwargs):
+        raise RuntimeError("loop crashed")
+
+    monkeypatch.setattr(agent_module.to_thread, "run_sync", raise_run_sync)
+
+    async def call_build_agent_reply():
+        return await build_agent_reply(
+            "hello",
+            None,
+            intent="chat",
+            emit_chat_message=False,
+            emit_node_events=True,
+        )
+
+    result = anyio.run(call_build_agent_reply)
+
+    assert result.ok is False
+    assert result.intent == "chat"
+    assert result.error == "loop crashed"
+    messages = message_queue.get_messages()
+    terminals = [
+        message
+        for message in messages
+        if message.get("type") == "status"
+        and message.get("event_type") == "workflow.failed"
+    ]
+    assert terminals
+    assert terminals[-1]["status"] == "error"
+    assert terminals[-1]["node_name"] == "agent_loop_outer_guard"
+    assert terminals[-1]["metadata"]["ui_status"] == "workflow_exception"

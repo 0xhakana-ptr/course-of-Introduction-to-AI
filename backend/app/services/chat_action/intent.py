@@ -403,7 +403,7 @@ def normalize_intent_label(value: str | None) -> INTENT_TYPE | None:
 
 
 def classify_intent_with_llm(_prompt: str) -> INTENT_TYPE | None:
-    # The frontend-facing agent now uses a narrow deterministic router.
+    # The frontend-facing agent now uses a narrow deterministic intent gate.
     # Keeping this compatibility hook avoids reintroducing token-heavy pre-classification.
     return None
 

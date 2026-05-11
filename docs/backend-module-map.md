@@ -26,6 +26,7 @@
 ```text
 backend/
   app/
+  dev/
   tests/
   workspace/
   .env.example
@@ -36,6 +37,7 @@ backend/
 说明：
 
 - `backend/app/`：后端源码主目录
+- `backend/dev/`：开发期手动调试脚本，不属于正式后端入口
 - `backend/tests/`：后端自动化测试
 - `backend/workspace/`：运行时文件，当前主要包含 `runs/` 与 `conversations/`
 - `backend/.env.example`：环境变量模板
@@ -236,6 +238,7 @@ agent_workflow/
 
 - 新 Agent 能力优先接入 `loop/` 与 `actions/`
 - 旧 route graph 已移除，不再维护 `AGENT_RUNTIME_MODE=route` fallback
+- 节点事件和节点 metadata 只维护当前 Agent Loop 节点，不再保留旧 route graph 的 `router/chat_node/coding_node`
 - 需要新增工具时，优先注册 action，而不是新增固定路由分支
 
 ### 6.2 共享契约与节点映射
@@ -250,7 +253,7 @@ agent_workflow/
 
 职责：
 
-- `contracts/workflow_nodes.py`：保存 workflow 节点常量、终态节点映射和节点元信息
+- `contracts/workflow_nodes.py`：保存当前 Agent Loop 节点元信息、run/summary/repair 终态节点常量和终态节点映射
 - `contracts/workflow_results.py`：保存 Agent / Summary / Repair workflow 的结构化结果模型与 graph invoke 收口 helper
 - `contracts/node_mappings.py`：保存节点到 quip / expression 的映射和是否发送 chat message 的规则
 
