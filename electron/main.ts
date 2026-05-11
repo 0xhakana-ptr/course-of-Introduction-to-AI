@@ -487,6 +487,18 @@ type AgentChatResponse = {
     run_id?: string | null
 }
 
+type AgentRunGetRequest = {
+    run_id: string
+}
+
+type AgentRunGetResponse = {
+    ok: boolean
+    run?: any
+    error?: string
+}
+
+let backendAgentSessionId: string | null = null
+
 async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse> {
     const prompt = typeof req?.prompt === 'string' ? req.prompt.trim() : ''
     const context = typeof req?.context === 'string' ? req.context : ''
@@ -498,7 +510,7 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ prompt, context }),
+                body: JSON.stringify({ prompt, context, session_id: backendAgentSessionId }),
             })
 
             const text = await res.text()
@@ -513,6 +525,10 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
                 const ok = typeof json?.ok === 'boolean' ? json.ok : true
                 const error = typeof json?.error === 'string' ? json.error : undefined
                 const runId = typeof json?.run_id === 'string' ? json.run_id : null
+
+                const nextSessionId = typeof json?.session_id === 'string' ? json.session_id.trim() : ''
+                if (nextSessionId) backendAgentSessionId = nextSessionId
+
                 return { ok, output: out || text, error, run_id: runId }
             } catch {
                 return { ok: true, output: text }
@@ -537,6 +553,39 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
 ipcMain.handle('agent:chat', async (_event, payload: unknown): Promise<AgentChatResponse> => {
     const p = payload as Partial<AgentChatRequest> | null
     return await runBackendAgent({ prompt: String(p?.prompt ?? ''), context: typeof p?.context === 'string' ? p.context : '' })
+})
+
+ipcMain.handle('agent:run:get', async (_event, payload: unknown): Promise<AgentRunGetResponse> => {
+    const p = payload as Partial<AgentRunGetRequest> | null
+    const runId = typeof p?.run_id === 'string' ? p.run_id.trim() : ''
+    if (!runId) return { ok: false, error: 'missing run_id' }
+
+    const baseUrl = resolveAgentBaseUrl()
+    if (!baseUrl) return { ok: false, error: 'AI agent base URL not configured' }
+
+    const url = `${baseUrl}/runs/${encodeURIComponent(runId)}`
+    try {
+        const res = await fetch(url, {
+            method: 'GET',
+            headers: {
+                accept: 'application/json',
+            },
+        })
+        const text = await res.text()
+        if (!res.ok) {
+            return { ok: false, error: `HTTP ${res.status}: ${text || '(empty response body)'}` }
+        }
+
+        if (!text.trim()) return { ok: false, error: 'empty response body' }
+        try {
+            const json = JSON.parse(text)
+            return { ok: true, run: json }
+        } catch (e) {
+            return { ok: false, error: `invalid JSON: ${String(e)}` }
+        }
+    } catch (e) {
+        return { ok: false, error: String(e) }
+    }
 })
 
 ipcMain.handle('window:isCursorOver', (event) => {

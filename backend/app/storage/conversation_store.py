@@ -24,8 +24,67 @@ class ConversationStore:
     def __init__(self) -> None:
         self._sessions: dict[str, list[ConversationMessage]] = {}
         self._session_metadata: dict[str, ConversationSessionMetadata] = {}
+        self._pending_confirmations: dict[str, dict[str, object]] = {}
         self._lock = threading.RLock()
         self._last_cleanup_monotonic = 0.0
+
+    def set_pending_confirmation(
+        self,
+        session_id: str,
+        *,
+        prompt: str | None,
+        blocked_action_name: str,
+        blocked_action_input: dict[str, object] | None,
+        ttl_seconds: int = 600,
+    ) -> None:
+        if not session_id or not blocked_action_name or blocked_action_input is None:
+            return
+
+        safe_ttl_seconds = ttl_seconds if ttl_seconds > 0 else 0
+        with self._lock:
+            self._pending_confirmations[session_id] = {
+                "prompt": str(prompt or "").strip() or None,
+                "blocked_action_name": blocked_action_name,
+                "blocked_action_input": dict(blocked_action_input),
+                "created_at": utc_now_iso(),
+                "created_at_monotonic": time.monotonic(),
+                "ttl_seconds": safe_ttl_seconds,
+            }
+
+    def get_pending_confirmation(self, session_id: str) -> dict[str, object] | None:
+        if not session_id:
+            return None
+
+        with self._lock:
+            payload = self._pending_confirmations.get(session_id)
+            if payload is None:
+                return None
+
+            created_at_monotonic = payload.get("created_at_monotonic")
+            ttl_seconds = payload.get("ttl_seconds")
+
+            try:
+                created_at_value = float(created_at_monotonic)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                created_at_value = 0.0
+
+            try:
+                ttl_value = int(ttl_seconds)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                ttl_value = 0
+
+            if ttl_value > 0 and created_at_value > 0:
+                if (time.monotonic() - created_at_value) > ttl_value:
+                    self._pending_confirmations.pop(session_id, None)
+                    return None
+
+            return dict(payload)
+
+    def clear_pending_confirmation(self, session_id: str) -> None:
+        if not session_id:
+            return
+        with self._lock:
+            self._pending_confirmations.pop(session_id, None)
 
     def _get_conversation_dir(self) -> Path:
         conversation_dir = settings.conversation_dir
@@ -449,6 +508,7 @@ class ConversationStore:
         if removed_count > 0:
             self._sessions.clear()
             self._session_metadata.clear()
+            self._pending_confirmations.clear()
         return removed_count
 
     def _maybe_prune_storage_locked(self, *, force: bool = False) -> int:
@@ -693,6 +753,7 @@ class ConversationStore:
         with self._lock:
             removed_from_cache = self._sessions.pop(session_id, None) is not None
             self._session_metadata.pop(session_id, None)
+            self._pending_confirmations.pop(session_id, None)
             session_path = self._get_session_path(session_id)
             removed_from_disk = False
             if session_path.exists():
@@ -704,6 +765,7 @@ class ConversationStore:
         with self._lock:
             self._sessions.clear()
             self._session_metadata.clear()
+            self._pending_confirmations.clear()
             self._last_cleanup_monotonic = 0.0
             conversation_dir = settings.conversation_dir
             if not conversation_dir.exists():

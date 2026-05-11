@@ -177,6 +177,44 @@ def test_agent_loop_graph_executes_confirmed_workspace_test_action():
     assert "结果: 通过" in result.output
 
 
+def test_agent_loop_graph_confirmation_only_resumes_pending_action():
+    safe_write_file(
+        "backend/tests/test_demo_pass.py",
+        "def test_demo_pass():\n"
+        "    assert True\n",
+    )
+
+    session_id = "session_confirm_only_demo"
+
+    first = run_agent_loop(
+        "请运行 backend/tests/test_demo_pass.py 的测试",
+        None,
+        session_id=session_id,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert first.ok is True
+    assert first.state["action_name"] == "ask_user_confirmation"
+    assert first.state["action_input"]["blocked_action_name"] == "workspace.test"
+
+    resumed = run_agent_loop(
+        "confirm",
+        None,
+        session_id=session_id,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert resumed.ok is True
+    assert resumed.state["action_name"] == "workspace.test"
+    assert resumed.state["workspace_tool_name"] == "run_workspace_tests"
+    assert "我运行完测试了" in resumed.output
+    assert "结果: 通过" in resumed.output
+
+
 def test_agent_loop_graph_keeps_complex_file_request_on_run_create_path():
     safe_write_file("backend/app/demo.py", "print('broken')")
 

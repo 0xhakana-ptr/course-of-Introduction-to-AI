@@ -3,7 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { getIpcRenderer } from '../platform/electronIpc'
 
 type ChatLine = { role: 'user' | 'assistant' | 'system' | 'err'; text: string }
-type AgentChatResponse = { ok: boolean; output: string }
+type AgentChatResponse = { ok: boolean; output: string; run_id?: string | null }
+
+type AgentRunGetResponse = { ok: boolean; run?: any; error?: string }
 
 // AI Agent 消息类型定义
 type ChatMessage = {
@@ -108,6 +110,86 @@ const inputRef = ref<HTMLTextAreaElement | null>(null)
 const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
 const desktopConfirmVisible = ref(false)
 let desktopConfirmResolver: ((confirmed: boolean) => void) | null = null
+
+const activeRunTrackers = new Set<string>()
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+}
+
+function formatRunTerminalMessage(run: any): { role: ChatLine['role']; text: string } {
+  const status = String(run?.status ?? '')
+  const runId = String(run?.run_id ?? '')
+  const output = typeof run?.output === 'string' ? run.output.trim() : ''
+  const error = typeof run?.error === 'string' ? run.error.trim() : ''
+  const artifacts = Array.isArray(run?.artifacts) ? (run.artifacts as unknown[]).map(String).filter(Boolean) : []
+  const artifactsText = artifacts.length ? `\n\n[产物]\n${artifacts.join('\n')}` : ''
+
+  if (status === 'done') {
+    return {
+      role: 'assistant',
+      text: (output || `后台任务已完成（run_id=${runId}）。`) + artifactsText,
+    }
+  }
+
+  if (status === 'failed' || status === 'cancelled') {
+    const detail = [output, error].filter(Boolean).join('\n') + artifactsText
+    return {
+      role: status === 'failed' ? 'err' : 'system',
+      text: detail || `后台任务已结束（status=${status} run_id=${runId}）。`,
+    }
+  }
+
+  return {
+    role: 'system',
+    text: `后台任务状态更新：status=${status || 'unknown'} run_id=${runId}`,
+  }
+}
+
+async function trackRunUntilTerminal(runId: string) {
+  if (!ipcRenderer?.invoke) return
+  if (activeRunTrackers.has(runId)) return
+  activeRunTrackers.add(runId)
+
+  const startedAt = Date.now()
+  let lastStatus = ''
+
+  try {
+    push('system', `[任务] 已开始跟踪后台任务：${runId}`)
+
+    while (true) {
+      if (Date.now() - startedAt > 10 * 60 * 1000) {
+        push('system', `[任务] 跟踪超时（10min）：${runId}。你仍可在后端 /runs/${runId} 查看状态。`)
+        return
+      }
+
+      const res = (await ipcRenderer.invoke('agent:run:get', { run_id: runId })) as AgentRunGetResponse
+      if (!res?.ok) {
+        const msg = String(res?.error || 'unknown error')
+        push('system', `[任务] 获取后台任务状态失败：${msg}`)
+        await sleep(1200)
+        continue
+      }
+
+      const run = res.run
+      const status = String(run?.status ?? '')
+      if (status && status !== lastStatus) {
+        lastStatus = status
+        push('system', `[任务] 状态：${status}（${runId}）`)
+      }
+
+      if (status === 'done' || status === 'failed' || status === 'cancelled') {
+        const msg = formatRunTerminalMessage(run)
+        push(msg.role, msg.text)
+        return
+      }
+
+      await sleep(1000)
+    }
+  } finally {
+    activeRunTrackers.delete(runId)
+  }
+}
 
 function push(role: ChatLine['role'], text: string) {
   lines.value.push({ role, text })
@@ -346,8 +428,15 @@ async function sendPrompt(prompt: string) {
   try {
     const context = buildContext()
     const res = (await ipcRenderer.invoke('agent:chat', { prompt: trimmed, context })) as AgentChatResponse
-    if (res?.ok) push('assistant', res.output || '(ok)')
-    else push('err', res?.output || '(error)')
+    if (res?.ok) {
+      push('assistant', res.output || '(ok)')
+      const runId = typeof res?.run_id === 'string' ? res.run_id.trim() : ''
+      if (runId) {
+        void trackRunUntilTerminal(runId)
+      }
+    } else {
+      push('err', (res as any)?.output || '(error)')
+    }
   } catch (e) {
     push('err', String(e))
   } finally {
@@ -424,6 +513,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  activeRunTrackers.clear()
   if (ipcRenderer?.removeListener) {
     ipcRenderer.removeListener('agent:quip', handleQuip)
     ipcRenderer.removeListener('agent:chat', handleChat)

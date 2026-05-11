@@ -317,6 +317,14 @@ def test_workspace_tool_planning_falls_back_to_workspace_overview():
     assert plan.get("terminal") is not True
 
 
+def test_workspace_tool_planning_does_not_treat_test_py_filename_as_run_tests_intent():
+    plan = plan_workspace_tool("请在当前目录创建一个叫做 test.py 的文件")
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_OVERVIEW
+    assert plan["tool_input"] == {"rel_path": "."}
+    assert plan.get("terminal") is not True
+
+
 def test_workspace_tool_registry_can_resolve_registered_tools():
     names = list_workspace_tool_names()
     read_tool = get_workspace_tool_definition(WORKSPACE_TOOL_NAME_READ)

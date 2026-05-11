@@ -1083,6 +1083,13 @@ def plan_workspace_tool(prompt: str) -> dict[str, object]:
     path_candidates = _iter_prompt_path_candidates(normalized_prompt)
     matched_paths = _iter_existing_workspace_paths(normalized_prompt)
 
+    prompt_without_paths = normalized_prompt
+    if path_candidates:
+        for candidate in sorted(path_candidates, key=len, reverse=True):
+            if not candidate:
+                continue
+            prompt_without_paths = prompt_without_paths.replace(candidate, " ")
+
     if _looks_like_text_file_write_request(normalized_prompt):
         return _build_workspace_tool_plan(
             WORKSPACE_TOOL_NAME_WRITE,
@@ -1094,7 +1101,14 @@ def plan_workspace_tool(prompt: str) -> dict[str, object]:
             target_location=_target_location_from_prompt(normalized_prompt),
         )
 
-    if _contains_keyword(normalized_prompt, WORKSPACE_TOOL_TEST_KEYWORDS):
+    if _contains_keyword(normalized_prompt, WORKSPACE_TOOL_WRITE_KEYWORDS) and path_candidates:
+        return _build_workspace_tool_plan(
+            WORKSPACE_TOOL_NAME_OVERVIEW,
+            reason="Prompt looks like creating a (non-text) file; keep tool planning non-terminal before creating a run.",
+            rel_path=".",
+        )
+
+    if _contains_keyword(prompt_without_paths, WORKSPACE_TOOL_TEST_KEYWORDS):
         target_paths = [rel_path for rel_path, _ in matched_paths]
         if not target_paths:
             target_paths = path_candidates

@@ -27,12 +27,16 @@ WORKFLOW_NODE_METADATA: dict[str, dict[str, str]] = {
     "run_control_node": {"label": "任务控制", "phase": "run_control"},
     "unknown_node": {"label": "未知意图收口", "phase": "fallback"},
     "roleplay_node": {"label": "角色收口", "phase": "roleplay"},
-    "perceive_node": {"label": "理解请求", "phase": "routing"},
-    "plan_node": {"label": "规划动作", "phase": "routing"},
-    "act_node": {"label": "执行动作", "phase": "tools"},
-    "observe_node": {"label": "观察结果", "phase": "tools"},
-    "decide_continue_node": {"label": "判断是否继续", "phase": "routing"},
-    "finalize_node": {"label": "最终收口", "phase": "roleplay"},
+    # Tri-layer isolation mapping (keep node names stable for tests & frontend).
+    # Layer 1: Intent Router
+    "perceive_node": {"label": "Intent Router（意图路由）", "phase": "routing"},
+    # Layer 3: Coding Workflow (PM/Coder/QA/Debugger)
+    "plan_node": {"label": "PM（任务规划）", "phase": "coding"},
+    "act_node": {"label": "Coder/Executor（执行）", "phase": "coding"},
+    "observe_node": {"label": "QA（结果过滤）", "phase": "coding"},
+    "decide_continue_node": {"label": "Debugger（决定继续）", "phase": "coding"},
+    # Layer 2: Roleplay(UI)
+    "finalize_node": {"label": "Roleplay(UI)（收口输出）", "phase": "roleplay"},
     "failure_node": {"label": "失败收口", "phase": "fallback"},
     "diagnostics_preview": {"label": "诊断预览", "phase": "diagnostics"},
 }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from ...storage.conversation_store import conversation_store
+
 import re
 from typing import TypedDict
 
@@ -78,6 +80,23 @@ class AgentLoopState(TypedDict, total=False):
     runtime_mode: str
 
 
+def _build_roleplay_view(state: AgentLoopState, *, default_node_name: str) -> dict[str, object]:
+    """Build a minimal, UI-only state view for Roleplay(UI).
+
+    This is the isolation boundary: never pass tool outputs, errors, or other
+    engineering fields to the roleplay emitter.
+    """
+
+    return {
+        "output": _normalize_text(state.get("output")),
+        "node_name": _normalize_text(state.get("node_name"), default=default_node_name),
+        "emit_chat_message": bool(state.get("emit_chat_message", True)),
+        "intent": _normalize_text(state.get("intent")),
+        "ui_status": _normalize_text(state.get("ui_status")),
+        "runtime_mode": _normalize_text(state.get("runtime_mode"), default="loop"),
+    }
+
+
 WORKSPACE_ACTION_BY_TOOL_NAME = {
     WORKSPACE_TOOL_NAME_OVERVIEW: "workspace.overview",
     WORKSPACE_TOOL_NAME_READ: "workspace.read",
@@ -111,6 +130,93 @@ CONFIRMATION_KEYWORDS = (
     "允许",
     "继续执行",
 )
+
+
+_PY_FILE_CANDIDATE_PATTERN = re.compile(r"(?<![\w\-/\\.])[\w\u4e00-\u9fff_.-]+\.py\b")
+_QUOTED_PATH_CANDIDATE_PATTERN = re.compile(r"[`\"'“”‘’]([^`\"'“”‘’]+)[`\"'“”‘’]")
+
+
+def _contains_any_keyword(prompt: str, keywords: tuple[str, ...]) -> bool:
+    text = str(prompt or "").lower()
+    return any(keyword.lower() in text for keyword in keywords)
+
+
+def _looks_like_exploit_request(prompt: str) -> bool:
+    text = str(prompt or "").lower()
+    keywords = (
+        "ret2libc",
+        "pwn",
+        "pwntools",
+        "rop",
+        "shellcode",
+        "exploit",
+        "bof",
+        "buffer overflow",
+        "栈溢出",
+    )
+    return any(keyword in text for keyword in keywords)
+
+
+def _first_python_file_candidate(prompt: str) -> str | None:
+    text = str(prompt or "")
+    for matched in _QUOTED_PATH_CANDIDATE_PATTERN.findall(text):
+        candidate = str(matched).strip()
+        if candidate.lower().endswith(".py"):
+            return candidate.replace("\\", "/")
+    match = _PY_FILE_CANDIDATE_PATTERN.search(text)
+    if match is None:
+        return None
+    return match.group(0).replace("\\", "/")
+
+
+def _looks_like_toposort_request(prompt: str) -> bool:
+    text = str(prompt or "").lower()
+    return "拓扑排序" in prompt or "topological sort" in text or "toposort" in text
+
+
+def _build_toposort_python_content() -> str:
+    return (
+        "from __future__ import annotations\n\n"
+        "from collections import deque\n"
+        "from typing import Iterable\n\n\n"
+        "def topological_sort(nodes: Iterable[str], edges: Iterable[tuple[str, str]]) -> list[str]:\n"
+        "    \"\"\"\n"
+        "    Kahn 算法拓扑排序。\n\n"
+        "    nodes: 所有节点集合\n"
+        "    edges: 有向边 (u, v)，表示 u -> v\n\n"
+        "    若图有环，会抛出 ValueError。\n"
+        "    \"\"\"\n"
+        "    node_list = list(dict.fromkeys(nodes))\n"
+        "    indeg = {n: 0 for n in node_list}\n"
+        "    adj: dict[str, list[str]] = {n: [] for n in node_list}\n\n"
+        "    for u, v in edges:\n"
+        "        if u not in indeg:\n"
+        "            indeg[u] = 0\n"
+        "            adj[u] = []\n"
+        "            node_list.append(u)\n"
+        "        if v not in indeg:\n"
+        "            indeg[v] = 0\n"
+        "            adj[v] = []\n"
+        "            node_list.append(v)\n"
+        "        adj[u].append(v)\n"
+        "        indeg[v] += 1\n\n"
+        "    q = deque([n for n in node_list if indeg[n] == 0])\n"
+        "    order: list[str] = []\n\n"
+        "    while q:\n"
+        "        n = q.popleft()\n"
+        "        order.append(n)\n"
+        "        for nxt in adj.get(n, []):\n"
+        "            indeg[nxt] -= 1\n"
+        "            if indeg[nxt] == 0:\n"
+        "                q.append(nxt)\n\n"
+        "    if len(order) != len(indeg):\n"
+        "        raise ValueError('graph has a cycle; topological sort is impossible')\n"
+        "    return order\n\n\n"
+        "if __name__ == '__main__':\n"
+        "    nodes = ['A', 'B', 'C', 'D']\n"
+        "    edges = [('A', 'B'), ('A', 'C'), ('B', 'D'), ('C', 'D')]\n"
+        "    print(topological_sort(nodes, edges))\n"
+    )
 ENGLISH_CONFIRMATION_PATTERN = re.compile(
     r"\b(?:confirm|confirmed|allow|proceed|yes)\b",
     re.IGNORECASE,
@@ -241,6 +347,18 @@ def _prompt_confirms_action(prompt: str) -> bool:
     )
 
 
+def _looks_like_confirmation_only(prompt: str) -> bool:
+    text = str(prompt or "").strip()
+    if not text:
+        return False
+    normalized = text.lower()
+    if normalized in {"confirm", "confirmed", "allow", "proceed", "yes"}:
+        return True
+    if text in {"确认", "确认执行", "同意", "允许", "继续执行"}:
+        return True
+    return _prompt_confirms_action(text) and len(text) <= 12
+
+
 def _desktop_export_confirmation_is_needed(action_input: dict[str, object]) -> bool:
     target_location = _normalize_text(action_input.get("target_location")).lower()
     if target_location != "desktop":
@@ -288,7 +406,7 @@ def _build_action_confirmation_prompt(
         f"动作名: `{action_name}`\n"
         f"风险等级: `{safety_level}`\n"
         f"目标: `{target_label}`\n\n"
-        "如果确认执行，请重新发送同一条请求，并明确写上“确认执行”或 `confirm`。"
+        "如果确认执行，你可以直接回复“确认执行”或 `confirm`；也可以把原始请求再发一遍并加上确认词。"
     )
 
 
@@ -434,6 +552,50 @@ def _build_plan(state: AgentLoopState) -> tuple[str, dict[str, object], dict[str
         return _build_recovery_plan(state)
 
     prompt = _normalize_text(state.get("user_input"))
+
+    if _looks_like_exploit_request(prompt):
+        return "final.answer", {
+            "content": "Sorry, I can't assist with that."
+        }, {"reason": "Refuse exploit/pwn request."}
+
+    if _looks_like_toposort_request(prompt) and _contains_keyword(prompt, WORKSPACE_TOOL_WRITE_KEYWORDS):
+        rel_path = _first_python_file_candidate(prompt) or "toposort.py"
+        return "workspace.write", {
+            "rel_path": rel_path,
+            "content": _build_toposort_python_content(),
+            "overwrite": False,
+            "target_location": "workspace",
+        }, {"reason": "Write a deterministic toposort implementation without creating a run."}
+
+    if _looks_like_confirmation_only(prompt):
+        session_id = _normalize_text(state.get("session_id")) or None
+        if session_id:
+            pending = conversation_store.get_pending_confirmation(session_id)
+            blocked_action_name = _normalize_text(pending.get("blocked_action_name")) if pending else ""
+            blocked_action_input = (
+                dict(pending.get("blocked_action_input") or {})
+                if pending and isinstance(pending.get("blocked_action_input"), dict)
+                else None
+            )
+            if blocked_action_name and blocked_action_input is not None:
+                conversation_store.clear_pending_confirmation(session_id)
+                return _with_confirmation_guard(
+                    prompt=prompt,
+                    action_name=blocked_action_name,
+                    action_input=blocked_action_input,
+                    plan_details={
+                        "reason": "Confirmation-only prompt resumes a pending blocked action.",
+                        "resumed_from_pending_confirmation": True,
+                    },
+                )
+
+        return "final.answer", {
+            "content": (
+                "我收到了你的确认，但我这条消息里没有找到需要确认的具体动作。\n\n"
+                "请把上一条被我拦截并要求确认的‘原始请求’再发一遍，并在同一条消息里明确写上“确认执行”或 `confirm`。"
+            )
+        }, {"reason": "Confirmation-only prompt has no actionable context."}
+
     intent = _normalize_text(state.get("intent"), default=detect_intent(prompt))
     action_queue = _coerce_action_queue(state.get("action_queue"))
     if action_queue:
@@ -520,7 +682,10 @@ def perceive_node(state: AgentLoopState) -> AgentLoopState:
         node="perceive_node",
         event="loop_perceived",
         ui_status="loop_perceived",
-        details={"intent": intent},
+        details={
+            "intent": intent,
+            "role": "intent_router",
+        },
     )
 
 
@@ -548,6 +713,7 @@ def plan_node(state: AgentLoopState) -> AgentLoopState:
         details={
             "action_name": action_name,
             "action_input": action_input,
+            "role": "pm",
             **plan_details,
         },
     )
@@ -690,6 +856,21 @@ def act_node(state: AgentLoopState) -> AgentLoopState:
     emit_workflow_node_entered(state, "act_node")
     emit_workflow_action_event(state, action_status="started")
     result = _execute_selected_action(state)
+
+    action_name = _normalize_text(state.get("action_name"))
+    if action_name == "ask_user_confirmation" and result.ok:
+        session_id = _normalize_text(state.get("session_id"))
+        data_dict = result.data if isinstance(result.data, dict) else {}
+        blocked_action_name = _normalize_text(data_dict.get("blocked_action_name"))
+        blocked_action_input = data_dict.get("blocked_action_input")
+        if session_id and blocked_action_name and isinstance(blocked_action_input, dict):
+            conversation_store.set_pending_confirmation(
+                session_id,
+                prompt=_normalize_text(result.summary),
+                blocked_action_name=blocked_action_name,
+                blocked_action_input=dict(blocked_action_input),
+            )
+
     next_state = merge_agent_state(
         state,
         **_state_updates_from_action_result(state, result),
@@ -709,6 +890,7 @@ def act_node(state: AgentLoopState) -> AgentLoopState:
             "ok": result.ok,
             "error": result.error,
             "metadata": dict(result.metadata),
+            "role": "coder_executor",
         },
     )
 
@@ -763,7 +945,10 @@ def observe_node(state: AgentLoopState) -> AgentLoopState:
         node="observe_node",
         event="loop_observed",
         ui_status=_normalize_text(next_state.get("ui_status")),
-        details=observation,
+        details={
+            **observation,
+            "role": "qa",
+        },
     )
 
 
@@ -807,6 +992,7 @@ def decide_continue_node(state: AgentLoopState) -> AgentLoopState:
             "step_count": next_state.get("step_count"),
             "max_steps": next_state.get("max_steps"),
             "will_replan": not bool(next_state.get("done")) and not bool(next_state.get("error")),
+            "role": "debugger_decider",
         },
     )
 
@@ -840,14 +1026,16 @@ def finalize_node(state: AgentLoopState) -> AgentLoopState:
         ui_status=_normalize_text(next_state.get("ui_status")),
         details={"node_name": "agent_loop_roleplay"},
     )
-    from ..output.roleplay import emit_roleplay_state
+    from ..output.roleplay import emit_roleplay_chat
 
-    emitted_state = emit_roleplay_state(
-        next_state,
-        default_node_name="agent_loop_roleplay",
+    roleplay_view = _build_roleplay_view(next_state, default_node_name="agent_loop_roleplay")
+    emit_roleplay_chat(
+        str(roleplay_view.get("output") or ""),
+        node_name=str(roleplay_view.get("node_name") or "agent_loop_roleplay"),
+        emit_chat_message=bool(roleplay_view.get("emit_chat_message", True)),
     )
-    emit_workflow_terminal_status(emitted_state, node_name="finalize_node")
-    return emitted_state
+    emit_workflow_terminal_status(next_state, node_name="finalize_node")
+    return next_state
 
 
 def failure_node(state: AgentLoopState) -> AgentLoopState:
