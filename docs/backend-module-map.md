@@ -211,21 +211,32 @@ backend/app/services/
 
 当前 `agent_workflow/` 根目录只保留包入口和必要 facade，真实实现已经下沉到各职责子包。新代码应直接使用子包路径，不再依赖旧根目录模块名。
 
-### 6.1 图构建与主流程
+### 6.1 主循环与动作层
 
 ```text
 agent_workflow/
-  graph/
-    agent_graph.py
-    builder_support.py
-    graph_support.py
+  loop/
+    agent_loop_graph.py
+  actions/
+    core.py
+    registry.py
+    run.py
+    workspace.py
+  runtime/
+    graph_nodes.py
 ```
 
 职责：
 
-- `graph/agent_graph.py`：搭建主 LangGraph Agent Brain，包含 router、chat、coding、tool、run 和 roleplay 主节点
-- `graph/builder_support.py`：组装 coding/run/tool 节点所需的 state 更新
-- `graph/graph_support.py`：注册节点、保护节点异常、配置图边
+- `loop/agent_loop_graph.py`：当前默认 `/chat` 主路径，负责 perceive、plan、act、observe、decide、finalize/failure 的 Agent Loop
+- `actions/`：Action Registry 与 run/workspace 等可执行动作
+- `runtime/graph_nodes.py`：LangGraph 节点注册和异常保护 helper
+
+边界约束：
+
+- 新 Agent 能力优先接入 `loop/` 与 `actions/`
+- 旧 route graph 已移除，不再维护 `AGENT_RUNTIME_MODE=route` fallback
+- 需要新增工具时，优先注册 action，而不是新增固定路由分支
 
 ### 6.2 共享契约与节点映射
 
@@ -243,27 +254,23 @@ agent_workflow/
 - `contracts/workflow_results.py`：保存 Agent / Summary / Repair workflow 的结构化结果模型与 graph invoke 收口 helper
 - `contracts/node_mappings.py`：保存节点到 quip / expression 的映射和是否发送 chat message 的规则
 
-### 6.3 路由、状态与基础常量
+### 6.3 状态与基础常量
 
 ```text
 agent_workflow/
   state/
     constants.py
-    routing.py
     run_state.py
     run_support.py
     state_support.py
-  agent_support.py
 ```
 
 职责：
 
 - `state/constants.py`：保存 Agent workflow 内部 action/status 常量
-- `state/routing.py`：根据 intent、run action 和 ui_status 选择下一个节点
 - `state/run_state.py`：封装 run 相关状态字段快照与更新
 - `state/run_support.py`：封装 run_id 解析、snapshot 读取和 run control 调度
 - `state/state_support.py`：封装 Agent state merge、trace 追加、初始 state 和 graph invoke
-- `agent_support.py`：主 Agent helper facade，聚合 graph / state / output 中仍需要统一暴露的内部 helper
 
 ### 6.4 summary 工作流
 

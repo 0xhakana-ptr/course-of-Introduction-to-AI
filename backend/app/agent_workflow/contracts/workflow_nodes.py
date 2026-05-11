@@ -27,6 +27,13 @@ WORKFLOW_NODE_METADATA: dict[str, dict[str, str]] = {
     "run_control_node": {"label": "任务控制", "phase": "run_control"},
     "unknown_node": {"label": "未知意图收口", "phase": "fallback"},
     "roleplay_node": {"label": "角色收口", "phase": "roleplay"},
+    "perceive_node": {"label": "理解请求", "phase": "routing"},
+    "plan_node": {"label": "规划动作", "phase": "routing"},
+    "act_node": {"label": "执行动作", "phase": "tools"},
+    "observe_node": {"label": "观察结果", "phase": "tools"},
+    "decide_continue_node": {"label": "判断是否继续", "phase": "routing"},
+    "finalize_node": {"label": "最终收口", "phase": "roleplay"},
+    "failure_node": {"label": "失败收口", "phase": "fallback"},
     "diagnostics_preview": {"label": "诊断预览", "phase": "diagnostics"},
 }
 

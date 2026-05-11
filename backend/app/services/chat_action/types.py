@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 
 from ...schemas import INTENT_TYPE
 from ...agent_workflow.contracts.workflow_results import WorkflowAgentResult
+from ...agent_workflow.output.text import sanitize_user_visible_run_output
 
 
 VALID_CHAT_SERVICE_INTENTS: set[str] = {"chat", "coding", "unknown"}
@@ -24,6 +25,9 @@ class ChatServiceResult:
     session_id: str | None = None
     run_id: str | None = None
     run_action: str | None = None
+    runtime_mode: str | None = None
+    route_scope: str | None = None
+    runtime_warning: str | None = None
 
     def with_updates(self, **updates: object) -> "ChatServiceResult":
         return replace(self, **updates)
@@ -35,6 +39,11 @@ class ChatServiceResult:
         if session_id is None:
             return self
         return self.with_updates(session_id=session_id)
+
+    def with_user_visible_output(self) -> "ChatServiceResult":
+        if not self.is_intent("coding"):
+            return self
+        return self.with_updates(output=sanitize_user_visible_run_output(self.output))
 
     @classmethod
     def from_agent_result(
@@ -61,7 +70,7 @@ class ChatServiceResult:
         return cls(
             intent=resolved_intent,
             ok=normalized_result.ok,
-            output=output,
+            output=sanitize_user_visible_run_output(output) if resolved_intent == "coding" else output,
             error=_normalize_optional_str(normalized_result.error),
             run_id=_normalize_optional_str(run_id),
             run_action=_normalize_optional_str(normalized_result.run_action_name()),

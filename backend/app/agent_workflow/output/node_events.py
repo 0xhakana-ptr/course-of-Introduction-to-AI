@@ -67,6 +67,42 @@ WORKFLOW_NODE_EVENTS: dict[str, WorkflowNodeEvent] = {
         quip="我整理一下结果再告诉你。",
         progress=90,
     ),
+    "perceive_node": WorkflowNodeEvent(
+        node_name="perceive_node",
+        quip="我先理解你的目标。",
+        progress=8,
+    ),
+    "plan_node": WorkflowNodeEvent(
+        node_name="plan_node",
+        quip="我在决定下一步怎么做。",
+        progress=20,
+    ),
+    "act_node": WorkflowNodeEvent(
+        node_name="act_node",
+        quip="我开始执行选定的动作。",
+        progress=45,
+    ),
+    "observe_node": WorkflowNodeEvent(
+        node_name="observe_node",
+        quip="我在确认执行结果。",
+        progress=70,
+    ),
+    "decide_continue_node": WorkflowNodeEvent(
+        node_name="decide_continue_node",
+        quip="我判断一下是否还要继续。",
+        progress=82,
+    ),
+    "finalize_node": WorkflowNodeEvent(
+        node_name="finalize_node",
+        quip="我整理最终回复。",
+        progress=92,
+    ),
+    "failure_node": WorkflowNodeEvent(
+        node_name="failure_node",
+        quip="这一步遇到了问题，我先收口说明。",
+        progress=95,
+        status="error",
+    ),
 }
 
 

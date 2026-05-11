@@ -27,12 +27,31 @@ def build_run_chat_text(
     include_run_link: bool = True,
 ) -> str:
     lines = [title]
-    if run_id:
-        lines.append(f"run_id: {run_id}")
-    lines.extend(f"{label}: {value}" for label, value in fields if value)
+    lines.extend(
+        field_text
+        for label, value in fields
+        if value and (field_text := _format_user_chat_field(label, value))
+    )
     if include_run_link and run_id:
-        lines.append("查看完整结果: 可以在任务详情中使用这个 run_id 查看结果、日志和产物。")
+        lines.append("需要看细节时，可以打开任务详情查看结果、日志和产物。")
     return "\n".join(lines)
+
+
+def _format_user_chat_field(label: str, value: str) -> str:
+    normalized_label = str(label or "").strip()
+    normalized_value = str(value or "").strip()
+    if not normalized_value:
+        return ""
+    if normalized_label == "状态":
+        status_text = {
+            "queued": "还在排队",
+            "running": "正在执行",
+            "done": "已经完成",
+            "failed": "执行失败",
+            "cancelled": "已经取消",
+        }.get(normalized_value, normalized_value)
+        return f"当前状态: {status_text}"
+    return f"{normalized_label}: {normalized_value}"
 
 
 def describe_generator(generator: str) -> str:

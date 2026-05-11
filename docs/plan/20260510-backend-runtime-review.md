@@ -549,8 +549,98 @@ router -> coding_node -> workspace_tool_node -> run_tool_node -> roleplay_node
 2. 本轮验证覆盖后端 HTTP、消息队列和结构化详情数据。
 3. 本轮没有直接观察 Electron 窗口 UI，因此不能替代最终人工视觉联调。
 
-### 8.12 当前仍未完成
+### 8.12 已完成 P10：人工视觉联调清单
 
-后续仍需要继续处理：
+已把最终人工视觉联调拆成可执行清单。由于窗口表现需要人工肉眼观察，本项不能完全由终端自动化替代。
+
+#### 启动顺序
+
+后端：
+
+```powershell
+uv run uvicorn backend.app.main:app --reload --port 8000
+```
+
+前端桌面端：
+
+```powershell
+$env:AI_AGENT_ENDPOINT="http://127.0.0.1:8000/chat"
+$env:AI_AGENT_BASE_URL="http://127.0.0.1:8000"
+pnpm dev
+```
+
+#### 检查项 1：节点 quip/status
+
+输入：
+
+```text
+create notes/visual-check.txt, content is visual ok
+```
+
+预期：
+
+1. Chat 窗口出现 `[过程] ...` 节点过程提示。
+2. Chat 窗口状态区域出现运行状态和中文节点名。
+3. 字幕窗口显示节点 quip。
+4. 最终回复说明文件已创建到 workspace。
+5. 不应创建 codegen run。
+
+#### 检查项 2：终态工具自然化输出
+
+输入：
+
+```text
+read notes/visual-check.txt
+```
+
+预期：
+
+1. 回复中出现“我读到了 ... 的内容”。
+2. 回复中出现“内容预览”。
+3. 不应出现 `Workspace file preview` 这类内部工具口径。
+
+#### 检查项 3：桌面导出确认
+
+输入：
+
+```text
+create desktop visual-check.txt, content is visual ok
+```
+
+预期：
+
+1. Chat 窗口先弹出确认框。
+2. 选择取消时，请求不发送到后端，Chat 显示已取消。
+3. 选择确认时，如果后端未开启 `DESKTOP_EXPORT_ENABLED`，应返回桌面导出未开启的安全提示。
+4. 不应默认写入真实桌面任意路径。
+
+#### 检查项 4：run detail sections
+
+可以通过 Swagger 或浏览器访问：
+
+```text
+http://127.0.0.1:8000/runs/{run_id}
+```
+
+预期 `detail_sections` 至少包含：
+
+1. `overview`
+2. `result`
+3. `attempts`
+4. `diagnostics`
+
+前端后续如果做任务详情页，应优先展示 `detail_sections`，而不是直接铺开完整 `stdout/stderr`。
+
+#### 失败定位
+
+1. 如果 Chat 没有过程提示，优先检查 Electron 是否设置了 `AI_AGENT_BASE_URL` 或是否能访问 `/messages`。
+2. 如果字幕窗口没有 quip，优先检查 Electron `agent:quip` 是否转发到 quip window。
+3. 如果简单文件请求创建了 run，优先检查 `plan_workspace_tool()` 是否把该工具计划标记为 `terminal=true`。
+4. 如果桌面请求没有确认框，优先检查 Chat 窗口的桌面导出确认匹配规则。
+5. 如果后端允许任意桌面写入，应立即回退并检查 `DESKTOP_EXPORT_ENABLED`、`DESKTOP_EXPORT_DIR` 和 workspace tool 写入路径。
+
+### 8.13 当前仍未完成
+
+后续仍需要处理：
 
 1. 人工视觉联调。需要在 `pnpm dev`、后端服务、真实 Chat 窗口和字幕窗口同时运行时确认节点事件显示效果、桌面导出确认弹窗、终态工具输出和 run 详情分层是否符合预期。

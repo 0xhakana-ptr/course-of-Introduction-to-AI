@@ -1,0 +1,729 @@
+# 2026-05-10 后端 Agent 循环化重构方案
+
+## 1. 结论先行
+
+当前后端已经具备 LangGraph、LLM、工具、run、消息队列和桌宠表现事件等基础能力，但主工作流本质上仍然是“路由式工作流”，还不是一个真正的桌宠 Agent 循环。
+
+当前形态大致是：
+
+```text
+用户输入
+-> router / detect_intent
+-> chat_node 或 coding_node
+-> workspace_tool_node / run_tool_node / run_snapshot_node / run_control_node
+-> roleplay_node
+-> 结束
+```
+
+目标形态应逐步迁移为：
+
+```text
+用户输入
+-> perceive_node
+-> plan_node
+-> act_node
+-> observe_node
+-> decide_continue_node
+   -> 继续：回到 plan_node
+   -> 结束：finalize_node
+-> 结束
+```
+
+换句话说，当前是“一次路由后执行一次固定链路”，目标是“计划、行动、观察、再决策，直到完成或安全停止”。
+
+这并不意味着要重写整个后端。更合理的做法是保留现有能力层，把 `agent_workflow` 和 chat 入口逐步改造成 Agent Runtime Loop。
+
+## 2. 为什么必须调整
+
+### 2.1 当前问题不是单个 bug
+
+用户让桌宠创建 txt 文件时，前端卡在“正在组织回复”或类似状态，不只是前端展示问题，也不是简单加一条规则就能彻底解决。
+
+它暴露出几个结构性问题：
+
+1. 当前 LangGraph 节点已经能发 `workflow.node_entered`，但缺少稳定的 `workflow.completed` / `chat.completed` 终态事件，前端可能停留在最后一个 running 状态。
+2. 当前 workflow 一旦路由到某条链路，后续缺少“观察结果后继续行动”的循环能力。
+3. 简单工具任务、复杂代码任务、普通聊天任务仍然主要依赖前置意图路由区分，容易出现“看起来很假”的规则补丁。
+4. 工具调用结果、run 执行结果、角色表现结果之间还没有统一的 step / observation 模型。
+5. 桌宠项目需要让用户看到“我正在干什么”，而不是只在最后给一段结果或一个接口 URL。
+
+### 2.2 当前不是没有 LangGraph，而是 LangGraph 用法偏浅
+
+当前 LangGraph 已经接入，但主要承担“节点编排”和“条件边路由”。这比普通 if/else 更好，但仍然缺少 Agent 的关键循环：
+
+1. Agent 是否明确理解了目标。
+2. Agent 打算采取哪一步。
+3. Agent 实际调用了什么工具。
+4. 工具返回了什么观察结果。
+5. Agent 是否需要继续下一步。
+6. Agent 是否达到完成条件。
+7. Agent 是否因为权限、预算、失败次数而停止。
+
+这些不应继续散落在 `detect_intent()`、`workspace_tools`、`run_action`、`roleplay` 的临时分支里，而应成为 Agent Runtime 的基本状态。
+
+## 3. 方向约束
+
+后续修改必须遵守以下方向，避免项目漂移：
+
+1. `LongCat`、MiniMax 或其他模型只是 LLM provider，负责生成和推理，不是 Agent 本体。
+2. `LangGraph` 是 Agent 编排层，负责状态流转、节点循环、工具调度和停止条件。
+3. `tools/` 是能力层，所有文件、命令、workspace、run 相关动作都应通过受控工具或服务接口完成。
+4. `message_queue`、`messaging`、`character_interface` 是桌宠表现层，负责把过程和动作稳定传给前端。
+5. `/chat`、`/runs`、`/messages` 这些 API 继续保留，不能为了内部重构破坏前端基本接入。
+6. 不把后端做成通用 CLI coding agent，目标仍然是本地 Live2D 桌宠 Agent。
+7. 不默认放开桌面任意写文件，桌面导出必须有配置、确认和安全边界。
+
+## 4. 当前应保留的模块
+
+这些模块目前方向正确，后续不应推倒：
+
+1. `backend/app/llm/client.py`
+   继续作为 OpenAI-compatible LLM provider 客户端，负责 URL 规范化、请求、错误归一化和诊断。
+
+2. `backend/app/tools/`
+   继续作为安全能力层，包括 `safe_fs`、`safe_execute_command`、`workspace_tools`、`workspace_tool_models`。
+
+3. `backend/app/services/run_interface.py` 与 `backend/app/services/run_action/`
+   继续作为代码任务生命周期底座，负责 create、execute、retry、rerun、cancel、query、recovery。
+
+4. `backend/app/message_queue.py` 与 `backend/app/messaging/`
+   继续作为前端事件输出通道，后续需要强化事件类型，而不是绕过它。
+
+5. `backend/app/services/character_interface.py` 与 `backend/app/services/character_action/`
+   继续作为角色表现入口，后续 quip、motion、expression、status 应通过这里统一输出。
+
+6. `backend/app/storage/`
+   继续保存 conversation、run、workspace 相关状态，不应被 Agent 内部临时状态替代。
+
+7. `backend/app/main.py`
+   继续保留现有 API surface，重构应优先发生在服务层和 workflow 层。
+
+## 5. 主要改造范围
+
+### 5.1 `backend/app/agent_workflow/`
+
+这是主要改造对象。
+
+当前该目录已经整理为 `contracts/`、`graph/`、`output/`、`state/`、`trace/`、`summary/`、`repair/`、`diagnostics/` 等结构。这个整理方向可以保留，但主图需要从“路由图”升级为“循环图”。
+
+后续建议新增或调整：
+
+1. `runtime/`
+   存放 Agent turn、step、action、observation、budget、stop reason 等运行时模型。
+
+2. `actions/`
+   存放 action registry，把聊天、工具、run、角色动作、用户确认都统一成可描述、可执行、可追踪的动作。
+
+3. `loop/`
+   存放真正的 perceive、plan、act、observe、decide、finalize 节点。
+
+4. `output/`
+   继续负责 roleplay、node event、completion event、用户态文本收口。
+
+### 5.2 `backend/app/services/chat_action/agent.py`
+
+这里应逐步变成 chat 入口到 Agent Runtime 的门面，而不是继续承载越来越多的规则判断。
+
+后续职责应收缩为：
+
+1. 构造 Agent 输入。
+2. 注入 session、context、history、user message。
+3. 调用 Agent Runtime。
+4. 把 final response 和 trace summary 返回给 `chat_interface`。
+
+### 5.3 `backend/app/services/chat_action/intent.py`
+
+`detect_intent()` 不应继续扩张成大规则表。
+
+后续定位应调整为“窄路由 / 快速安全分流”：
+
+1. 明确 run_id 查询、取消、重试、重跑可以继续快速识别。
+2. 明确测试命令可以继续快速识别。
+3. 明确危险或权限敏感请求可以提前标记。
+4. 普通自然语言默认进入 Agent 主线，而不是落入 unknown。
+5. 是否调用工具应交给 Agent plan / action 阶段决定。
+
+### 5.4 `backend/app/services/chat_interface.py`
+
+这里继续作为 `/chat` 的服务入口，但不应膨胀成完整 Agent。
+
+后续职责：
+
+1. 接收 request。
+2. 读取会话历史和上下文。
+3. 调用 Agent Runtime。
+4. 写回 conversation。
+5. 返回用户可见 response。
+6. 保持 API 兼容。
+
+## 6. 目标 Agent 状态模型
+
+建议新增一个明确的 Agent state，不再只依赖当前 `AgentState` 中的 `intent`、`output`、`run_id`、`ui_status` 等字段。
+
+建议核心字段：
+
+```text
+turn_id
+session_id
+user_input
+context
+messages
+goal
+plan
+steps
+available_actions
+selected_action
+action_input
+action_result
+observations
+tool_trace
+run_id
+run_status
+final_output
+done
+stop_reason
+safety_flags
+token_budget
+step_budget
+emit_node_events
+```
+
+字段含义：
+
+1. `turn_id`
+   表示一次用户输入对应的一轮 Agent 执行。
+
+2. `goal`
+   表示 Agent 对用户目标的内部归纳，不能直接等同于原始 prompt。
+
+3. `plan`
+   表示当前计划，可以是简短结构化步骤，不需要一开始做复杂 planner。
+
+4. `steps`
+   表示已经执行过的 step，每个 step 至少包含 action、observation、status。
+
+5. `selected_action`
+   表示当前准备执行的动作。
+
+6. `action_result`
+   表示动作执行结果。
+
+7. `observations`
+   表示工具或 run 返回后的事实结果。
+
+8. `done`
+   表示 Agent 是否完成。
+
+9. `stop_reason`
+   表示停止原因，例如 completed、need_user_confirmation、max_steps、tool_error、budget_exceeded。
+
+10. `safety_flags`
+   表示权限、安全、路径、外部写入等风险标记。
+
+## 7. 目标 Action 体系
+
+后续应把“Agent 可以做什么”从散落函数收束为 action registry。
+
+第一阶段建议支持这些 action：
+
+```text
+chat.reply
+workspace.read
+workspace.write
+workspace.list
+workspace.test
+workspace.export_desktop
+run.create
+run.inspect
+run.retry
+run.rerun
+run.cancel
+character.quip
+character.motion
+character.expression
+ask_user_confirmation
+final.answer
+```
+
+每个 action 至少需要：
+
+```text
+name
+description
+input_schema
+output_schema
+safety_level
+requires_confirmation
+executor
+user_visible_label
+```
+
+这样做的直接收益：
+
+1. planner 不再靠关键词猜测“该调用哪个函数”。
+2. 工具调用可以统一记录 trace。
+3. 前端可以显示当前 action 的用户态文案。
+4. 危险动作可以统一走确认机制。
+5. 后续扩展图片、截图、桌面动作时不会继续污染 intent 规则。
+
+## 8. 目标 LangGraph 循环
+
+### 8.1 节点设计
+
+建议新主图包含以下节点：
+
+1. `perceive_node`
+   读取用户输入、session、history、context，形成 `goal` 和初始 constraints。
+
+2. `plan_node`
+   根据 goal、history、observations、available_actions 决定下一步 action。
+
+3. `act_node`
+   执行 selected_action。这里不直接写具体业务逻辑，而是调用 action registry。
+
+4. `observe_node`
+   把 action_result 转成 observation，写入 steps 和 trace。
+
+5. `decide_continue_node`
+   判断是否继续循环，或转入 finalize。
+
+6. `finalize_node`
+   生成最终回复，发送 completed 状态，写回 conversation。
+
+7. `failure_node`
+   统一处理异常、超步数、预算超限、工具失败等情况。
+
+### 8.2 循环边设计
+
+建议边关系：
+
+```text
+perceive_node -> plan_node
+plan_node -> act_node
+act_node -> observe_node
+observe_node -> decide_continue_node
+decide_continue_node -> plan_node
+decide_continue_node -> finalize_node
+decide_continue_node -> failure_node
+finalize_node -> END
+failure_node -> END
+```
+
+`decide_continue_node` 的判断条件：
+
+1. `done == true` -> finalize。
+2. `requires_confirmation == true` -> finalize，等待用户确认。
+3. `step_count >= max_steps` -> failure 或 finalize with partial result。
+4. `token_budget exceeded` -> failure 或简短收口。
+5. `action_result` 可恢复 -> 回到 plan。
+6. `action_result` 不可恢复 -> failure。
+
+## 9. 前端事件与桌宠表现方案
+
+### 9.1 已完成基础
+
+当前已经存在：
+
+1. `workflow.node_entered`
+2. `message_sender.send_quip()`
+3. `message_sender.send_status()`
+4. `character.quip`
+5. `status.updated`
+6. Electron 对部分 agent event 的转发
+
+这些能力应保留。
+
+### 9.2 缺失的关键终态事件
+
+必须补充：
+
+```text
+workflow.completed
+workflow.failed
+chat.completed
+chat.failed
+action.started
+action.finished
+action.failed
+```
+
+其中 `workflow.completed` 至少应发送：
+
+```json
+{
+  "type": "status",
+  "event_type": "workflow.completed",
+  "event_source": "workflow",
+  "event_stage": "roleplay",
+  "status": "done",
+  "progress": 100,
+  "node_name": "finalize_node",
+  "content": "完成了。"
+}
+```
+
+这可以先解决前端停留在 running 的问题。
+
+### 9.3 节点入口事件与动作事件的区别
+
+后续应明确区分：
+
+1. 节点入口事件：表示 Agent 走到了哪个 LangGraph 节点。
+2. 动作事件：表示 Agent 准备执行或已经完成某个具体 action。
+3. 角色表现事件：表示 Live2D 该说什么、做什么表情或动作。
+
+不要把三者混成同一个事件，否则前端会很难判断 UI 状态。
+
+## 10. 迁移计划
+
+### P0：修复“卡在 running”的终态问题
+
+目标：
+
+让一次 chat / workflow 执行完成后，前端一定收到明确终态。
+
+当前落地状态：
+
+已在 2026-05-10 推进第一版 P0。主 Agent 图在 `roleplay_node` 收口后会发送 `workflow.completed` 或 `workflow.failed` 终态 status；前端聊天窗口收到 `done`、`error`、`cancelled` 后会主动结束 sending 状态，避免界面继续停留在 running。
+
+修改点：
+
+1. 在 `backend/app/agent_workflow/output/` 增加 completion event helper。
+2. 在 `roleplay_node` 或最终收口处发送 `workflow.completed`。
+3. 失败路径发送 `workflow.failed`。
+4. 前端收到 completed / failed 后清理当前 sending / status 状态。
+5. 增加测试覆盖 node_entered 后一定有 terminal status。
+
+验收标准：
+
+1. “创建 txt 文件”这类请求结束后，前端不再停留在“正在组织回复”。
+2. 普通聊天结束后也能收到 done 状态。
+3. diagnostics 禁用 node events 时，不应产生前端噪声。
+
+### P1：建立 Agent Runtime 基础模型
+
+目标：
+
+先加模型，不急着替换旧图。
+
+当前落地状态：
+
+已在 2026-05-10 推进第一版 P1。新增 `backend/app/agent_workflow/runtime/`，定义 turn、step、action、observation 的基础模型；当前 route graph 不被替换，但 `WorkflowAgentResult` 已能从现有 `workflow_trace` 派生 `runtime_turn` 和 `runtime_steps`，并为每次 Agent 执行生成 `turn_id`。
+
+修改点：
+
+1. 新增 `backend/app/agent_workflow/runtime/`。
+2. 定义 `AgentTurn`、`AgentStep`、`AgentAction`、`AgentObservation`、`AgentStopReason`。
+3. 当前 `AgentState` 可以先适配这些模型，不直接删除旧字段。
+4. trace 中开始记录 turn / step 粒度。
+
+验收标准：
+
+1. 现有测试不破。
+2. 新增模型可以从当前 route workflow 中生成 step trace。
+3. `/runs` 和 `/chat` 返回结构保持兼容。
+
+### P2：建立 Action Registry
+
+目标：
+
+把工具、run、角色动作收束成统一 action。
+
+当前落地状态：
+
+已在 2026-05-10 推进第一版 P2。新增 `backend/app/agent_workflow/actions/`，包含 action descriptor、action result、registry、workspace actions、run actions、character actions、confirmation 和 final answer。当前旧 route graph 仍保持原行为，但后续 loop graph 已可以直接通过 `default_action_registry.execute(...)` 调用这些能力。
+
+修改点：
+
+1. 新增 `backend/app/agent_workflow/actions/`。
+2. 为 workspace read/write/list/test 建立 action descriptor。
+3. 为 run create/inspect/retry/rerun/cancel 建立 action descriptor。
+4. 为 character quip/motion/expression 建立 action descriptor。
+5. 为 ask_user_confirmation 建立 action descriptor。
+6. action executor 内部复用现有 `tools/` 和 `services/`，不重新实现底层逻辑。
+
+验收标准：
+
+1. workspace 文件创建不再必须绕到 codegen run。
+2. run 操作仍然复用 `run_interface`。
+3. 每个 action 都能输出结构化 result 和用户态 summary。
+
+### P3：新增 Agent Loop Graph，并用开关灰度
+
+目标：
+
+新建循环图，不立即删旧图。
+
+当前落地状态：
+
+已在 2026-05-10 推进第一版 P3。新增 `backend/app/agent_workflow/loop/`，提供 `perceive -> plan -> act -> observe -> decide -> finalize/failure` 的最小循环图；新增 `AGENT_RUNTIME_MODE=route|loop` 灰度开关，默认仍为 `route`，只有显式设置为 `loop` 时聊天入口才使用新图。当前 loop 图先复用 P2 的 Action Registry 完成单步 action 闭环，复杂代码任务仍保守转入 `run.create`，不在 P3 阶段做失败重规划。
+
+修改点：
+
+1. 新增 `backend/app/agent_workflow/loop/agent_loop_graph.py`。
+2. 实现 perceive、plan、act、observe、decide、finalize。
+3. 增加配置开关，例如 `AGENT_RUNTIME_MODE=route|loop`。
+4. 默认可以先保持 route，开发验证时启用 loop。
+5. loop 先覆盖简单文件工具、普通聊天、run inspect，不立即覆盖所有复杂代码任务。
+
+验收标准：
+
+1. `route` 模式现有行为不破。
+2. `loop` 模式可以完成简单两步任务，例如“创建文件 -> 确认结果 -> 回复完成”。
+3. loop 模式的 trace 能显示多 step。
+
+### P4：把普通自然语言入口迁入 Agent Loop
+
+目标：
+
+减少对 `detect_intent()` 的依赖。
+
+当前落地状态：
+
+已在 2026-05-11 推进第一版 P4。`detect_intent()` 仍保留为窄路由器，用于确定 coding、run 控制和 unknown 噪声；但普通聊天类输入不再作为强制 intent hint 传给 Agent，而是传 `None`，让 Agent 图内部自行感知。这样保留了确定性操作路径，同时减少普通自然语言被前置规则“钉死”的程度。
+
+修改点：
+
+1. `detect_intent()` 只保留确定性窄路由。
+2. 普通输入默认进入 Agent Loop。
+3. planner 根据 available_actions 决定直接回答还是调用工具。
+4. 简单数学、身份、上下文记忆、闲聊不应落入 unknown。
+5. 明确操作类请求进入 action 规划，而不是靠关键词硬分 coding。
+
+验收标准：
+
+1. `1+1=？`、`1+1等于几` 都应自然回答。
+2. `我是谁` 如果没有记忆，应说明当前没有足够上下文，而不是装作知道。
+3. `帮我创建一个 txt 文件` 应进入 workspace.write 或 ask_user_confirmation，而不是长期卡在 run。
+
+### P5：接入工具观察与失败重规划
+
+目标：
+
+让 Agent 能根据工具结果继续行动，而不是执行一次就收口。
+
+当前落地状态：
+
+已在 2026-05-11 推进第一版 P5。`loop` 图现在会把 action 执行结果转成 observation，并对明确可恢复的失败进入一次重规划：桌面导出未启用或未配置时转成清晰的 `final.answer`；目标文件已存在时转成 `ask_user_confirmation`，避免直接覆盖；run inspect / retry / rerun / cancel 缺少 `run_id` 时转成明确的补充信息请求。LLM 对话失败不进入重规划，仍直接走失败路径，避免隐藏 provider 问题或额外消耗 token。
+
+修改点：
+
+1. action_result 转 observation。
+2. tool error 可恢复时回到 plan。
+3. 权限不足时进入 ask_user_confirmation。
+4. 文件已存在时让 planner 决定改名、覆盖请求确认或停止。
+5. run 正在执行时可以返回“任务已开始，我会继续关注”，或根据前端交互策略继续轮询。
+
+验收标准：
+
+1. 文件已存在时不会直接失败沉默。
+2. 桌面导出未开启时能解释需要配置或确认。
+3. 工具失败有明确 final response 和前端 failed/done 状态。
+
+### P6：用户态输出去工程化
+
+目标：
+
+最终用户看到桌宠语言，调试信息留在 diagnostics。
+
+当前落地状态：
+
+已在 2026-05-11 推进第一版 P6。主 chat / roleplay 回复不再直接输出 `run_id:`、`source_run_id:`、`status:`、`当前快照:` 这类工程字段，改为“目前我看到”“接下来”“任务详情”等用户态表达；`run_id` 仍保留在 `ChatResponse.run_id`、run API、diagnostics、trace 和 detail sections 中，便于前端和开发者继续定位。chat 返回前也会清理旧路径残留的独立 run 元数据行，避免兼容路径把工程字段重新暴露给用户。
+
+修改点：
+
+1. 主回复不直接暴露 `GET /runs/{run_id}`、`/snapshot`、`/attempts`。
+2. run_id 可以保留在 metadata 或 detail_sections，不作为主口径。
+3. 错误信息分为用户态 summary 与工程态 detail。
+4. roleplay 收口时优先使用用户态 summary。
+
+验收标准：
+
+1. 用户主回复自然，不像 API 文档。
+2. 开发者仍可通过 diagnostics 查到 run_id、trace、attempts。
+
+### P7：前端联调与体验验收
+
+目标：
+
+确认后端事件能被桌宠真实消费。
+
+当前落地状态：
+
+已在 2026-05-11 完成当前轮 P7 闭环。Electron bridge 现在会正确保留后端 `/chat` 返回体中的 `ok:false`，避免 HTTP 200 但业务失败时在聊天窗口显示成成功；聊天窗口会对连续的 running status 和 workflow quip 做节流去重，终态 `done/error/cancelled` 仍强制显示并结束 sending；quip 窗口会合并快速连续的 LangGraph 节点提示，降低节点事件刷屏和闪烁。前端仍通过 `/messages` 轮询消费 `quip/status/chat/error/expression`，主 Live2D 窗口继续接收 expression，quip/chat/console 窗口继续接收 quip。
+
+修改点：
+
+1. 检查 `src/App.vue`、聊天窗口、quip 窗口、console 窗口对 completed / failed 的处理。
+2. 检查 Electron bridge 是否转发新增事件。
+3. 检查前端是否能区分 running、done、error、cancelled。
+4. 对 quip 做节流，避免每个 step 都刷屏。
+
+验收标准：
+
+1. 用户能看到“开始理解、开始执行、完成了”等过程反馈。
+2. 任务结束后 UI 不残留 loading。
+3. 失败时有明确提示，不假装成功。
+
+验证结果：
+
+1. `uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q` 通过，结果为 `242 passed, 1 warning`。
+2. `pnpm build` 通过，前端与 Electron 主进程均能完成构建。
+3. `git diff --check` 通过，只有 Windows 换行转换提示，没有实际 whitespace error。
+
+仍建议手动验收：
+
+1. 启动后端与桌宠前端，验证普通聊天、`1+1=？`、workspace 创建 txt、桌面导出未配置、run 创建/查询等场景。
+2. 人工确认真实 Electron 窗口不会长期停在 loading，quip/status 不刷屏，失败不会显示成成功。
+
+## 11. 不建议现在做的事
+
+以下事项应后置：
+
+1. 直接推翻 `/chat`、`/runs`、`/messages` API。
+2. 直接删除 route graph。
+3. 直接允许任意桌面路径写入。
+4. 过早做复杂多 Agent 协同。
+5. 引入过重 provider 抽象层。
+6. 把所有问题都交给 LLM planner，完全取消确定性安全规则。
+7. 为每个自然语言边角情况继续堆关键词补丁。
+
+## 12. 测试计划
+
+### 12.1 单元测试
+
+需要新增或补强：
+
+1. Agent state model 序列化与默认值。
+2. Action registry 查找、参数校验、执行结果归一化。
+3. `workflow.completed` / `workflow.failed` 事件发送。
+4. `detect_intent()` 窄路由回归测试。
+5. workspace.write、desktop export disabled、file exists 等工具测试。
+
+### 12.2 集成测试
+
+需要覆盖：
+
+1. 普通聊天直接 finalize。
+2. 简单数学直接回答。
+3. workspace 写文件并完成。
+4. workspace 写文件失败后明确回复。
+5. run 创建后返回可追踪状态。
+6. run inspect 能读取终态摘要。
+7. loop 模式 max_steps 生效。
+
+### 12.3 前端联调测试
+
+需要手动验证：
+
+1. `pnpm dev` 启动后 quip 能出现。
+2. 任务完成后聊天窗口状态回到 done。
+3. 桌宠不会长期停在 running。
+4. 桌面导出需要确认或明确拒绝。
+5. 错误路径不会吞消息。
+
+## 13. 风险与控制
+
+### 13.1 循环失控
+
+风险：
+
+Agent Loop 可能无限规划或重复调用工具。
+
+控制：
+
+1. 默认 `max_steps`。
+2. 默认超时。
+3. 相同 action + 相同 input 重复时强制停止或要求重新规划。
+4. token budget 超限时收口。
+
+### 13.2 token 消耗上升
+
+风险：
+
+planner 每步都调用 LLM，会导致成本上升。
+
+控制：
+
+1. 简单确定性 action 不调用 LLM。
+2. 观察结果做摘要，不把完整 stdout/stderr 全塞回上下文。
+3. 最近消息和长期摘要分离。
+4. planner prompt 限制 available_actions 和上下文体积。
+
+### 13.3 安全边界变弱
+
+风险：
+
+Agent 具备更多 action 后，可能误写文件或执行危险命令。
+
+控制：
+
+1. 保持 `safe_fs` 和 workspace 边界。
+2. 桌面导出必须配置并确认。
+3. 高风险 action 必须 `requires_confirmation=true`。
+4. action registry 必须声明 `safety_level`。
+
+### 13.4 前端事件过载
+
+风险：
+
+节点和 action 都发消息，可能导致 quip 刷屏。
+
+控制：
+
+1. message_sender 做优先级和节流。
+2. 低优先级事件只进 console，不一定弹 quip。
+3. completed / failed 必须高优先级。
+
+## 14. 推荐执行顺序
+
+建议按下面顺序推进：
+
+```text
+P0 终态事件修复
+-> P1 Agent Runtime 基础模型
+-> P2 Action Registry
+-> P3 Loop Graph 灰度开关
+-> P4 普通自然语言入口迁移
+-> P5 工具观察与失败重规划
+-> P6 用户态输出去工程化
+-> P7 前端联调验收
+```
+
+截至 2026-05-11，本轮计划中的 P0-P7 已完成当前代码闭环。后续工作不再是本计划内的大项，而是运行时手动验收、真实模型调用压测和下一轮产品能力扩展。
+
+每一步都必须保持：
+
+1. 后端测试通过。
+2. `/chat` 基本可用。
+3. `/runs` 基本可用。
+4. `/messages` 事件可消费。
+5. 文档同步更新。
+
+## 15. 第一轮落地建议
+
+第一轮不要直接写完整 Agent Loop。建议先做以下最小闭环：
+
+1. 新增 `workflow.completed` / `workflow.failed`。
+2. 新增 runtime state dataclass / pydantic model，但先只用于 trace。
+3. 新增 action descriptor 基础结构。
+4. 把 `workspace.write` 包装成第一个 action。
+5. 在旧 route graph 内部先调用 action executor，验证兼容性。
+6. 再新增 loop graph 开关。
+
+这样可以先修用户可见的卡住问题，同时为真正的 Agent 循环铺底，不会一次性把后端改到不可控。
+
+## 16. 完成标准
+
+本轮重构最终完成时，应满足：
+
+1. 用户说“帮我创建一个 txt 文件”，Agent 能明确计划、执行、观察、回复。
+2. 前端能看到过程 quip / status，并在完成后进入 done。
+3. Agent trace 中能看到 turn、step、action、observation。
+4. 简单聊天不会被误判成 unknown。
+5. 简单工具任务不必强行走 Python codegen run。
+6. 复杂代码任务仍可走 `/runs` 生命周期。
+7. 工具失败能触发重规划、用户确认或清晰失败回复。
+8. 桌面写入默认安全，不会无确认写真实桌面。
+9. diagnostics 保留工程细节，用户主回复保持桌宠口径。
+10. 现有后端测试和前端构建通过。

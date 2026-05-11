@@ -9,27 +9,42 @@ from ...schemas import (
     AgentWorkflowErrorContext,
     INTENT_TYPE,
 )
-from ...services.chat_action.intent import detect_intent
-from ..agent_support import (
-    append_workflow_trace,
-    build_agent_initial_state,
-    build_coding_requested_state,
-    build_routed_state,
-    select_agent_next_node,
-    select_coding_next_node,
-)
+from ..actions import default_action_registry
+from ..actions.workspace import WORKSPACE_ACTION_TOOL_MAP
+from ..state.state_support import build_agent_initial_state
+from ..loop.agent_loop_graph import perceive_node, plan_node, run_agent_loop
 from .support import (
     WorkspaceToolSnapshot,
     build_workspace_tool_response_kwargs,
 )
 from .failure import build_failure_descriptor
-from ..graph.agent_graph import run_agent
 from ..trace.runtime import (
     build_runtime_event_summary,
     find_failure_trace,
     normalize_trace_items,
     trace_items_from_state,
 )
+
+
+LOOP_DIAGNOSTICS_NOTE = (
+    "该 diagnostics 使用 Agent Loop 主路径，与默认 /chat 运行路径对齐。"
+)
+LOOP_DIAGNOSTICS_EXECUTABLE_ACTIONS = {
+    "chat.reply",
+    "final.answer",
+    "ask_user_confirmation",
+    "run.inspect",
+    "workspace.overview",
+    "workspace.read",
+    "workspace.list",
+}
+RUN_ACTION_BY_AGENT_ACTION = {
+    "run.create": "create",
+    "run.inspect": "inspect",
+    "run.retry": "retry",
+    "run.rerun": "rerun",
+    "run.cancel": "cancel",
+}
 
 
 def _coerce_intent(value: object) -> INTENT_TYPE:
@@ -39,41 +54,128 @@ def _coerce_intent(value: object) -> INTENT_TYPE:
     return "unknown"
 
 
-def _build_planned_nodes(selected_route: str, coding_next_node: str | None = None) -> list[str]:
-    planned_nodes = ["router", selected_route]
-    if selected_route != "coding_node":
-        planned_nodes.append("roleplay_node")
-        return planned_nodes
-
-    if coding_next_node:
-        planned_nodes.append(coding_next_node)
-        if coding_next_node == "workspace_tool_node":
-            planned_nodes.append("run_tool_node")
-    planned_nodes.append("roleplay_node")
-    return planned_nodes
+def _normalize_optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
-def _build_preview_notes(
+def _action_descriptor_kwargs(action_name: str | None) -> dict[str, object]:
+    definition = default_action_registry.get(action_name or "")
+    if definition is None:
+        return {
+            "action_name": action_name,
+            "action_category": None,
+            "action_safety_level": None,
+            "requires_confirmation": None,
+        }
+
+    descriptor = definition.descriptor
+    return {
+        "action_name": descriptor.name,
+        "action_category": descriptor.category,
+        "action_safety_level": descriptor.safety_level,
+        "requires_confirmation": descriptor.requires_confirmation,
+    }
+
+
+def _run_action_from_agent_action(action_name: str | None) -> str | None:
+    return RUN_ACTION_BY_AGENT_ACTION.get(str(action_name or "").strip())
+
+
+def _target_run_id_from_action_input(action_input: object) -> str | None:
+    if not isinstance(action_input, dict):
+        return None
+    return _normalize_optional_text(action_input.get("run_id"))
+
+
+def _workspace_tool_snapshot_from_loop_plan(
     *,
-    selected_route: str,
-    coding_next_node: str | None,
-    run_action: str | None,
+    action_name: str | None,
+    action_input: object,
+) -> WorkspaceToolSnapshot:
+    tool_name = WORKSPACE_ACTION_TOOL_MAP.get(str(action_name or "").strip())
+    if tool_name is None:
+        return WorkspaceToolSnapshot()
+
+    tool_input = dict(action_input) if isinstance(action_input, dict) else {}
+    return WorkspaceToolSnapshot.from_state(
+        {
+            "workspace_tool_name": tool_name,
+            "workspace_tool_reason": f"Agent Loop planned action `{action_name}`.",
+            "workspace_tool_plan": {
+                "tool_name": tool_name,
+                "tool_input": tool_input,
+                "reason": f"Agent Loop planned action `{action_name}`.",
+                "terminal": True,
+            },
+        }
+    )
+
+
+def _loop_initial_state(
+    *,
+    prompt: str,
+    context: str | None,
+    intent: INTENT_TYPE | None,
+) -> dict[str, object]:
+    state = build_agent_initial_state(
+        prompt=prompt,
+        context=context,
+        session_id=None,
+        emit_chat_message=False,
+        emit_node_events=False,
+        intent=intent,
+    )
+    state["runtime_mode"] = "loop"
+    state["step_count"] = 0
+    state["max_steps"] = 3
+    state["recovery_attempted"] = False
+    state["recovery_reason"] = None
+    state["recovery_message"] = None
+    return state
+
+
+def _preview_loop_state(
+    *,
+    prompt: str,
+    context: str | None,
+    intent: INTENT_TYPE | None,
+) -> dict[str, object]:
+    state = _loop_initial_state(prompt=prompt, context=context, intent=intent)
+    perceived_state = perceive_node(state)
+    return plan_node(perceived_state)
+
+
+def _loop_planned_nodes(action_name: str | None) -> list[str]:
+    terminal_node = "failure_node" if not action_name else "finalize_node"
+    return [
+        "perceive_node",
+        "plan_node",
+        "act_node",
+        "observe_node",
+        "decide_continue_node",
+        terminal_node,
+    ]
+
+
+def _loop_preview_notes(
+    *,
+    action_name: str | None,
+    executable: bool,
+    blocked_reason: str | None = None,
 ) -> list[str]:
-    if selected_route == "chat_node":
-        return ["该输入会进入 chat_node，并调用当前 LLM client 生成回复。"]
-    if selected_route == "unknown_node":
-        return ["该输入当前会进入 unknown_node，并返回意图不明确提示。"]
-    if coding_next_node == "workspace_tool_node":
-        return [
-            "该输入会进入 coding_node，先执行 workspace tool 规划，再创建新的 run。",
-        ]
-    if coding_next_node == "run_snapshot_node":
-        return ["该输入会进入 coding_node，并读取已有 run 的状态或最终结果。"]
-    if coding_next_node == "run_control_node":
-        return [f"该输入会进入 coding_node，并对已有 run 执行 `{run_action}` 控制动作。"] if run_action else [
-            "该输入会进入 coding_node，并对已有 run 执行控制动作。"
-        ]
-    return ["该输入会进入 coding_node，但当前未能解析出更细的后续分支。"]
+    action_text = action_name or "unknown"
+    notes = [
+        LOOP_DIAGNOSTICS_NOTE,
+        f"Agent Loop 当前计划执行 `{action_text}`。",
+    ]
+    if executable:
+        notes.append("该动作可在 run diagnostics 中受控执行。")
+    elif blocked_reason:
+        notes.append(blocked_reason)
+    return notes
 
 
 def _phase_suggested_next_step(phase: str, *, blocked: bool) -> str:
@@ -217,17 +319,16 @@ def _build_error_context(
     )
 
 
-def _is_runtime_executable(preview: AgentDiagnosticsResponse) -> tuple[bool, str | None]:
-    if preview.selected_route in {"chat_node", "unknown_node"}:
+def _is_loop_runtime_executable(preview: AgentDiagnosticsResponse) -> tuple[bool, str | None]:
+    action_name = str(preview.action_name or "").strip()
+    if action_name in LOOP_DIAGNOSTICS_EXECUTABLE_ACTIONS:
         return True, None
-    if preview.selected_route == "coding_node" and preview.run_action == "inspect":
-        return True, None
-    if preview.selected_route == "coding_node":
-        return False, (
-            "当前运行期 diagnostics 默认只允许执行 chat、unknown 和 inspect 分支；"
-            "create / retry / rerun / cancel 请继续使用 preview 观察路径。"
-        )
-    return False, "当前输入未命中可执行的 diagnostics 分支。"
+    if not action_name:
+        return False, "Agent Loop 未能规划出可执行动作，请先使用 preview 查看状态。"
+    return False, (
+        f"Loop diagnostics 已拦截 `{action_name}`：该动作可能产生副作用，"
+        "请先使用 preview 观察计划，或通过正式 /chat 流程执行。"
+    )
 
 
 def preview_agent_workflow(
@@ -238,43 +339,22 @@ def preview_agent_workflow(
 ) -> AgentDiagnosticsResponse:
     normalized_prompt = prompt.strip()
     normalized_context = (context or "").strip() or None
-    initial_state = build_agent_initial_state(
+    final_state = _preview_loop_state(
         prompt=normalized_prompt,
         context=normalized_context,
-        session_id=None,
-        emit_chat_message=False,
-        emit_node_events=False,
         intent=intent,
     )
-
-    resolved_intent = intent or detect_intent(normalized_prompt)
-    routed_state = build_routed_state(initial_state, intent=resolved_intent)
-    selected_route = select_agent_next_node(resolved_intent)
-    final_state: dict[str, object] = dict(routed_state)
-    coding_next_node: str | None = None
-
-    if selected_route == "coding_node":
-        final_state = build_coding_requested_state(routed_state)
-        coding_next_node = select_coding_next_node(final_state)
-        final_state = append_workflow_trace(
-            final_state,
-            node="diagnostics_preview",
-            event="coding_path_selected",
-            ui_status=str(final_state.get("ui_status") or "").strip() or None,
-            details={
-                "next_node": coding_next_node,
-                "run_action": final_state.get("run_action"),
-            },
+    action_name = _normalize_optional_text(final_state.get("action_name"))
+    action_input = final_state.get("action_input")
+    executable, blocked_reason = _is_loop_runtime_executable(
+        AgentDiagnosticsResponse(
+            ok=True,
+            prompt=normalized_prompt,
+            intent=_coerce_intent(final_state.get("intent")),
+            selected_route="agent_loop",
+            **_action_descriptor_kwargs(action_name),
         )
-    else:
-        final_state = append_workflow_trace(
-            final_state,
-            node="diagnostics_preview",
-            event="route_selected",
-            ui_status=str(final_state.get("ui_status") or "").strip() or None,
-            details={"selected_route": selected_route},
-        )
-
+    )
     trace_items = trace_items_from_state(final_state)
     debug_summary = _build_debug_summary(
         trace_items=trace_items,
@@ -282,26 +362,28 @@ def preview_agent_workflow(
         ui_status=str(final_state.get("ui_status")) if final_state.get("ui_status") is not None else None,
         blocked=False,
     )
-    tool_snapshot = WorkspaceToolSnapshot.from_state(final_state)
+    tool_snapshot = _workspace_tool_snapshot_from_loop_plan(
+        action_name=action_name,
+        action_input=action_input,
+    )
 
     return AgentDiagnosticsResponse(
         ok=True,
         prompt=normalized_prompt,
         intent=_coerce_intent(final_state.get("intent")),
-        selected_route=selected_route,
-        run_action=str(final_state.get("run_action")) if final_state.get("run_action") is not None else None,
-        target_run_id=(
-            str(final_state.get("target_run_id"))
-            if final_state.get("target_run_id") is not None
-            else None
-        ),
+        diagnostics_mode="loop",
+        route_scope="primary_loop",
+        selected_route="agent_loop",
+        **_action_descriptor_kwargs(action_name),
+        run_action=_run_action_from_agent_action(action_name),
+        target_run_id=_target_run_id_from_action_input(action_input),
         **build_workspace_tool_response_kwargs(tool_snapshot),
         ui_status=str(final_state.get("ui_status")) if final_state.get("ui_status") is not None else None,
-        planned_nodes=_build_planned_nodes(selected_route, coding_next_node),
-        notes=_build_preview_notes(
-            selected_route=selected_route,
-            coding_next_node=coding_next_node,
-            run_action=str(final_state.get("run_action")) if final_state.get("run_action") is not None else None,
+        planned_nodes=_loop_planned_nodes(action_name),
+        notes=_loop_preview_notes(
+            action_name=action_name,
+            executable=executable,
+            blocked_reason=blocked_reason,
         ),
         debug_summary=debug_summary,
         runtime_event_summary=build_runtime_event_summary(trace_items),
@@ -322,23 +404,9 @@ async def run_agent_workflow_diagnostics(
         context=normalized_context,
         intent=intent,
     )
-    preview_tool_snapshot = WorkspaceToolSnapshot(
-        name=preview.workspace_tool_name,
-        title=preview.workspace_tool.title if preview.workspace_tool is not None else None,
-        reason=preview.workspace_tool_reason,
-        category=preview.workspace_tool_category,
-        output_kind=preview.workspace_tool_output_kind,
-        error_code=preview.workspace_tool_error_code,
-        descriptor=(
-            preview.workspace_tool_descriptor.model_dump(mode="python")
-            if preview.workspace_tool_descriptor is not None
-            else None
-        ),
-        plan=dict(preview.workspace_tool_plan) if preview.workspace_tool_plan is not None else None,
-    )
-    executable, blocked_reason = _is_runtime_executable(preview)
+    executable, blocked_reason = _is_loop_runtime_executable(preview)
+    preview_trace = normalize_trace_items([item.model_dump() for item in preview.workflow_trace])
     if not executable:
-        preview_trace = normalize_trace_items([item.model_dump() for item in preview.workflow_trace])
         debug_summary = _build_debug_summary(
             trace_items=preview_trace,
             error=None,
@@ -349,12 +417,33 @@ async def run_agent_workflow_diagnostics(
             ok=True,
             prompt=preview.prompt,
             intent=preview.intent,
+            diagnostics_mode="loop",
+            route_scope="primary_loop",
             selected_route=preview.selected_route,
+            action_name=preview.action_name,
+            action_category=preview.action_category,
+            action_safety_level=preview.action_safety_level,
+            requires_confirmation=preview.requires_confirmation,
             run_action=preview.run_action,
             executable=False,
             executed=False,
             blocked_reason=blocked_reason,
-            **build_workspace_tool_response_kwargs(preview_tool_snapshot),
+            **build_workspace_tool_response_kwargs(
+                WorkspaceToolSnapshot(
+                    name=preview.workspace_tool_name,
+                    title=preview.workspace_tool.title if preview.workspace_tool is not None else None,
+                    reason=preview.workspace_tool_reason,
+                    category=preview.workspace_tool_category,
+                    output_kind=preview.workspace_tool_output_kind,
+                    error_code=preview.workspace_tool_error_code,
+                    descriptor=(
+                        preview.workspace_tool_descriptor.model_dump(mode="python")
+                        if preview.workspace_tool_descriptor is not None
+                        else None
+                    ),
+                    plan=dict(preview.workspace_tool_plan) if preview.workspace_tool_plan is not None else None,
+                )
+            ),
             ui_status=preview.ui_status,
             planned_nodes=list(preview.planned_nodes),
             notes=list(preview.notes),
@@ -371,7 +460,7 @@ async def run_agent_workflow_diagnostics(
 
     result = await to_thread.run_sync(
         partial(
-            run_agent,
+            run_agent_loop,
             preview.prompt,
             normalized_context,
             session_id=None,
@@ -387,17 +476,32 @@ async def run_agent_workflow_diagnostics(
         ui_status=result.ui_status,
         blocked=False,
     )
-    response_trace = runtime_trace or normalize_trace_items(
-        [item.model_dump() for item in preview.workflow_trace]
-    )
+    response_trace = runtime_trace or preview_trace
+    action_name = _normalize_optional_text(result.state.get("action_name")) or preview.action_name
     runtime_tool_snapshot = WorkspaceToolSnapshot.from_state(result.state).merged_with(
-        preview_tool_snapshot
+        WorkspaceToolSnapshot(
+            name=preview.workspace_tool_name,
+            title=preview.workspace_tool.title if preview.workspace_tool is not None else None,
+            reason=preview.workspace_tool_reason,
+            category=preview.workspace_tool_category,
+            output_kind=preview.workspace_tool_output_kind,
+            error_code=preview.workspace_tool_error_code,
+            descriptor=(
+                preview.workspace_tool_descriptor.model_dump(mode="python")
+                if preview.workspace_tool_descriptor is not None
+                else None
+            ),
+            plan=dict(preview.workspace_tool_plan) if preview.workspace_tool_plan is not None else None,
+        )
     )
     return AgentRunDiagnosticsResponse(
         ok=result.ok,
         prompt=preview.prompt,
         intent=_coerce_intent(result.intent or preview.intent),
+        diagnostics_mode="loop",
+        route_scope="primary_loop",
         selected_route=preview.selected_route,
+        **_action_descriptor_kwargs(action_name),
         run_action=result.run_action or preview.run_action,
         executable=True,
         executed=True,

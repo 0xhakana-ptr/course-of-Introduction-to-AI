@@ -1,11 +1,9 @@
 import logging
 from collections.abc import Mapping
+from uuid import uuid4
 
 from ...schemas import INTENT_TYPE
-from ..output.roleplay import emit_roleplay_state
 from ..trace.runtime import build_workflow_trace_entry, coerce_workflow_trace_items
-from ..contracts.workflow_nodes import AGENT_ROLEPLAY_NODE
-from ..contracts.workflow_results import WorkflowAgentResult, invoke_graph_with_result
 
 
 logger = logging.getLogger(__name__)
@@ -58,24 +56,6 @@ def append_workflow_trace(
     return next_state
 
 
-def normalize_optional_text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def merge_context_sections(*sections: object) -> str | None:
-    normalized_sections = [
-        text
-        for section in sections
-        if (text := normalize_optional_text(section)) is not None
-    ]
-    if not normalized_sections:
-        return None
-    return "\n\n".join(normalized_sections)
-
-
 def build_workflow_node_failure_state(
     state: Mapping[str, object],
     *,
@@ -101,65 +81,6 @@ def build_workflow_node_failure_state(
     )
 
 
-def build_routed_state(
-    state: Mapping[str, object],
-    *,
-    intent: str,
-) -> dict[str, object]:
-    next_state = merge_agent_state(
-        state,
-        intent=intent,
-        ui_status="routed",
-    )
-    return append_workflow_trace(
-        next_state,
-        node="router",
-        event="intent_routed",
-        ui_status="routed",
-        details={"intent": intent},
-    )
-
-
-def build_chat_result_state(
-    state: Mapping[str, object],
-    *,
-    output: str,
-    error: str | None,
-) -> dict[str, object]:
-    ui_status = "chat_failed" if error else "chat_done"
-    next_state = merge_agent_state(
-        state,
-        output=output,
-        error=error,
-        ui_status=ui_status,
-    )
-    return append_workflow_trace(
-        next_state,
-        node="chat_node",
-        event="llm_response_ready" if error is None else "llm_response_failed",
-        ui_status=ui_status,
-        details={"has_error": error is not None},
-    )
-
-
-def emit_agent_roleplay_state(
-    state: Mapping[str, object],
-    *,
-    node_name: str = AGENT_ROLEPLAY_NODE,
-) -> dict[str, object]:
-    traced_state = append_workflow_trace(
-        state,
-        node="roleplay_node",
-        event="roleplay_emit",
-        ui_status=normalize_optional_text(state.get("ui_status")),
-        details={"node_name": node_name},
-    )
-    return emit_roleplay_state(
-        traced_state,
-        default_node_name=node_name,
-    )
-
-
 def build_agent_initial_state(
     *,
     prompt: str,
@@ -171,6 +92,7 @@ def build_agent_initial_state(
 ) -> dict[str, object]:
     state: dict[str, object] = {
         "user_input": prompt,
+        "turn_id": f"turn_{uuid4().hex}",
         "context": context,
         "session_id": session_id,
         "emit_chat_message": emit_chat_message,
@@ -199,36 +121,3 @@ def build_agent_initial_state(
     if intent is not None:
         state["intent"] = intent
     return state
-
-
-def invoke_agent_graph(
-    graph: object,
-    *,
-    prompt: str,
-    context: str | None,
-    session_id: str | None,
-    intent: INTENT_TYPE | None,
-    emit_chat_message: bool,
-    emit_node_events: bool = True,
-) -> WorkflowAgentResult:
-    initial_state = build_agent_initial_state(
-        prompt=prompt,
-        context=context,
-        session_id=session_id,
-        emit_chat_message=emit_chat_message,
-        emit_node_events=emit_node_events,
-        intent=intent,
-    )
-    return invoke_graph_with_result(
-        graph,
-        initial_state=initial_state,
-        on_success=lambda result: WorkflowAgentResult.from_state(
-            result,
-            default_intent=intent or "unknown",
-        ),
-        on_error=lambda exc, state: WorkflowAgentResult.from_error(
-            exc,
-            state,
-            default_intent=intent or "unknown",
-        ),
-    )

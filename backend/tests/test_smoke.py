@@ -66,9 +66,12 @@ def test_agent_diagnostics_smoke_contract_without_llm(client):
     preview_payload = preview_response.json()
     assert preview_payload["ok"] is True
     assert preview_payload["intent"] == "chat"
-    assert preview_payload["selected_route"] == "chat_node"
+    assert preview_payload["diagnostics_mode"] == "loop"
+    assert preview_payload["route_scope"] == "primary_loop"
+    assert preview_payload["selected_route"] == "agent_loop"
+    assert preview_payload["action_name"] == "chat.reply"
     assert preview_payload["runtime_event_summary"]["event_count"] >= 2
-    assert preview_payload["workflow_trace"][0]["node"] == "router"
+    assert preview_payload["workflow_trace"][0]["node"] == "perceive_node"
 
     run_response = client.post(
         "/agent/diagnostics/run",
@@ -79,12 +82,19 @@ def test_agent_diagnostics_smoke_contract_without_llm(client):
     run_payload = run_response.json()
     assert run_payload["ok"] is True
     assert run_payload["intent"] == "unknown"
-    assert run_payload["selected_route"] == "unknown_node"
+    assert run_payload["diagnostics_mode"] == "loop"
+    assert run_payload["route_scope"] == "primary_loop"
+    assert run_payload["selected_route"] == "agent_loop"
+    assert run_payload["action_name"] == "final.answer"
     assert run_payload["executable"] is True
     assert run_payload["executed"] is True
     assert [item["node"] for item in run_payload["workflow_trace"]] == [
-        "router",
-        "unknown_node",
+        "perceive_node",
+        "plan_node",
+        "act_node",
+        "observe_node",
+        "decide_continue_node",
+        "finalize_node",
         "roleplay_node",
     ]
     assert run_payload["runtime_event_summary"]["last_event_type"] == "roleplay.emitted"
@@ -125,11 +135,11 @@ def test_chat_can_inspect_existing_run_snapshot(client):
     assert inspect_payload["ok"] is True
     assert inspect_payload["run_id"] == run_id
     assert (
-        "当前快照:" in inspect_payload["output"]
+        "目前我看到：" in inspect_payload["output"]
         or "摘要:" in inspect_payload["output"]
-        or "最终总结:" in inspect_payload["output"]
+        or "最终总结：" in inspect_payload["output"]
     )
-    assert "下一步:" in inspect_payload["output"] or "查看完整结果:" in inspect_payload["output"]
+    assert "接下来：" in inspect_payload["output"] or "需要看细节时" in inspect_payload["output"]
 
 
 def test_chat_can_cancel_existing_run(client):

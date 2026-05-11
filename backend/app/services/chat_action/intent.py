@@ -205,7 +205,7 @@ RUN_REFERENCE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 FILE_REFERENCE_PATTERN = re.compile(
-    r"(?:^|[\s`\"'(<\[])[\w./\\-]+\.(?:py|pyi|js|jsx|ts|tsx|vue|json|yaml|yml|toml|ini|md|txt|c|cc|cpp|h|hpp|java|rs|go|sh|ps1|bat)(?:$|[\s`\"')>\],:;])",
+    r"(?:^|[\s`\"'(<\[])[\w./\\-]+\.(?:py|pyi|js|jsx|ts|tsx|vue|json|yaml|yml|toml|ini|md|txt|c|cc|cpp|h|hpp|java|rs|go|sh|ps1|bat)(?:$|[\s`\"')>\],:;，。！？、；：])",
     re.IGNORECASE,
 )
 COMMAND_REFERENCE_PATTERN = re.compile(

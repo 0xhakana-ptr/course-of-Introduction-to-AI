@@ -486,6 +486,7 @@ class ConversationStore:
         items.sort(
             key=lambda item: (
                 str(item.get("updated_at") or item.get("last_message_at") or ""),
+                int(item.get("message_count") or 0),
                 str(item.get("session_id") or ""),
             ),
             reverse=True,

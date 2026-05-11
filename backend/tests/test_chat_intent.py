@@ -33,6 +33,10 @@ def test_detect_intent_returns_coding_for_file_operation_prompt():
     assert detect_intent("请检查 main.py 的导入") == "coding"
 
 
+def test_detect_intent_returns_coding_for_file_reference_before_chinese_punctuation():
+    assert detect_intent("请创建 notes/chat-loop.txt，内容是chat loop ok") == "coding"
+
+
 def test_detect_intent_returns_coding_for_workspace_operation_prompt():
     assert detect_intent("把这个组件改一下") == "coding"
 

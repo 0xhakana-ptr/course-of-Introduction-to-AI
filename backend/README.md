@@ -79,7 +79,18 @@ LLM_CHAT_COMPLETIONS_URL=
 - 当前优先稳定支持 `openai` 与 `minimax` 两类 profile；如果是其他供应商，优先先验证其 `/chat/completions` 兼容程度
 - 未配置 LLM 时，服务仍可启动，但聊天会退回占位回复，`runs` 会优先走本地模板逻辑
 
-### 2.3 启动后端
+### 2.3 Agent Runtime
+
+当前 `/chat` 只使用 Agent Loop 主路径，旧 route graph 和 `AGENT_RUNTIME_MODE` 灰度开关已经移除。
+
+现阶段约定：
+
+- 新功能接入 `agent_workflow/loop/`、`agent_workflow/actions/` 和共享 service/tool 层
+- 不再维护旧 route graph fallback
+- `/agent/diagnostics/*` 默认诊断 Agent Loop 主路径
+- `/chat` 响应会返回 `runtime_mode=loop` 和 `route_scope=primary_loop`，用于确认当前运行路径
+
+### 2.4 启动后端
 
 ```powershell
 uv run uvicorn backend.app.main:app --reload --port 8000
@@ -130,7 +141,8 @@ from backend.app.main import app
 client = TestClient(app)
 
 print(client.get("/health").json())
-print(client.post("/agent/diagnostics/preview", json={"prompt": "hello", "context": None}).json()["selected_route"])
+diagnostics = client.post("/agent/diagnostics/preview", json={"prompt": "hello", "context": None}).json()
+print(diagnostics["selected_route"], diagnostics["action_name"])
 print(client.post("/chat", json={"prompt": "/test chat smoke", "context": None}).json()["intent"])
 '@ | uv run --python 3.11 --with-requirements backend/requirements.txt python -
 ```
@@ -155,6 +167,7 @@ Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
 
 ```powershell
 $env:AI_AGENT_ENDPOINT="http://127.0.0.1:8000/chat"
+$env:AI_AGENT_BASE_URL="http://127.0.0.1:8000"
 pnpm dev
 ```
 
@@ -163,6 +176,16 @@ pnpm dev
 ```powershell
 $env:AI_AGENT_MESSAGES_ENDPOINT="http://127.0.0.1:8000/messages"
 ```
+
+视觉联调时按这个清单检查：
+
+- Chat 窗口是否显示节点过程提示和中文节点名
+- 字幕窗口是否显示后端 `agent:quip`
+- 简单 read/write 工具任务是否不创建 run
+- 桌面文本导出请求是否先弹出确认框
+- `/runs/{run_id}` 是否返回 `detail_sections`
+
+更完整的验收步骤见 [`docs/plan/20260510-backend-runtime-review.md`](../docs/plan/20260510-backend-runtime-review.md) 的 P10 部分。
 
 ## 4. 后端目录概览
 

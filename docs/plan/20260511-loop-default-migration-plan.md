@@ -1,0 +1,219 @@
+# 2026-05-11 Route/Loop 并存到 Loop 主路径迁移方案
+
+## 1. 当前判断
+
+当前后端已经完成 route 到 loop 的主路径迁移。
+
+实际运行规则是：
+
+```text
+/chat -> 使用 Agent Loop graph
+```
+
+旧 `AGENT_RUNTIME_MODE` 灰度开关、旧 route graph 和 legacy route diagnostics 已在后续 R6 清理中移除。后续优化不应继续横向堆固定路由分支，而应围绕 Agent Loop 的规划、动作、观察、再规划能力推进。
+
+## 2. 目标状态
+
+迁移目标已完成：
+
+```text
+已完成：route 默认，loop 灰度
+已完成：loop 主路径验证完整，route 作为回退
+已完成：loop 默认，route 仅用于 diagnostics / 临时回退
+已完成：删除旧 route 兼容层
+```
+
+最终后端应更接近桌宠 Agent：
+
+```text
+用户输入
+-> perceive
+-> plan
+-> act
+-> observe
+-> decide
+   -> 需要继续则回到 plan
+   -> 完成/失败则 finalize/failure
+```
+
+而不是：
+
+```text
+用户输入
+-> detect_intent
+-> 固定路由分支
+-> 一次性结束
+```
+
+## 3. 设计约束
+
+1. 不推翻现有 `/chat`、`/runs`、`/messages` API。
+2. 不把大模型 provider 当成 Agent，本项目的 Agent 编排层应是 LangGraph/Agent Loop。
+3. 不绕过 `tools/`、`services/run_interface.py`、`message_queue` 等已有安全边界。
+4. 不默认允许任意桌面写文件，桌面导出仍需要配置和确认。
+5. 不继续让 `detect_intent()` 扩张成大规则表，普通自然语言应默认进入 Agent Loop。
+6. 旧 route graph 已移除，新能力只能落到 loop/action/shared service 层。
+7. `/chat` 主入口级别测试必须覆盖关键用户路径，而不是只测底层 graph。
+
+## 4. 分阶段计划
+
+### L1：Loop 主入口验证补齐
+
+目标：
+
+证明 `/chat` 在 Agent Loop 下可以稳定处理核心场景。
+
+当前落地状态：
+
+已在 2026-05-11 完成第一轮 L1。新增 `/chat` loop 模式集成测试，覆盖普通聊天、workspace 文本创建和 LLM 失败路径；同时修复文件路径后接中文标点时未被识别为 coding 的问题，避免 `请创建 notes/example.txt，内容是...` 这类请求误进普通聊天 LLM。
+
+范围：
+
+1. 普通聊天能通过 `/chat` 进入 loop 并返回用户态输出。
+2. workspace 文本创建能通过 `/chat` 进入 loop，不误创建 run。
+3. loop 的终态事件能被 `/messages` 消费，前端不应长期 loading。
+4. 失败路径仍返回 `ok=false` 和明确错误。
+
+验收：
+
+1. 新增或补强 `/chat` loop 集成测试。
+2. 后端测试通过。
+3. 前端构建不受影响。
+
+### L2：Loop 默认值切换准备
+
+目标：
+
+把默认模式切到 loop 之前，先整理配置和文档。
+
+当前落地状态：
+
+已在 2026-05-11 完成 L2 第一轮。该阶段先明确 Agent Loop 是新 Agent 能力开发、桌宠联调和卡住问题排查的推荐路径，并把 route 标注为 legacy fallback。随后 R6 已移除 route fallback，当前不再需要 runtime 灰度开关。
+
+范围：
+
+1. README 明确 Agent Loop 是 `/chat` 主路径。
+2. `.env.example` 不再暴露 route/loop 灰度开关。
+3. 测试默认覆盖 loop 主路径。
+4. route 图已删除，禁止新能力写入旧固定路由。
+
+验收：
+
+1. 新同学能按 README 启动 loop 模式。
+2. route/loop 的职责边界在文档中清晰。
+
+### L3：切换默认主路径
+
+目标：
+
+在 L1、L2 稳定后，将默认运行模式改为 loop。
+
+当前落地状态：
+
+已在 2026-05-11 完成 L3，并在 R6 后进一步收口为单一 Agent Loop 主路径。`backend/app/core/config.py` 不再读取 `AGENT_RUNTIME_MODE`；`backend/.env.example` 不再暴露 runtime 开关；README 已同步说明 `/chat` 固定进入 loop。
+
+范围：
+
+1. `backend/app/core/config.py` 不再保留 runtime 灰度配置。
+2. `backend/.env.example` 不再配置 `AGENT_RUNTIME_MODE`。
+3. README 同步更新。
+4. 不再保留 route 显式回退。
+
+验收：
+
+1. `/chat` 固定走 loop。
+2. 不存在 route runtime fallback。
+3. 全量测试通过。
+
+### L4：Route 职责收缩
+
+目标：
+
+避免两套业务逻辑长期并行膨胀。
+
+当前落地状态：
+
+已在 2026-05-11 完成 L4 第一轮。随后 R3 已将 `/agent/diagnostics/preview` 和 `/agent/diagnostics/run` 交接为 Agent Loop diagnostics，返回 `diagnostics_mode=loop` 与 `route_scope=primary_loop`；旧 route graph 诊断已迁移到 `/agent/diagnostics/legacy-route/preview` 和 `/agent/diagnostics/legacy-route/run`，返回 `diagnostics_mode=legacy_route` 与 `route_scope=legacy_fallback`。
+
+范围：
+
+1. route graph 不再承接新功能。
+2. diagnostics 默认展示 loop 结果；route 结果只能通过 legacy route diagnostics 展示。
+3. `detect_intent()` 只保留窄路由、安全预判和 run 控制识别。
+4. 普通自然语言默认由 loop 决定行动。
+
+验收：
+
+1. 新增能力只需要接 Action Registry / loop。
+2. route 相关测试不再阻塞 loop 能力演进。
+
+### L5：事件协议统一
+
+目标：
+
+前端只消费统一事件协议，不依赖 route/loop 内部细节。
+
+当前落地状态：
+
+已在 2026-05-11 完成 L5 第一轮。loop runtime 现在会在 `act_node` 前后发出 `workflow.action_started`、`workflow.action_completed`、`workflow.action_failed` 结构化事件，事件 metadata 包含 `action_name`、`action_label`、`action_category`、`safety_level`、`requires_confirmation` 和 `action_status`；这些 action 事件通过 `agent:status` JSON 传递，但保持 `status=running`，避免前端把单个 action 完成误判为整个工作流结束。真正终态仍只由 `workflow.completed` / `workflow.failed` 负责。聊天窗口已能把 action 事件显示为“动作开始/完成/失败”。
+
+范围：
+
+1. 节点开头统一发 `workflow.node_entered`。
+2. action 开始、成功、失败统一发结构化 JSON。
+3. workflow 完成/失败统一发终态 status。
+4. quip 做节流，调试信息进入 diagnostics/console。
+
+验收：
+
+1. 前端不会因为 route/loop 差异卡住。
+2. 用户能看到“正在理解、正在执行、完成/失败”的自然反馈。
+
+### L6：旧 Route 兼容层清理评估
+
+目标：
+
+确认是否可以删除或归档旧 route graph。
+
+当前落地状态：
+
+已在 2026-05-11 完成 L6/R6。旧 route graph、`AGENT_RUNTIME_MODE` 回退、legacy route diagnostics 和 legacy route-only 测试已移除。最新记录见 `docs/plan/20260511-route-legacy-cleanup-assessment.md`。
+
+范围：
+
+1. 全局搜索 route graph 的真实依赖。
+2. 检查前端、diagnostics、测试、文档是否还依赖 route 字段。
+3. 删除不再需要的旧 route 代码和测试。
+
+验收：
+
+1. 如果删除，不影响 `/chat`、`/runs`、`/messages`。
+2. 后续新增能力不再引入 route fallback。
+
+## 5. 当前执行顺序
+
+优先级按下面推进：
+
+```text
+L1 Loop 主入口验证补齐
+-> L2 Loop 默认值切换准备
+-> L3 切换默认主路径
+-> L4 Route 职责收缩
+-> L5 事件协议统一
+-> L6 旧 Route 兼容层清理评估
+```
+
+当前 L1、L2、L3、L4、L5、L6 均已完成第一轮闭环。后续工作应进入真实桌宠运行验收和下一轮能力规划，而不是继续扩张旧 route graph。
+
+## 6. 剩余工作统计口径
+
+本计划按 6 个大项统计：L1-L6。
+
+截至 2026-05-11，本计划已完成 6 个大项：L1、L2、L3、L4、L5、L6。剩余 0 个大项。
+
+每完成一个大项，需要同时满足：
+
+1. 代码已落地。
+2. 测试通过。
+3. 文档同步。
+4. 不破坏 route 显式回退。

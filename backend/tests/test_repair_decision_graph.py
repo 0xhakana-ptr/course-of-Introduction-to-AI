@@ -206,7 +206,7 @@ def test_repair_workflow_graph_returns_generated_script(monkeypatch):
     assert result.retry_node_name is None
     assert result.output == result.feedback_text
     assert result.as_dict()["feedback_text"] == result.feedback_text
-    assert "run_id: run_demo_1" in result.feedback_text
+    assert "run_id:" not in result.feedback_text
     assert "下一步:" in result.feedback_text
 
 
@@ -378,7 +378,7 @@ def test_repair_support_builds_feedback_message():
     )
 
     assert message.node_name == TASK_REPAIRING_NODE
-    assert "run_id: run_demo_4" in message.content
+    assert "run_id:" not in message.content
     assert "分析:" in message.content
     assert "下一步:" in message.content
 

@@ -84,6 +84,35 @@ def test_message_sender_queues_chat_message_with_top_level_node_name(monkeypatch
     assert messages[0]["metadata"]["node_name"] == "agent_roleplay"
 
 
+def test_message_envelope_accepts_workflow_action_event():
+    envelope = MessageEnvelope.model_validate(
+        {
+            "_id": "msg_action_1",
+            "_timestamp": "2026-05-11T00:00:00Z",
+            "_channel": "agent:status",
+            "type": "status",
+            "event_type": "workflow.action_started",
+            "event_source": "workflow",
+            "event_stage": "tools",
+            "frontend_visible": True,
+            "status": "running",
+            "progress": 42,
+            "node_name": "act_node",
+            "metadata": {
+                "runtime_event": "action_started",
+                "action_name": "workspace.write",
+                "action_label": "写入工作区文本",
+                "action_status": "started",
+            },
+        }
+    )
+
+    assert envelope.channel == "agent:status"
+    assert envelope.event_type == "workflow.action_started"
+    assert envelope.event_stage == "tools"
+    assert envelope.metadata["action_name"] == "workspace.write"
+
+
 @pytest.mark.parametrize(
     ("sender_call", "message_type", "channel", "event_type", "event_source", "event_stage"),
     [

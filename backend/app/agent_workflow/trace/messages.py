@@ -21,6 +21,14 @@ TRACE_EVENT_LABELS: dict[str, str] = {
     "roleplay_emit": "角色收口已发送",
     "route_selected": "诊断路由已确定",
     "coding_path_selected": "诊断 coding 路径已确定",
+    "loop_perceived": "Loop 已理解请求",
+    "loop_planned": "Loop 已规划动作",
+    "loop_action_executed": "Loop 动作已执行",
+    "loop_action_failed": "Loop 动作执行失败",
+    "loop_observed": "Loop 已观察结果",
+    "loop_decided": "Loop 已判断去向",
+    "loop_finalized": "Loop 已收口",
+    "loop_failed": "Loop 执行失败",
     "node_exception": "节点异常",
 }
 
@@ -138,6 +146,33 @@ def build_trace_message(item: Mapping[str, object]) -> str | None:
         if run_action:
             return f"诊断预览已确认 coding 分支后续节点为 `{next_node}`，动作为 `{run_action}`。"
         return f"诊断预览已确认 coding 分支后续节点为 `{next_node}`。"
+    if event == "loop_perceived":
+        intent = str(detail_map.get("intent") or "unknown").strip()
+        return f"{node_label}已将输入理解为 `{intent}` 意图。"
+    if event == "loop_planned":
+        action_name = str(detail_map.get("action_name") or "unknown").strip()
+        return f"{node_label}已选择下一步动作 `{action_name}`。"
+    if event == "loop_action_executed":
+        action_name = str(detail_map.get("action_name") or "unknown").strip()
+        return f"{node_label}已完成动作 `{action_name}`。"
+    if event == "loop_action_failed":
+        action_name = str(detail_map.get("action_name") or "unknown").strip()
+        return f"{node_label}执行动作 `{action_name}` 失败。"
+    if event == "loop_observed":
+        action_name = str(detail_map.get("action_name") or "unknown").strip()
+        ok = bool(detail_map.get("ok"))
+        return f"{node_label}已观察 `{action_name}` 的执行结果，成功状态为 `{ok}`。"
+    if event == "loop_decided":
+        stop_reason = str(detail_map.get("stop_reason") or "unknown").strip()
+        will_replan = bool(detail_map.get("will_replan"))
+        if will_replan:
+            return f"{node_label}决定继续规划，原因 `{stop_reason}`。"
+        return f"{node_label}决定结束本轮，原因 `{stop_reason}`。"
+    if event == "loop_finalized":
+        stop_reason = str(detail_map.get("stop_reason") or "completed").strip()
+        return f"{node_label}已完成本轮收口，原因 `{stop_reason}`。"
+    if event == "loop_failed":
+        return f"{node_label}确认 Agent Loop 执行失败。"
     if event == "node_exception":
         error_type = str(detail_map.get("error_type") or "Exception").strip()
         return f"{node_label}抛出了未捕获异常 `{error_type}`。"

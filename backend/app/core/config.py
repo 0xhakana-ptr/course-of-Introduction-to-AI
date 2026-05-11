@@ -60,7 +60,6 @@ class Settings:
             if desktop_export_dir
             else None
         )
-
         self.llm_base_url = _read_env("LLM_BASE_URL", "OPENAI_BASE_URL")
         self.llm_chat_completions_url = _read_env("LLM_CHAT_COMPLETIONS_URL")
         self.llm_provider_profile = _read_env("LLM_PROVIDER_PROFILE")

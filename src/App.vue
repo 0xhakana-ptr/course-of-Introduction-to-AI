@@ -33,16 +33,74 @@ const isChatMode = computed(() => new URLSearchParams(window.location.search).ge
 const isMainLive2DMode = computed(() => !isCliMode.value && !isQuipMode.value && !isChatMode.value)
 
 const quipText = ref('')
+const WORKFLOW_QUIP_THROTTLE_MS = 900
 
 type AgentQuipMessage = {
   type: 'quip'
   content?: string
   node_name?: string
+  event_type?: string
+  event_source?: string
+  event_stage?: string
   metadata?: {
+    priority?: 'low' | 'medium' | 'high'
     duration?: number
     node_label?: string
     phase?: string
   }
+}
+
+let lastWorkflowQuipAt = 0
+let pendingWorkflowQuipText = ''
+let pendingWorkflowQuipTimer: number | null = null
+
+function setQuipText(text: string) {
+  quipText.value = text.trim()
+}
+
+function clearPendingWorkflowQuip() {
+  if (pendingWorkflowQuipTimer != null) {
+    window.clearTimeout(pendingWorkflowQuipTimer)
+    pendingWorkflowQuipTimer = null
+  }
+  pendingWorkflowQuipText = ''
+}
+
+function showWorkflowQuipSoon(content: string) {
+  const now = Date.now()
+  const elapsed = now - lastWorkflowQuipAt
+  if (elapsed >= WORKFLOW_QUIP_THROTTLE_MS) {
+    clearPendingWorkflowQuip()
+    setQuipText(content)
+    lastWorkflowQuipAt = now
+    return
+  }
+
+  pendingWorkflowQuipText = content
+  if (pendingWorkflowQuipTimer != null) return
+  pendingWorkflowQuipTimer = window.setTimeout(() => {
+    pendingWorkflowQuipTimer = null
+    if (!pendingWorkflowQuipText) return
+    setQuipText(pendingWorkflowQuipText)
+    pendingWorkflowQuipText = ''
+    lastWorkflowQuipAt = Date.now()
+  }, WORKFLOW_QUIP_THROTTLE_MS - elapsed)
+}
+
+function showAgentQuipMessage(message: AgentQuipMessage) {
+  const content = typeof message?.content === 'string' ? message.content.trim() : ''
+  if (!content) return
+
+  const isWorkflowNodeQuip = message.event_type === 'workflow.node_entered'
+  const isHighPriority = message.metadata?.priority === 'high'
+  if (isWorkflowNodeQuip && !isHighPriority) {
+    showWorkflowQuipSoon(content)
+    return
+  }
+
+  clearPendingWorkflowQuip()
+  setQuipText(content)
+  lastWorkflowQuipAt = Date.now()
 }
 
 // Hover fade + click-through passthrough:
@@ -1406,14 +1464,16 @@ onMounted(async () => {
     // Receive quip text updates.
     if (ipcRenderer?.on) {
       const handler = (_evt: any, text: any) => {
-        quipText.value = typeof text === 'string' ? text : String(text ?? '')
+        clearPendingWorkflowQuip()
+        setQuipText(typeof text === 'string' ? text : String(text ?? ''))
       }
       const agentQuipHandler = (_evt: any, message: AgentQuipMessage) => {
-        quipText.value = typeof message?.content === 'string' ? message.content : ''
+        showAgentQuipMessage(message)
       }
       ipcRenderer.on('quip:text', handler)
       ipcRenderer.on('agent:quip', agentQuipHandler)
       onBeforeUnmount(() => {
+        clearPendingWorkflowQuip()
         ipcRenderer.removeListener?.('quip:text', handler)
         ipcRenderer.removeListener?.('agent:quip', agentQuipHandler)
       })

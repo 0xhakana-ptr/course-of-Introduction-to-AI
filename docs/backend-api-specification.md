@@ -202,19 +202,26 @@
 
 用途：
 
-- 以无副作用方式预览当前输入会如何进入 `agent_workflow`
-- 观察当前会命中的 `intent`、`run_action`、`workspace tool` 规划结果与预期节点路径
+- 以无副作用方式预览当前输入会如何进入 Agent Loop 主路径
+- 观察当前会命中的 `intent`、`action_name`、`run_action`、`workspace tool` 规划结果与预期节点路径
 - 调试为什么某条输入会被判定为 `chat / coding / unknown`
 
 说明：
 
-- 该接口不会真正创建 run，也不会真的执行 `retry / rerun / cancel`
+- 该接口不会真正执行工具动作，也不会创建 run、写文件或执行 `retry / rerun / cancel`
 - 该接口主要面向开发期调试与联调，不用于前端正式主链路
+- 该接口诊断 Agent Loop 主路径。
 
 返回字段包括：
 
 - `intent`
-- `selected_route`
+- `diagnostics_mode`：当前固定为 `loop`
+- `route_scope`：当前固定为 `primary_loop`
+- `selected_route`：loop 主路径下固定为 `agent_loop`
+- `action_name`
+- `action_category`
+- `action_safety_level`
+- `requires_confirmation`
 - `run_action`
 - `target_run_id`
 - `workspace_tool_name`
@@ -246,65 +253,74 @@
   "ok": true,
   "prompt": "请取消 run_id 123e4567-e89b-12d3-a456-426614174000",
   "intent": "coding",
-  "selected_route": "coding_node",
+  "diagnostics_mode": "loop",
+  "route_scope": "primary_loop",
+  "selected_route": "agent_loop",
+  "action_name": "run.cancel",
+  "action_category": "run",
+  "action_safety_level": "high",
+  "requires_confirmation": true,
   "run_action": "cancel",
   "target_run_id": "123e4567-e89b-12d3-a456-426614174000",
   "workspace_tool_name": null,
   "workspace_tool_reason": null,
   "workspace_tool_plan": null,
-  "ui_status": "coding_requested",
+  "ui_status": "loop_planned",
   "planned_nodes": [
-    "router",
-    "coding_node",
-    "run_control_node",
-    "roleplay_node"
+    "perceive_node",
+    "plan_node",
+    "act_node",
+    "observe_node",
+    "decide_continue_node",
+    "finalize_node"
   ],
   "notes": [
-    "该输入会进入 coding_node，并对已有 run 执行 `cancel` 控制动作。"
+    "该 diagnostics 使用 Agent Loop 主路径，与默认 /chat 运行路径对齐。",
+    "Agent Loop 当前计划执行 `run.cancel`。"
   ],
   "workflow_trace": [
     {
       "step": 1,
-      "node": "router",
-      "node_label": "意图路由",
+      "node": "perceive_node",
+      "node_label": "理解请求",
       "phase": "routing",
-      "event": "intent_routed",
-      "event_label": "意图已路由",
+      "event": "loop_perceived",
+      "event_label": "loop_perceived",
       "status_level": "info",
-      "message": "意图路由已将输入路由到 `coding` 意图。",
-      "ui_status": "routed",
+      "message": "理解请求已将输入理解为 `coding` 意图。",
+      "ui_status": "loop_perceived",
       "details": {
         "intent": "coding"
       }
     },
     {
       "step": 2,
-      "node": "coding_node",
-      "node_label": "代码任务预处理",
-      "phase": "coding",
-      "event": "coding_request_prepared",
-      "event_label": "代码任务请求已解析",
+      "node": "plan_node",
+      "node_label": "规划动作",
+      "phase": "routing",
+      "event": "loop_planned",
+      "event_label": "loop_planned",
       "status_level": "info",
-      "message": "代码任务预处理已解析 coding 请求，动作为 `cancel`，目标 run_id 为 `123e4567-e89b-12d3-a456-426614174000`。",
-      "ui_status": "coding_requested",
+      "message": "规划动作已选择下一步动作 `run.cancel`。",
+      "ui_status": "loop_planned",
       "details": {
+        "action_name": "run.cancel",
         "run_action": "cancel",
-        "target_run_id": "123e4567-e89b-12d3-a456-426614174000",
-        "workspace_tool_name": null
+        "target_run_id": "123e4567-e89b-12d3-a456-426614174000"
       }
     }
   ],
   "debug_summary": {
-    "trace_count": 3,
-    "first_node": "router",
-    "first_node_label": "意图路由",
-    "last_node": "diagnostics_preview",
-    "last_node_label": "诊断预览",
-    "terminal_node": "diagnostics_preview",
-    "terminal_node_label": "诊断预览",
-    "last_event": "coding_path_selected",
-    "last_ui_status": "coding_requested",
-    "last_phase": "diagnostics",
+    "trace_count": 2,
+    "first_node": "perceive_node",
+    "first_node_label": "理解请求",
+    "last_node": "plan_node",
+    "last_node_label": "规划动作",
+    "terminal_node": "plan_node",
+    "terminal_node_label": "规划动作",
+    "last_event": "loop_planned",
+    "last_ui_status": "loop_planned",
+    "last_phase": "routing",
     "failure_node": null,
     "failure_node_label": null,
     "failure_event": null,
@@ -332,31 +348,45 @@
 
 用途：
 
-- 在更接近真实运行期的前提下执行一遍安全的 Agent workflow 分支
+- 在更接近真实运行期的前提下执行一遍安全的 Agent Loop 分支
 - 返回真实 `output / error / ui_status / workflow_trace`
 - 用于排查某条输入在真实 `agent_workflow` 中到底如何收口
 
-当前默认允许执行的分支：
+当前默认允许执行的动作：
 
-- `chat`
-- `unknown`
-- `coding + inspect`
+- `chat.reply`
+- `final.answer`
+- `ask_user_confirmation`
+- `run.inspect`
+- `workspace.overview`
+- `workspace.read`
+- `workspace.list`
 
-当前默认拦截的分支：
+当前默认拦截的动作：
 
-- `coding + create`
-- `coding + retry`
-- `coding + rerun`
-- `coding + cancel`
+- `run.create`
+- `run.retry`
+- `run.rerun`
+- `run.cancel`
+- `workspace.write`
+- `workspace.test`
+- `workspace.export_desktop`
 
 说明：
 
 - 拦截这些分支是为了避免 diagnostics 接口意外创建 run 或修改已有任务状态
 - 对于被拦截的输入，仍会返回 preview 级别的 `planned_nodes` 和 `workflow_trace`，并给出 `blocked_reason`
+- 该接口诊断 Agent Loop 主路径。
 
 返回字段包括：
 
 - `ok`
+- `diagnostics_mode`：当前固定为 `loop`
+- `route_scope`：当前固定为 `primary_loop`
+- `action_name`
+- `action_category`
+- `action_safety_level`
+- `requires_confirmation`
 - `executable`
 - `executed`
 - `blocked_reason`
@@ -394,7 +424,13 @@
   "ok": true,
   "prompt": "hello",
   "intent": "chat",
-  "selected_route": "chat_node",
+  "diagnostics_mode": "loop",
+  "route_scope": "primary_loop",
+  "selected_route": "agent_loop",
+  "action_name": "chat.reply",
+  "action_category": "chat",
+  "action_safety_level": "low",
+  "requires_confirmation": false,
   "run_action": null,
   "executable": true,
   "executed": true,
@@ -403,25 +439,29 @@
   "run_status": null,
   "output": "reply to hello",
   "error": null,
-  "ui_status": "chat_done",
+  "ui_status": "loop_action_done",
   "planned_nodes": [
-    "router",
-    "chat_node",
-    "roleplay_node"
+    "perceive_node",
+    "plan_node",
+    "act_node",
+    "observe_node",
+    "decide_continue_node",
+    "finalize_node"
   ],
   "notes": [
-    "该输入会进入 chat_node，并调用当前 LLM client 生成回复。"
+    "该 diagnostics 使用 Agent Loop 主路径，与默认 /chat 运行路径对齐。",
+    "Agent Loop 当前计划执行 `chat.reply`。"
   ],
   "debug_summary": {
-    "trace_count": 3,
-    "first_node": "router",
-    "first_node_label": "意图路由",
+    "trace_count": 7,
+    "first_node": "perceive_node",
+    "first_node_label": "理解请求",
     "last_node": "roleplay_node",
     "last_node_label": "角色收口",
     "terminal_node": "roleplay_node",
     "terminal_node_label": "角色收口",
     "last_event": "roleplay_emit",
-    "last_ui_status": "chat_done",
+    "last_ui_status": "loop_action_done",
     "last_phase": "roleplay",
     "failure_node": null,
     "failure_node_label": null,
@@ -436,44 +476,30 @@
   "workflow_trace": [
     {
       "step": 1,
-      "node": "router",
-      "node_label": "意图路由",
+      "node": "perceive_node",
+      "node_label": "理解请求",
       "phase": "routing",
-      "event": "intent_routed",
-      "event_label": "意图已路由",
+      "event": "loop_perceived",
+      "event_label": "loop_perceived",
       "status_level": "info",
-      "message": "意图路由已将输入路由到 `chat` 意图。",
-      "ui_status": "routed",
+      "message": "理解请求已将输入理解为 `chat` 意图。",
+      "ui_status": "loop_perceived",
       "details": {
         "intent": "chat"
       }
     },
     {
       "step": 2,
-      "node": "chat_node",
-      "node_label": "聊天回复",
-      "phase": "chat",
-      "event": "llm_response_ready",
-      "event_label": "聊天回复完成",
+      "node": "plan_node",
+      "node_label": "规划动作",
+      "phase": "routing",
+      "event": "loop_planned",
+      "event_label": "loop_planned",
       "status_level": "info",
-      "message": "聊天回复已完成 LLM 回复生成。",
-      "ui_status": "chat_done",
+      "message": "规划动作已选择下一步动作 `chat.reply`。",
+      "ui_status": "loop_planned",
       "details": {
-        "has_error": false
-      }
-    },
-    {
-      "step": 3,
-      "node": "roleplay_node",
-      "node_label": "角色收口",
-      "phase": "roleplay",
-      "event": "roleplay_emit",
-      "event_label": "角色收口已发送",
-      "status_level": "info",
-      "message": "角色收口已完成最终输出收口。",
-      "ui_status": "chat_done",
-      "details": {
-        "node_name": "agent_roleplay"
+        "action_name": "chat.reply"
       }
     }
   ]
@@ -507,7 +533,10 @@
   "output": "response text",
   "error": null,
   "session_id": "session id",
-  "run_id": null
+  "run_id": null,
+  "runtime_mode": "loop",
+  "route_scope": "primary_loop",
+  "runtime_warning": null
 }
 ```
 
@@ -522,6 +551,9 @@
 - coding 任务的执行状态继续通过 `GET /runs/{run_id}`、`GET /runs/{run_id}/snapshot`、`GET /runs/{run_id}/attempts` 和 `GET /messages` 查询。
 - 对于直接通过 `/chat` 返回的聊天正文，后端不会再额外向消息队列重复写入同一条 `agent:chat`，以避免聊天窗口重复显示。
 - 如果 coding 请求中包含合法 `run_id` 且语义更接近“查看状态 / 快照 / 日志 / 进度”，LangGraph 会直接读取已有 run 的 snapshot 并返回，而不是再次创建新任务。
+- `runtime_mode` 表示本次 `/chat` 使用的 Agent runtime；默认是 `loop`。
+- `route_scope` 当前固定为 `primary_loop`。
+- `runtime_warning` 当前固定为 `null`；旧 route fallback 已移除。
 
 ### 3.4.1 `GET /chat/sessions`
 

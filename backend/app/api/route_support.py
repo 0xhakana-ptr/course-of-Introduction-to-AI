@@ -139,6 +139,9 @@ def build_chat_response(result: ChatServiceResult) -> ChatResponse:
         error=result.error,
         session_id=result.session_id,
         run_id=result.run_id,
+        runtime_mode=result.runtime_mode,
+        route_scope=result.route_scope,
+        runtime_warning=result.runtime_warning,
     )
 
 

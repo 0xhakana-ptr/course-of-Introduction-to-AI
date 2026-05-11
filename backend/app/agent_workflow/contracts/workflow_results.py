@@ -2,6 +2,8 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
+from ..runtime.models import build_runtime_turn_from_state, coerce_runtime_steps
+
 
 GraphResultT = TypeVar("GraphResultT", bound="WorkflowGraphResult")
 SUMMARY_RESULT_FIELDS = (
@@ -14,6 +16,7 @@ SUMMARY_RESULT_FIELDS = (
 AGENT_RESULT_FIELDS = (
     "ok",
     "output",
+    "turn_id",
     "intent",
     "error",
     "run_id",
@@ -21,6 +24,8 @@ AGENT_RESULT_FIELDS = (
     "run_action",
     "ui_status",
     "workflow_trace",
+    "runtime_steps",
+    "runtime_turn",
 )
 REPAIR_RESULT_FIELDS = (
     "ok",
@@ -202,6 +207,7 @@ def _extract_state_from_value(
 
 @dataclass(slots=True)
 class WorkflowAgentResult(WorkflowGraphResult):
+    turn_id: str | None = None
     intent: str = "unknown"
     error: str | None = None
     run_id: str | None = None
@@ -209,6 +215,8 @@ class WorkflowAgentResult(WorkflowGraphResult):
     run_action: str | None = None
     ui_status: str | None = None
     workflow_trace: list[dict[str, object]] = field(default_factory=list)
+    runtime_steps: list[dict[str, object]] = field(default_factory=list)
+    runtime_turn: dict[str, object] = field(default_factory=dict)
 
     @classmethod
     def _from_normalized_state(
@@ -219,20 +227,32 @@ class WorkflowAgentResult(WorkflowGraphResult):
         default_intent: str = "unknown",
     ) -> "WorkflowAgentResult":
         workflow_trace = state.get("workflow_trace")
+        normalized_trace = [
+            dict(item)
+            for item in workflow_trace
+            if isinstance(workflow_trace, list) and isinstance(item, Mapping)
+        ] if isinstance(workflow_trace, list) else []
+        runtime_turn = build_runtime_turn_from_state(
+            state,
+            ok=ok,
+            workflow_trace=normalized_trace,
+        ).as_dict()
+        runtime_steps = coerce_runtime_steps(state.get("runtime_steps")) or list(
+            runtime_turn.get("steps", [])
+        )
         return cls(
             ok=ok,
             output=_coerce_mapping_str(state, "output"),
+            turn_id=_coerce_mapping_text(state, "turn_id"),
             intent=_coerce_mapping_text(state, "intent") or default_intent,
             error=_coerce_mapping_text(state, "error"),
             run_id=_coerce_mapping_text(state, "run_id"),
             run_status=_coerce_mapping_text(state, "run_status"),
             run_action=_coerce_mapping_text(state, "run_action"),
             ui_status=_coerce_mapping_text(state, "ui_status"),
-            workflow_trace=[
-                dict(item)
-                for item in workflow_trace
-                if isinstance(workflow_trace, list) and isinstance(item, Mapping)
-            ] if isinstance(workflow_trace, list) else [],
+            workflow_trace=normalized_trace,
+            runtime_steps=runtime_steps,
+            runtime_turn=runtime_turn,
             state=dict(state),
         )
 
@@ -261,6 +281,7 @@ class WorkflowAgentResult(WorkflowGraphResult):
         return cls(
             ok=False,
             output=f"Agent 工作流执行失败：{exc}",
+            turn_id=_coerce_mapping_text(state, "turn_id"),
             intent=default_intent,
             error=str(exc),
             run_id=None,
@@ -268,6 +289,12 @@ class WorkflowAgentResult(WorkflowGraphResult):
             run_action=None,
             ui_status=None,
             workflow_trace=[],
+            runtime_steps=[],
+            runtime_turn=build_runtime_turn_from_state(
+                state,
+                ok=False,
+                workflow_trace=[],
+            ).as_dict(),
             state=dict(state),
         )
 
@@ -293,6 +320,7 @@ class WorkflowAgentResult(WorkflowGraphResult):
         payload = super(WorkflowAgentResult, self).as_dict()
         payload.update(
             {
+                "turn_id": self.turn_id,
                 "intent": self.intent,
                 "error": self.error,
                 "run_id": self.run_id,
@@ -300,6 +328,8 @@ class WorkflowAgentResult(WorkflowGraphResult):
                 "run_action": self.run_action,
                 "ui_status": self.ui_status,
                 "workflow_trace": list(self.workflow_trace),
+                "runtime_steps": list(self.runtime_steps),
+                "runtime_turn": dict(self.runtime_turn),
             }
         )
         return payload

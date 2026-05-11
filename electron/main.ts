@@ -96,6 +96,12 @@ type StatusUpdate = {
     node_label?: string
     phase?: string
     runtime_event?: string
+    action_name?: string
+    action_label?: string
+    action_status?: 'started' | 'completed' | 'failed'
+    action_category?: string
+    safety_level?: string
+    requires_confirmation?: boolean
   }
 }
 
@@ -434,6 +440,13 @@ ipcMain.on('close-app', () => {
     app.quit()
 })
 
+ipcMain.on('chat:focus-window', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+})
+
 // Window click-through toggle (used for hover-fade passthrough UX)
 ipcMain.on('window:setIgnoreMouseEvents', (event, ignore: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -470,6 +483,8 @@ type AgentChatRequest = {
 type AgentChatResponse = {
     ok: boolean
     output: string
+    error?: string
+    run_id?: string | null
 }
 
 async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse> {
@@ -489,11 +504,16 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
             const text = await res.text()
             if (!res.ok) return { ok: false, output: `AI_AGENT_ENDPOINT 返回 ${res.status}: ${text}` }
 
-            // Accept either {output} / {text} / plain text
+            // Accept either {ok, output} / {text} / plain text. Preserve
+            // backend-level ok=false so the renderer does not show failures
+            // as successful replies just because HTTP returned 200.
             try {
                 const json = JSON.parse(text)
                 const out = typeof json?.output === 'string' ? json.output : typeof json?.text === 'string' ? json.text : ''
-                return { ok: true, output: out || text }
+                const ok = typeof json?.ok === 'boolean' ? json.ok : true
+                const error = typeof json?.error === 'string' ? json.error : undefined
+                const runId = typeof json?.run_id === 'string' ? json.run_id : null
+                return { ok, output: out || text, error, run_id: runId }
             } catch {
                 return { ok: true, output: text }
             }

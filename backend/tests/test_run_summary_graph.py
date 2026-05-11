@@ -23,8 +23,8 @@ def test_summarize_run_record_uses_fallback_summary_without_llm():
 
     assert result.ok is True
     assert result.summary_source == "fallback"
-    assert "run_id:" in result.output
-    assert "状态: done" in result.output
+    assert "run_id:" not in result.output
+    assert "当前状态: 已经完成" in result.output
     assert result.as_dict()["summary_source"] == "fallback"
 
 
@@ -170,7 +170,8 @@ def test_emit_final_run_chat_message_falls_back_when_summary_graph_returns_faile
 
     assert len(chat_messages) == 1
     assert chat_messages[0]["node_name"] == "task_done"
-    assert f"run_id: {run.run_id}" in chat_messages[0]["content"]
+    assert f"run_id: {run.run_id}" not in chat_messages[0]["content"]
+    assert "需要看细节时" in chat_messages[0]["content"]
 
 
 def test_emit_final_run_chat_message_falls_back_when_summary_graph_raises(monkeypatch):
@@ -197,7 +198,8 @@ def test_emit_final_run_chat_message_falls_back_when_summary_graph_raises(monkey
 
     assert len(chat_messages) == 1
     assert chat_messages[0]["node_name"] == "task_done"
-    assert f"run_id: {run.run_id}" in chat_messages[0]["content"]
+    assert f"run_id: {run.run_id}" not in chat_messages[0]["content"]
+    assert "需要看细节时" in chat_messages[0]["content"]
 
 
 def test_summary_support_builds_resolution_node_from_custom_builders():

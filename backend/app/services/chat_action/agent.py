@@ -6,6 +6,20 @@ from ...schemas import INTENT_TYPE
 from .types import ChatServiceResult
 
 
+PRIMARY_RUNTIME_MODE = "loop"
+PRIMARY_ROUTE_SCOPE = "primary_loop"
+
+
+def _attach_runtime_metadata(
+    result: ChatServiceResult,
+) -> ChatServiceResult:
+    return result.with_updates(
+        runtime_mode=PRIMARY_RUNTIME_MODE,
+        route_scope=PRIMARY_ROUTE_SCOPE,
+        runtime_warning=None,
+    )
+
+
 def _fallback_output(resolved_intent: INTENT_TYPE) -> str:
     if resolved_intent == "coding":
         return "代码任务已进入 Agent 工作流，但暂时没有返回可展示的说明。"
@@ -24,20 +38,22 @@ async def build_agent_reply(
     emit_node_events: bool = True,
 ) -> ChatServiceResult:
     try:
-        from ...agent_workflow.graph.agent_graph import run_agent
+        from ...agent_workflow.loop.agent_loop_graph import run_agent_loop
     except ImportError as exc:
         resolved_intent = intent or "unknown"
-        return ChatServiceResult(
-            intent=resolved_intent,
-            ok=False,
-            output="Agent 工作流当前不可用，原因是相关依赖尚未正确加载。",
-            error=str(exc),
+        return _attach_runtime_metadata(
+            ChatServiceResult(
+                intent=resolved_intent,
+                ok=False,
+                output="Agent 工作流当前不可用，原因是相关依赖尚未正确加载。",
+                error=str(exc),
+            ),
         )
 
     try:
         result = await to_thread.run_sync(
             partial(
-                run_agent,
+                run_agent_loop,
                 prompt,
                 context,
                 session_id=session_id,
@@ -48,15 +64,19 @@ async def build_agent_reply(
         )
     except Exception as exc:
         resolved_intent = intent or "unknown"
-        return ChatServiceResult(
-            intent=resolved_intent,
-            ok=False,
-            output="Agent 工作流执行失败。",
-            error=str(exc),
+        return _attach_runtime_metadata(
+            ChatServiceResult(
+                intent=resolved_intent,
+                ok=False,
+                output="Agent 工作流执行失败。",
+                error=str(exc),
+            ),
         )
 
-    return ChatServiceResult.from_agent_result(
-        result,
-        intent_hint=intent,
-        fallback_output_builder=_fallback_output,
+    return _attach_runtime_metadata(
+        ChatServiceResult.from_agent_result(
+            result,
+            intent_hint=intent,
+            fallback_output_builder=_fallback_output,
+        ),
     )

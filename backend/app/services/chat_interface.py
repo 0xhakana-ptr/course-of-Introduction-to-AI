@@ -25,6 +25,13 @@ SCHEDULED_OUTPUT_REPLACEMENTS = {
 }
 
 
+def _agent_intent_hint(detected_intent: str) -> str | None:
+    # Natural chat should enter the Agent graph without being forced by the
+    # frontend-facing deterministic router. Keep deterministic operational
+    # paths pinned so run control and file/tool tasks stay stable.
+    return detected_intent if detected_intent in {"coding", "unknown"} else None
+
+
 def _apply_scheduled_output(result: ChatServiceResult) -> ChatServiceResult:
     replacement = SCHEDULED_OUTPUT_REPLACEMENTS.get(str(result.run_action or "").strip())
     if replacement is None:
@@ -58,7 +65,10 @@ def _schedule_coding_run_if_needed(
     except Exception as exc:
         return result.with_updates(
             ok=False,
-            output=f"代码任务已创建，但后台执行调度失败。\n\nrun_id: {result.run_id}",
+            output=(
+                "代码任务已创建，但后台执行调度失败。\n\n"
+                "任务记录仍然保留在任务详情里，可以稍后查看或重新启动。"
+            ),
             error=str(exc),
         )
 
@@ -119,13 +129,14 @@ async def generate_chat_response(
         prompt,
         effective_context,
         session_id=active_session_id,
-        intent=intent_hint,
+        intent=_agent_intent_hint(intent_hint),
         emit_chat_message=False,
     )
     result = _schedule_coding_run_if_needed(
         result,
         schedule_run=schedule_run,
     )
+    result = result.with_user_visible_output()
     _persist_result_to_conversation(
         active_session_id,
         prompt=prompt,

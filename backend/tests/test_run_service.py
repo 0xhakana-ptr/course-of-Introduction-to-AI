@@ -54,19 +54,19 @@ def test_run_chat_text_builders_keep_shared_output_contract():
     )
 
     assert repair_feedback.startswith("我先同步一下这次代码任务的进展。")
-    assert "run_id: run_demo_1" in repair_feedback
+    assert "run_id:" not in repair_feedback
     assert "当前结果: 第 1 次尝试失败。" in repair_feedback
     assert "下一步: 我会继续进行第 2 轮自动修复，然后再次尝试执行。" in repair_feedback
-    assert repair_feedback.endswith("查看完整结果: 可以在任务详情中使用这个 run_id 查看结果、日志和产物。")
+    assert repair_feedback.endswith("需要看细节时，可以打开任务详情查看结果、日志和产物。")
 
     assert retry_outcome.startswith("我继续同步一下自动修复后的这轮结果。")
     assert "本轮结果: 这轮已经成功。" in retry_outcome
     assert "下一步: 我会整理最终结果。" in retry_outcome
-    assert retry_outcome.endswith("查看完整结果: 可以在任务详情中使用这个 run_id 查看结果、日志和产物。")
+    assert retry_outcome.endswith("需要看细节时，可以打开任务详情查看结果、日志和产物。")
 
     assert completion_text.startswith("代码任务已经完成。")
-    assert "run_id: run_demo_1" in completion_text
-    assert "状态: done" in completion_text
+    assert "run_id:" not in completion_text
+    assert "当前状态: 已经完成" in completion_text
     assert "摘要:" in completion_text
 
 
@@ -254,8 +254,8 @@ def test_run_failure_without_llm_records_non_repairable_result(client):
 
     assert len(chat_messages) == 1
     assert chat_messages[0]["node_name"] == "task_failed"
-    assert run.run_id in chat_messages[0]["content"]
-    assert "状态: failed" in chat_messages[0]["content"]
+    assert run.run_id not in chat_messages[0]["content"]
+    assert "当前状态: 执行失败" in chat_messages[0]["content"]
 
 
 def test_run_repair_flow_can_succeed_after_initial_failure(monkeypatch, client):
@@ -328,7 +328,7 @@ def test_run_repair_flow_can_succeed_after_initial_failure(monkeypatch, client):
 
     assert len(chat_messages) == 3
     assert chat_messages[0]["node_name"] == "task_repairing"
-    assert run.run_id in chat_messages[0]["content"]
+    assert run.run_id not in chat_messages[0]["content"]
     assert "下一步:" in chat_messages[0]["content"]
     assert chat_messages[1]["node_name"] == "task_retry_done"
     assert "本轮结果:" in chat_messages[1]["content"]
@@ -616,8 +616,8 @@ def test_cancel_route_can_stop_running_run(monkeypatch, client):
 
     assert len(chat_messages) == 1
     assert chat_messages[0]["node_name"] == "task_cancelled"
-    assert run.run_id in chat_messages[0]["content"]
-    assert "状态: cancelled" in chat_messages[0]["content"]
+    assert run.run_id not in chat_messages[0]["content"]
+    assert "当前状态: 已经取消" in chat_messages[0]["content"]
 
 
 def test_cancel_route_rejects_finished_run(client):

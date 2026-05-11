@@ -15,7 +15,7 @@ def test_attempt_summary_graph_uses_fallback_summary_without_llm():
 
     assert result.ok is True
     assert result.summary_source == "fallback"
-    assert "run_id: run_demo_1" in result.output
+    assert "run_id:" not in result.output
     assert "下一步:" in result.output
     assert result.as_dict()["summary_text"] == result.summary_text
 
@@ -96,7 +96,8 @@ def test_emit_retry_outcome_message_falls_back_when_summary_graph_returns_failed
 
     assert len(chat_messages) == 1
     assert chat_messages[0]["node_name"] == "task_retry_failed"
-    assert "run_id: run_demo_4" in chat_messages[0]["content"]
+    assert "run_id:" not in chat_messages[0]["content"]
+    assert "需要看细节时" in chat_messages[0]["content"]
 
 
 def test_emit_retry_outcome_message_falls_back_when_summary_graph_raises(monkeypatch):
@@ -121,4 +122,5 @@ def test_emit_retry_outcome_message_falls_back_when_summary_graph_raises(monkeyp
 
     assert len(chat_messages) == 1
     assert chat_messages[0]["node_name"] == "task_retry_failed"
-    assert "run_id: run_demo_5" in chat_messages[0]["content"]
+    assert "run_id:" not in chat_messages[0]["content"]
+    assert "需要看细节时" in chat_messages[0]["content"]

@@ -5,6 +5,8 @@ from .messaging.event_types import AGENT_EVENT_SOURCE, AGENT_EVENT_STAGE, AGENT_
 
 
 INTENT_TYPE = Literal["chat", "coding", "unknown"]
+AGENT_DIAGNOSTICS_MODE = Literal["loop"]
+AGENT_ROUTE_SCOPE = Literal["primary_loop"]
 RUN_STATUS = Literal["queued", "running", "done", "failed", "cancelled"]
 ATTEMPT_STATUS = Literal["running", "done", "failed", "cancelled"]
 ATTEMPT_OUTPUT_STREAM = Literal["stdout", "stderr", "error"]
@@ -49,6 +51,9 @@ class ChatResponse(BaseModel):
     error: str | None = None
     session_id: str | None = None
     run_id: str | None = None
+    runtime_mode: str | None = None
+    route_scope: AGENT_ROUTE_SCOPE | None = None
+    runtime_warning: str | None = None
 
 
 class ClearConversationResponse(BaseModel):
@@ -276,7 +281,13 @@ class AgentDiagnosticsResponse(BaseModel):
     ok: bool = True
     prompt: str
     intent: INTENT_TYPE
+    diagnostics_mode: AGENT_DIAGNOSTICS_MODE = "loop"
+    route_scope: AGENT_ROUTE_SCOPE = "primary_loop"
     selected_route: str
+    action_name: str | None = None
+    action_category: str | None = None
+    action_safety_level: str | None = None
+    requires_confirmation: bool | None = None
     run_action: str | None = None
     target_run_id: str | None = None
     workspace_tool_name: str | None = None
@@ -300,7 +311,13 @@ class AgentRunDiagnosticsResponse(BaseModel):
     ok: bool = True
     prompt: str
     intent: INTENT_TYPE
+    diagnostics_mode: AGENT_DIAGNOSTICS_MODE = "loop"
+    route_scope: AGENT_ROUTE_SCOPE = "primary_loop"
     selected_route: str
+    action_name: str | None = None
+    action_category: str | None = None
+    action_safety_level: str | None = None
+    requires_confirmation: bool | None = None
     run_action: str | None = None
     executable: bool = False
     executed: bool = False

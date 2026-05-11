@@ -395,12 +395,72 @@ def test_generate_chat_response_marks_coding_schedule_failure(monkeypatch):
     assert result.run_id == "run-1"
     assert result.session_id is not None
     assert "后台执行调度失败" in result.output
+    assert "run_id:" not in result.output
     assert result.error == "schedule failed: run-1"
 
     stored_messages = conversation_store.get_messages(result.session_id)
     assert len(stored_messages) == 1
     assert stored_messages[0]["role"] == "user"
     assert stored_messages[0]["content"] == "write python code"
+
+
+def test_generate_chat_response_does_not_force_chat_intent_hint(monkeypatch):
+    seen_intents: list[str | None] = []
+
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        seen_intents.append(intent)
+        return ChatServiceResult(intent="chat", ok=True, output=f"reply to {prompt}")
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    prompts = ["hello", "我是谁", "1+1=？", "FastAPI 是什么？"]
+    for prompt in prompts:
+        result = asyncio.run(generate_chat_response(prompt, None))
+        assert result.ok is True
+        assert result.intent == "chat"
+
+    assert seen_intents == [None, None, None, None]
+
+
+def test_generate_chat_response_keeps_operational_intent_hints(monkeypatch):
+    seen_intents: list[str | None] = []
+
+    async def fake_build_agent_reply(
+        prompt: str,
+        context: str | None,
+        *,
+        session_id: str | None = None,
+        intent: str | None = None,
+        emit_chat_message: bool = False,
+    ):
+        seen_intents.append(intent)
+        return ChatServiceResult(
+            intent="coding" if intent == "coding" else "unknown",
+            ok=True,
+            output="handled",
+        )
+
+    monkeypatch.setattr(
+        "backend.app.services.chat_interface.build_agent_reply",
+        fake_build_agent_reply,
+    )
+
+    coding_result = asyncio.run(generate_chat_response("请检查 main.py 的导入", None))
+    unknown_result = asyncio.run(generate_chat_response("???", None))
+
+    assert coding_result.intent == "coding"
+    assert unknown_result.intent == "unknown"
+    assert seen_intents == ["coding", "unknown"]
 
 
 def test_generate_chat_response_schedules_retry_and_rerun_actions(monkeypatch):
@@ -464,6 +524,10 @@ def test_generate_chat_response_schedules_retry_and_rerun_actions(monkeypatch):
     assert scheduled_run_ids == ["run-retry-1", "run-rerun-1"]
     assert "并开始后台执行" in retry_result.output
     assert "并开始后台执行" in rerun_result.output
+    assert "run_id:" not in retry_result.output
+    assert "source_run_id:" not in retry_result.output
+    assert "run_id:" not in rerun_result.output
+    assert "source_run_id:" not in rerun_result.output
 
 
 def test_generate_chat_response_does_not_schedule_run_snapshot_inspection(monkeypatch):
@@ -511,6 +575,8 @@ def test_generate_chat_response_does_not_schedule_run_snapshot_inspection(monkey
     assert result.run_id == "run-1"
     assert result.run_action == "inspect"
     assert scheduled_run_ids == []
+    assert "run_id:" not in result.output
+    assert "status:" not in result.output
 
 
 def test_generate_chat_response_does_not_schedule_cancel_action(monkeypatch):
@@ -558,3 +624,5 @@ def test_generate_chat_response_does_not_schedule_cancel_action(monkeypatch):
     assert result.run_id == "run-1"
     assert result.run_action == "cancel"
     assert scheduled_run_ids == []
+    assert "run_id:" not in result.output
+    assert "status:" not in result.output

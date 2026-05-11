@@ -53,6 +53,12 @@ type StatusUpdate = {
     node_label?: string
     phase?: string
     runtime_event?: string
+    action_name?: string
+    action_label?: string
+    action_status?: 'started' | 'completed' | 'failed'
+    action_category?: string
+    safety_level?: string
+    requires_confirmation?: boolean
   }
 }
 
@@ -84,6 +90,12 @@ const currentStatus = ref('idle')
 const currentProgress = ref(0)
 const currentNode = ref('')
 const currentNodeLabel = ref('')
+const STATUS_LOG_THROTTLE_MS = 850
+const QUIP_LOG_THROTTLE_MS = 850
+let lastStatusLogAt = 0
+let lastStatusLogKey = ''
+let lastQuipLogAt = 0
+let lastQuipLogKey = ''
 
 // 存储部分消息
 const partialMessages = new Map<number, string>()
@@ -92,7 +104,10 @@ const TEXT_WRITE_ACTION_PATTERN = /(创建|新建|写入|保存|导出|create|ne
 const TEXT_FILE_PATTERN = /(\.txt|txt|文本文件|text file)/i
 
 const outputRef = ref<HTMLDivElement | null>(null)
+const inputRef = ref<HTMLTextAreaElement | null>(null)
 const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
+const desktopConfirmVisible = ref(false)
+let desktopConfirmResolver: ((confirmed: boolean) => void) | null = null
 
 function push(role: ChatLine['role'], text: string) {
   lines.value.push({ role, text })
@@ -108,6 +123,16 @@ function push(role: ChatLine['role'], text: string) {
 function clearScreen() {
   lines.value = []
   push('system', '屏幕已清空（Ctrl+L）。')
+  focusInputSoon()
+}
+
+function focusInputSoon() {
+  void nextTick(() => {
+    window.setTimeout(() => {
+      ipcRenderer?.send?.('chat:focus-window')
+      inputRef.value?.focus()
+    }, 0)
+  })
 }
 
 // 处理 Chat 消息
@@ -143,8 +168,48 @@ function handleError(_event: any, data: ErrorMessage) {
   }
 }
 
+function shouldLogTransientEvent(
+  key: string,
+  options: {
+    throttleMs: number
+    lastKey: string
+    lastAt: number
+    force?: boolean
+  },
+): { shouldLog: boolean; nextAt: number; nextKey: string } {
+  const { throttleMs, lastKey, lastAt, force = false } = options
+  if (force) {
+    return { shouldLog: true, nextAt: Date.now(), nextKey: key }
+  }
+
+  const now = Date.now()
+  if (key === lastKey && now - lastAt < throttleMs * 2) {
+    return { shouldLog: false, nextAt: lastAt, nextKey: lastKey }
+  }
+  if (now - lastAt < throttleMs) {
+    return { shouldLog: false, nextAt: lastAt, nextKey: lastKey }
+  }
+  return { shouldLog: true, nextAt: now, nextKey: key }
+}
+
 function getDisplayNodeName(data: Pick<StatusUpdate | QuipMessage, 'node_name' | 'metadata'>): string {
   return data.metadata?.node_label || data.node_name || '未知'
+}
+
+function getActionStatusText(data: StatusUpdate): string | null {
+  if (!data.event_type?.startsWith('workflow.action_')) return null
+  const label = data.metadata?.action_label || data.metadata?.action_name || getDisplayNodeName(data)
+  const actionStatus = data.metadata?.action_status
+  if (actionStatus === 'started' || data.event_type === 'workflow.action_started') {
+    return `[动作] 开始执行：${label}`
+  }
+  if (actionStatus === 'completed' || data.event_type === 'workflow.action_completed') {
+    return `[动作] 执行完成：${label}`
+  }
+  if (actionStatus === 'failed' || data.event_type === 'workflow.action_failed') {
+    return `[动作] 执行失败：${label}`
+  }
+  return `[动作] ${label}`
 }
 
 function handleQuip(_event: any, data: QuipMessage) {
@@ -152,6 +217,20 @@ function handleQuip(_event: any, data: QuipMessage) {
   if (!content) return
 
   const node = getDisplayNodeName(data)
+  const forceLog = data.metadata?.priority === 'high' || data.event_source !== 'workflow'
+  const logDecision = shouldLogTransientEvent(
+    `${data.event_type || 'quip'}:${data.node_name || ''}:${content}`,
+    {
+      throttleMs: QUIP_LOG_THROTTLE_MS,
+      lastKey: lastQuipLogKey,
+      lastAt: lastQuipLogAt,
+      force: forceLog,
+    },
+  )
+  if (!logDecision.shouldLog) return
+  lastQuipLogAt = logDecision.nextAt
+  lastQuipLogKey = logDecision.nextKey
+
   if (data.event_type === 'workflow.node_entered') {
     push('system', `[过程] ${content}（${node}）`)
     return
@@ -162,17 +241,37 @@ function handleQuip(_event: any, data: QuipMessage) {
 // 处理状态更新
 function handleStatus(_event: any, data: StatusUpdate) {
   currentStatus.value = data.status
-  currentProgress.value = data.progress || 0
+  currentProgress.value = data.progress ?? (data.status === 'done' ? 100 : 0)
   currentNode.value = data.node_name || ''
   currentNodeLabel.value = data.metadata?.node_label || ''
   const node = getDisplayNodeName(data)
+  const isTerminalStatus = data.status === 'done' || data.status === 'error' || data.status === 'cancelled'
+  const actionStatusText = getActionStatusText(data)
+  if (isTerminalStatus) {
+    isSending.value = false
+  }
+
+  const logDecision = shouldLogTransientEvent(
+    `${data.status}:${data.event_type || ''}:${data.node_name || ''}:${data.progress ?? ''}`,
+    {
+      throttleMs: STATUS_LOG_THROTTLE_MS,
+      lastKey: lastStatusLogKey,
+      lastAt: lastStatusLogAt,
+      force: isTerminalStatus || data.event_type === 'workflow.action_failed',
+    },
+  )
+  if (!logDecision.shouldLog) return
+  lastStatusLogAt = logDecision.nextAt
+  lastStatusLogKey = logDecision.nextKey
   
-  if (data.status === 'running') {
+  if (actionStatusText) {
+    push('system', actionStatusText)
+  } else if (data.status === 'running') {
     push('system', `[状态] 正在运行... 节点: ${node} 进度: ${data.progress || 0}%`)
   } else if (data.status === 'done') {
-    push('system', '[状态] 任务完成')
+    push('system', data.event_type === 'workflow.completed' ? '[状态] 工作流完成' : '[状态] 任务完成')
   } else if (data.status === 'error') {
-    push('system', '[状态] 发生错误')
+    push('system', data.event_type === 'workflow.failed' ? '[状态] 工作流失败' : '[状态] 发生错误')
   } else if (data.status === 'cancelled') {
     push('system', '[状态] 任务已取消')
   }
@@ -207,13 +306,23 @@ function needsDesktopExportConfirmation(prompt: string): boolean {
   )
 }
 
-function confirmDesktopExportRequest(prompt: string): boolean {
+async function confirmDesktopExportRequest(prompt: string): Promise<boolean> {
   if (!needsDesktopExportConfirmation(prompt)) return true
-  return window.confirm(
-    '这个请求可能会触发桌面文本导出。\n\n'
-    + '后端仍会限制只能写入配置好的 DESKTOP_EXPORT_DIR，'
-    + '但为了避免误操作，请确认是否继续发送这个请求。',
-  )
+  if (desktopConfirmResolver) return false
+
+  desktopConfirmVisible.value = true
+  return await new Promise<boolean>((resolve) => {
+    desktopConfirmResolver = (confirmed: boolean) => {
+      desktopConfirmVisible.value = false
+      desktopConfirmResolver = null
+      focusInputSoon()
+      resolve(confirmed)
+    }
+  })
+}
+
+function resolveDesktopExportConfirmation(confirmed: boolean) {
+  desktopConfirmResolver?.(confirmed)
 }
 
 async function sendPrompt(prompt: string) {
@@ -225,8 +334,9 @@ async function sendPrompt(prompt: string) {
     return
   }
 
-  if (!confirmDesktopExportRequest(trimmed)) {
+  if (!(await confirmDesktopExportRequest(trimmed))) {
     push('system', '已取消发送：桌面导出请求没有通过前端确认。')
+    focusInputSoon()
     return
   }
 
@@ -242,6 +352,7 @@ async function sendPrompt(prompt: string) {
     push('err', String(e))
   } finally {
     isSending.value = false
+    focusInputSoon()
   }
 }
 
@@ -298,6 +409,7 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(() => {
   push('system', 'AI Chat 已启动。Enter 发送，Shift+Enter 换行，↑/↓ 历史，Ctrl+L 清屏。')
   if (!canInvoke.value) push('err', '（仅 Electron 可用：请通过 pnpm dev 启动桌面端）')
+  focusInputSoon()
   
   // 监听消息
   if (ipcRenderer?.on) {
@@ -346,6 +458,7 @@ onUnmounted(() => {
 
     <div class="input-wrap">
       <textarea
+        ref="inputRef"
         v-model="input"
         class="cmd"
         placeholder="像命令行一样输入你的要求…（Enter 发送，Shift+Enter 换行）"
@@ -354,6 +467,28 @@ onUnmounted(() => {
       />
       <div class="actions">
         <button class="btn primary" type="button" :disabled="isSending" @click="submit">发送</button>
+      </div>
+    </div>
+
+    <div
+      v-if="desktopConfirmVisible"
+      class="confirm-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="desktop-export-confirm-title"
+      tabindex="-1"
+      @keydown.esc="resolveDesktopExportConfirmation(false)"
+    >
+      <div class="confirm-panel">
+        <div id="desktop-export-confirm-title" class="confirm-title">确认桌面文本导出</div>
+        <div class="confirm-copy">
+          这个请求可能会触发桌面文本导出。后端仍会限制只能写入配置好的 DESKTOP_EXPORT_DIR，
+          但为了避免误操作，请确认是否继续发送这个请求。
+        </div>
+        <div class="confirm-actions">
+          <button class="btn" type="button" @click="resolveDesktopExportConfirmation(false)">取消</button>
+          <button class="btn primary" type="button" @click="resolveDesktopExportConfirmation(true)">继续发送</button>
+        </div>
       </div>
     </div>
   </div>
@@ -497,6 +632,16 @@ onUnmounted(() => {
   color: #ffb4b4;
 }
 
+.status-badge.cancelled {
+  background: rgba(255, 220, 160, 0.2);
+  color: #ffdca0;
+}
+
+.status-badge.paused {
+  background: rgba(220, 220, 220, 0.16);
+  color: #dddddd;
+}
+
 .progress {
   font-size: 11px;
   color: rgba(234, 234, 234, 0.8);
@@ -515,5 +660,43 @@ onUnmounted(() => {
 .btn:disabled {
   cursor: not-allowed;
   opacity: 0.6;
+}
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.56);
+}
+
+.confirm-panel {
+  width: min(460px, 100%);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 18px;
+  background: #161a22;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
+.confirm-title {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.confirm-copy {
+  color: rgba(234, 234, 234, 0.78);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
 }
 </style>
