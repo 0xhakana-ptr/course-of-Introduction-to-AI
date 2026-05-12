@@ -16,13 +16,18 @@
     "@pixi/math": "6.5.10",
     "@pixi/sprite": "6.5.10",
     "@pixi/utils": "6.5.10",
+    "highlight.js": "^11.11.1",
+    "katex": "^0.16.45",
     "live2dcubismcore": "1.0.2",
+    "markdown-it": "^14.1.1",
+    "markdown-it-katex": "^2.0.3",
     "pixi-live2d-display": "^0.4.0",
     "pixi.js": "^6.5.10",
     "vue": "^3.5.32",
     "ws": "^8.20.0"
   },
   "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.12.2",
     "@vitejs/plugin-vue": "^6.0.5",
     "@vue/tsconfig": "^0.9.1",

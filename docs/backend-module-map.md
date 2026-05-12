@@ -213,10 +213,16 @@ backend/app/services/
 
 当前 `agent_workflow/` 根目录只保留包入口和必要 facade，真实实现已经下沉到各职责子包。新代码应直接使用子包路径，不再依赖旧根目录模块名。
 
-### 6.1 主循环与动作层
+### 6.1 顶层 Turn Controller 与动作层
 
 ```text
 agent_workflow/
+  coding/
+    coding_graph.py
+    planner.py
+    result.py
+    state.py
+    worker_payloads.py
   loop/
     agent_loop_graph.py
   actions/
@@ -230,7 +236,14 @@ agent_workflow/
 
 职责：
 
-- `loop/agent_loop_graph.py`：当前默认 `/chat` 主路径，负责 perceive、plan、act、observe、decide、finalize/failure 的 Agent Loop
+- `coding/`：coding/debug 内部循环的子图包；当前已接入 `/chat` 主线中的简单 workspace action 与 `run.create`
+- `coding/coding_graph.py`：定义 `coding_start_node -> pm_node -> coder_node -> executor_node -> qa_node -> debugger_node -> coding_finish_node / coding_failure_node`；A4 阶段已接入简单 `workspace.write/read/list`，A5 阶段已接入 `run.create`，A6 阶段已加入失败摘要过滤，A7 阶段已加入受限局部修复，A9 阶段已允许 `coder_node` 在规则计划不足时调用受控 LLM planner
+- `coding/planner.py`：把 LLM 输出解析为严格 `CodingTaskPlan`，只允许 `workspace.write/read/list` 与 `run.create`，并拒绝 shell/command/env/token/raw log 等本地执行或敏感字段
+- `coding/result.py`：定义 `CodingWorkflowResult`，收口 coding 子图输出，避免 raw error/stdout/stderr 进入结果 payload
+- `coding/artifacts.py`：保存 coding 子图内部 raw error artifact，并只向 active state 暴露 artifact ref
+- `coding/state.py`：定义 LangGraph 运行用的 `CodingGraphState`
+- `coding/worker_payloads.py`：定义 PM/Coder/Executor/QA/Debugger 的局部 worker payload，只把允许字段送入节点；同时提供 `to_send()` 适配 LangGraph `Send`，但当前线性子图不强依赖 Send API
+- `loop/agent_loop_graph.py`：当前默认 `/chat` 主路径，文件名暂不改动，但架构定位是顶层 Turn Controller；它负责接收一轮用户输入、选择 action 或内部 workflow、发出过程事件，并保证最终进入 `workflow.completed` 或 `workflow.failed`
 - `actions/`：Action Registry 与 run/workspace 等可执行动作
 - `runtime/graph_nodes.py`：LangGraph 节点注册和异常保护 helper
 
@@ -240,6 +253,14 @@ agent_workflow/
 - 旧 route graph 已移除，不再维护 `AGENT_RUNTIME_MODE=route` fallback
 - 节点事件和节点 metadata 只维护当前 Agent Loop 节点，不再保留旧 route graph 的 `router/chat_node/coding_node`
 - 需要新增工具时，优先注册 action，而不是新增固定路由分支
+- 顶层 Turn Controller 不应继续堆叠 PM、Coder、QA、Debugger 的内部逻辑；这些 coding/debug 能力应进入后续 `agent_workflow/coding/` 子图
+- Roleplay / 前端状态只能接收简短状态、quip、确认请求和终态信息，不应接触 raw error、完整 stdout/stderr 或长代码上下文
+- `coding/` 子图在 A5 阶段接管简单 `workspace.write/read/list` 与 `run.create`；`workspace.test`、桌面导出、`run.inspect/retry/rerun/cancel` 仍留在顶层 action 路径或后续阶段处理
+- `coder_node` 当前优先使用规则把 PM 任务转成受控 executor action；规则计划不足且 LLM 已配置时，可调用 `coding/planner.py` 生成 `CodingTaskPlan`，但 planner 只产出计划，不直接执行工具
+- `qa_node` 只处理失败路径：读取 raw error artifact，输出短 `error_summary`，并清理 active state 中的 `raw_error_ref`
+- `debugger_node` 只读取 `current_task`、`error_summary`、`coder_plan` 和受控 action 输入；当前只支持明确允许的缺失路径探测修复，并受 `max_debug_steps` 限制
+- PM/Coder/Executor/QA/Debugger 节点都应通过 `coding/worker_payloads.py` 构造局部输入，不应直接读取完整全局 state。
+- LangGraph `Send` 当前作为适配能力保留；只有在后续需要并行 worker/map-reduce 或明确 reducer 策略时，才把现有线性边改为实际 Send 调度。
 
 ### 6.2 共享契约与节点映射
 
@@ -263,17 +284,29 @@ agent_workflow/
 agent_workflow/
   state/
     constants.py
+    display_state.py
+    engineering_state.py
     run_state.py
     run_support.py
+    runtime_state.py
     state_support.py
 ```
 
 职责：
 
 - `state/constants.py`：保存 Agent workflow 内部 action/status 常量
+- `state/display_state.py`：定义 `FrontendState`，只保存前端/Roleplay 可见状态，并提供 raw error、stdout/stderr、长代码等脏上下文过滤规则
+- `state/engineering_state.py`：定义 `EngineeringState`，保存 coding/debug 所需任务、目标文件、artifact refs、`raw_error_ref` 和 `error_summary`
 - `state/run_state.py`：封装 run 相关状态字段快照与更新
 - `state/run_support.py`：封装 run_id 解析、snapshot 读取和 run control 调度
+- `state/runtime_state.py`：定义 `TurnState`、`RuntimeState`、`ToolState`、`ConversationState` 和 `CodingWorkflowState`，用于后续 coding 子图的分区状态边界
 - `state/state_support.py`：封装 Agent state merge、trace 追加、初始 state 和 graph invoke
+
+边界约束：
+
+- `FrontendState` 不允许包含 `raw_error`、`raw_error_ref`、完整 `stdout/stderr`、完整 `workflow_trace`、长代码或工具内部 stack trace
+- `EngineeringState` 只保存 `raw_error_ref`，不保存 raw error 正文；QA 节点后应转为 `error_summary` 并清理 raw error 引用
+- `CodingWorkflowState` 是后续 `agent_workflow/coding/` 子图的状态契约，不应被顶层 Turn Controller 扩成万能全局状态
 
 ### 6.4 summary 工作流
 
@@ -430,6 +463,20 @@ agent_workflow/
 - 统一包装并发送业务消息
 - 避免各业务模块自己拼消息结构
 - 维护 runtime event 的稳定枚举和字段构造规则
+- 为 `/messages` 和 `/messages/ws` 统一补齐 Bridge JSON 字段：
+  `bridge_event_type`、`bridge_event_version`、`bridge_payload`
+
+当前 Bridge 事件类型：
+
+- `Status_Update`：状态、节点进入、动作开始/完成/失败、终态事件
+- `Roleplay_Dialogue`：chat、quip、expression、motion 等前台表现事件
+- `Auth_Request`：`ask_user_confirmation` 等需要用户确认的授权事件
+
+约束：
+
+- 新增前端可见消息必须经过 `runtime_events.normalize_frontend_message_payload(...)`。
+- 不要在 `bridge_payload` 中放 raw error、stdout/stderr、完整代码、token 或密钥。
+- 前端 loading 仍应以 `workflow.completed` / `workflow.failed` 判断整轮结束。
 
 ## 8. 两条主调用链
 

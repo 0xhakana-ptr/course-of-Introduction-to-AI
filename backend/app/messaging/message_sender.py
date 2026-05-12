@@ -4,7 +4,11 @@ import os
 from typing import Any
 
 from .event_types import AGENT_EVENT_SOURCE, AGENT_EVENT_STAGE, AGENT_EVENT_TYPE
-from .runtime_events import build_runtime_event_fields, require_channel_for_message_type
+from .runtime_events import (
+    build_bridge_event_fields,
+    build_runtime_event_fields,
+    require_channel_for_message_type,
+)
 from ..schemas import MESSAGE_STATUS, MESSAGE_TYPE
 
 
@@ -78,6 +82,7 @@ class MessageSender:
         if metadata:
             message["metadata"] = dict(metadata)
         message.update(fields)
+        message.update(build_bridge_event_fields(message))
         return message
 
     def _send_message(self, message_type: MESSAGE_TYPE, message: dict[str, Any]) -> bool:

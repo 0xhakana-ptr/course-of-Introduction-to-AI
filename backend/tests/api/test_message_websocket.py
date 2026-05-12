@@ -17,6 +17,8 @@ def test_message_websocket_sends_initial_snapshot(client):
     assert payload["count"] == 1
     assert payload["messages"][0]["content"] == "hello"
     assert payload["messages"][0]["_channel"] == "agent:chat"
+    assert payload["messages"][0]["bridge_event_type"] == "Roleplay_Dialogue"
+    assert payload["messages"][0]["bridge_payload"]["content"] == "hello"
 
 
 def test_message_websocket_respects_since_id_and_streams_incremental_messages(client):
@@ -56,6 +58,7 @@ def test_message_websocket_respects_since_id_and_streams_incremental_messages(cl
     assert incremental_payload["count"] == 1
     assert incremental_payload["messages"][0]["_id"] == new_id
     assert incremental_payload["messages"][0]["content"] == "after"
+    assert incremental_payload["messages"][0]["bridge_event_type"] == "Roleplay_Dialogue"
 
 
 def test_message_websocket_returns_empty_snapshot_when_queue_is_empty(client):

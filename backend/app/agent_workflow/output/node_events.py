@@ -63,6 +63,47 @@ WORKFLOW_NODE_EVENTS: dict[str, WorkflowNodeEvent] = {
         quip="我整理一下结果再告诉你。",
         progress=90,
     ),
+    "coding_start_node": WorkflowNodeEvent(
+        node_name="coding_start_node",
+        quip="我开始进入代码工作流。",
+        progress=30,
+    ),
+    "pm_node": WorkflowNodeEvent(
+        node_name="pm_node",
+        quip="我先把代码任务拆清楚。",
+        progress=34,
+    ),
+    "coder_node": WorkflowNodeEvent(
+        node_name="coder_node",
+        quip="我在准备具体执行方案。",
+        progress=38,
+    ),
+    "executor_node": WorkflowNodeEvent(
+        node_name="executor_node",
+        quip="我开始调用受控工具。",
+        progress=52,
+    ),
+    "qa_node": WorkflowNodeEvent(
+        node_name="qa_node",
+        quip="我在整理失败原因，避免把原始日志暴露给前端。",
+        progress=64,
+    ),
+    "debugger_node": WorkflowNodeEvent(
+        node_name="debugger_node",
+        quip="我尝试做一次局部修复。",
+        progress=72,
+    ),
+    "coding_finish_node": WorkflowNodeEvent(
+        node_name="coding_finish_node",
+        quip="代码工作流完成，我准备收口。",
+        progress=86,
+    ),
+    "coding_failure_node": WorkflowNodeEvent(
+        node_name="coding_failure_node",
+        quip="代码工作流失败，我准备说明原因。",
+        progress=86,
+        status="error",
+    ),
 }
 
 

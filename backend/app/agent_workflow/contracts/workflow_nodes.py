@@ -27,6 +27,15 @@ WORKFLOW_NODE_METADATA: dict[str, dict[str, str]] = {
     "failure_node": {"label": "失败收口", "phase": "fallback"},
     "roleplay_node": {"label": "角色收口", "phase": "roleplay"},
     "diagnostics_preview": {"label": "诊断预览", "phase": "diagnostics"},
+    "coding_start_node": {"label": "代码工作流启动", "phase": "coding"},
+    "pm_node": {"label": "需求拆解", "phase": "coding"},
+    "coder_node": {"label": "生成执行计划", "phase": "coding"},
+    "executor_node": {"label": "受控工具执行", "phase": "tools"},
+    "qa_node": {"label": "错误摘要过滤", "phase": "coding"},
+    "debugger_node": {"label": "局部调试修复", "phase": "coding"},
+    "workspace_executor_node": {"label": "工作区工具执行", "phase": "tools"},
+    "coding_finish_node": {"label": "代码工作流完成", "phase": "coding"},
+    "coding_failure_node": {"label": "代码工作流失败", "phase": "fallback"},
 }
 
 

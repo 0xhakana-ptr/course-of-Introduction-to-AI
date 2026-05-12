@@ -1,3 +1,16 @@
+"""Top-level turn controller for one `/chat` request.
+
+This module keeps the existing LangGraph file name for import stability, but
+its architectural role is now narrower than a full coding/debugging agent
+brain. It should coordinate one user turn, choose a stable action or subflow,
+emit node/action/terminal events, and guarantee a completed or failed terminal
+status.
+
+Do not grow PM/Coder/QA/Debugger internals here. Those coding/debug loops
+belong in dedicated subgraphs, starting with `agent_workflow/coding/`, so their
+engineering state can stay isolated from roleplay and frontend state.
+"""
+
 from __future__ import annotations
 
 import re
@@ -24,6 +37,7 @@ from ...tools.workspace_tools import (
 from ..actions import default_action_registry
 from ..actions.models import AgentActionResult
 from ..contracts.workflow_results import WorkflowAgentResult, invoke_graph_with_result
+from ..coding import RUN_ACTIONS_FOR_CODING_WORKFLOW, SIMPLE_WORKSPACE_ACTIONS, run_coding_workflow
 from ..output.action_events import emit_workflow_action_event
 from ..output.completion_events import emit_workflow_terminal_status
 from ..output.node_events import emit_workflow_node_entered
@@ -86,6 +100,13 @@ WORKSPACE_ACTION_BY_TOOL_NAME = {
     WORKSPACE_TOOL_NAME_LIST: "workspace.list",
     WORKSPACE_TOOL_NAME_TEST: "workspace.test",
 }
+
+WORKSPACE_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW = set(SIMPLE_WORKSPACE_ACTIONS)
+RUN_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW = set(RUN_ACTIONS_FOR_CODING_WORKFLOW)
+AGENT_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW = (
+    WORKSPACE_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW
+    | RUN_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW
+)
 
 RUN_ACTION_TO_AGENT_ACTION = {
     RUN_ACTION_CREATE: "run.create",
@@ -699,10 +720,81 @@ def _execute_chat_reply(state: AgentLoopState) -> AgentActionResult:
     )
 
 
+def _agent_action_result_from_mapping(
+    value: object,
+    *,
+    fallback_action_name: str,
+    fallback_summary: str,
+    fallback_error: str | None,
+    coding_workflow_trace: list[dict[str, object]],
+) -> AgentActionResult:
+    payload = dict(value) if isinstance(value, dict) else {}
+    metadata = dict(payload.get("metadata")) if isinstance(payload.get("metadata"), dict) else {}
+    metadata.update(
+        {
+            "workflow_name": "coding",
+            "coding_workflow_trace": [dict(item) for item in coding_workflow_trace],
+            "coding_workflow_node_names": [
+                str(item.get("node") or "")
+                for item in coding_workflow_trace
+                if str(item.get("node") or "").strip()
+            ],
+        }
+    )
+    return AgentActionResult(
+        action_name=_normalize_text(payload.get("action_name"), default=fallback_action_name),
+        ok=bool(payload.get("ok")),
+        summary=_normalize_text(payload.get("summary"), default=fallback_summary),
+        data=payload.get("data"),
+        error=(
+            str(payload.get("error"))
+            if payload.get("error") is not None
+            else fallback_error
+        ),
+        metadata=metadata,
+    )
+
+
+def _execute_action_via_coding_workflow(state: AgentLoopState) -> AgentActionResult:
+    action_name = _normalize_text(state.get("action_name"))
+    action_input = dict(state.get("action_input") or {})
+    workflow_kwargs: dict[str, object] = {}
+    if action_name in WORKSPACE_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW:
+        workflow_kwargs.update(
+            {
+                "workspace_action_name": action_name,
+                "workspace_action_input": action_input,
+            }
+        )
+    elif action_name in RUN_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW:
+        workflow_kwargs.update(
+            {
+                "run_action_name": action_name,
+                "run_action_input": action_input,
+            }
+        )
+    result = run_coding_workflow(
+        _normalize_text(state.get("user_input")),
+        context=state.get("context"),
+        session_id=state.get("session_id"),
+        turn_id=state.get("turn_id"),
+        **workflow_kwargs,
+    )
+    return _agent_action_result_from_mapping(
+        result.action_result,
+        fallback_action_name=action_name,
+        fallback_summary=result.output,
+        fallback_error=result.error,
+        coding_workflow_trace=result.workflow_trace,
+    )
+
+
 def _execute_selected_action(state: AgentLoopState) -> AgentActionResult:
     action_name = _normalize_text(state.get("action_name"))
     if action_name == "chat.reply":
         return _execute_chat_reply(state)
+    if action_name in AGENT_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW:
+        return _execute_action_via_coding_workflow(state)
     return default_action_registry.execute(
         action_name,
         state.get("action_input") or {},

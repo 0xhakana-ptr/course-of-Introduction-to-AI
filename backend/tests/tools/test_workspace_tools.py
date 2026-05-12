@@ -222,6 +222,31 @@ def test_workspace_tool_planning_can_select_workspace_write_tool():
     assert read_workspace_text("notes/todo.txt")["content"] == "buy milk"
 
 
+def test_workspace_tool_planning_writes_non_txt_text_path():
+    plan = plan_workspace_tool("请创建 notes/todo.md，内容是# Todo")
+    result = execute_workspace_tool_plan(plan)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_WRITE
+    assert plan["tool_input"] == {
+        "rel_path": "notes/todo.md",
+        "content": "# Todo",
+        "overwrite": False,
+        "target_location": "workspace",
+    }
+    assert result["ok"] is True
+    assert read_workspace_text("notes/todo.md")["content"] == "# Todo"
+
+
+def test_workspace_tool_planning_trims_followup_from_written_content():
+    plan = plan_workspace_tool("请创建 notes/followup.txt，内容是hello，然后读出来确认")
+    result = execute_workspace_tool_plan(plan)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_WRITE
+    assert plan["tool_input"]["content"] == "hello"
+    assert result["ok"] is True
+    assert read_workspace_text("notes/followup.txt")["content"] == "hello"
+
+
 def test_workspace_tool_planning_supports_quoted_chinese_space_path():
     plan = plan_workspace_tool("请创建 `notes/中文 文件.txt`，内容是你好")
     result = execute_workspace_tool_plan(plan)

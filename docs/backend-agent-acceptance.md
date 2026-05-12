@@ -2,7 +2,7 @@
 
 副标题：桌宠 Agent 后端功能验收与排障手册 / Desktop Pet Agent Backend Acceptance and Troubleshooting Guide
 
-本文档用于开发期联调和提交前验收。目标不是覆盖所有 API 字段，而是快速判断当前后端是否符合“单 Agent Loop 主线”的项目方向。
+本文档用于开发期联调和提交前验收。目标不是覆盖所有 API 字段，而是快速判断当前后端是否符合“顶层 Turn Controller + 内部子工作流”的项目方向。
 
 ## 1. 当前验收目标
 
@@ -10,7 +10,7 @@
 
 ```text
 /chat
--> Agent Loop
+-> Turn Controller
 -> perceive
 -> plan
 -> act
@@ -22,9 +22,17 @@
 验收重点：
 
 - `/chat` 每次请求必须返回 HTTP 响应。
-- `/messages` 中每轮 Agent Loop 必须出现 `workflow.completed` 或 `workflow.failed` 终态事件。
-- 普通聊天、workspace 文件工具、run 控制、桌面导出确认都应进入同一套 Agent Loop/action/message 协议。
+- `/messages` 中每轮 Turn Controller 必须出现 `workflow.completed` 或 `workflow.failed` 终态事件。
+- 普通聊天、workspace 文件工具、run 控制、桌面导出确认都应进入同一套 Turn Controller/action/message 协议。
 - 前端不应依赖旧 route graph，也不应把 `workflow.action_completed` 当作整轮对话结束。
+
+架构验收边界：
+
+- `agent_loop_graph.py` 当前保留文件名，但定位是顶层 Turn Controller，不是完整 coding/debug agent brain。
+- 后续 PM、Coder、Tool Executor、QA、Debugger 不应继续堆在顶层 Turn Controller 中，应进入 `agent_workflow/coding/` 等内部子工作流。
+- Roleplay 和前端状态不允许包含 raw error、完整 stdout/stderr、长代码 diff 或工具内部 stack trace。
+- coding/debug 子工作流只能向前端输出简短状态、确认请求、用户可读摘要和终态事件。
+- 每轮调用无论成功、失败、等待确认，都必须有明确终态或可被前端识别的暂停状态，不能让输入框永久锁住。
 
 ## 2. 启动前检查
 
@@ -220,6 +228,9 @@ pnpm dev
 - 字幕窗口能显示 `agent:quip`。
 - 文件创建、读取、失败、确认请求都不会让输入框永久不可用。
 - 如果使用 WebSocket，`WS /messages/ws` 的消息结构应与 `GET /messages` 一致。
+- 每条前端消息应包含 Bridge JSON 字段：`bridge_event_type`、`bridge_event_version`、`bridge_payload`。
+- 前端可通过 `bridge_event_type=Status_Update` 识别节点/动作/终态状态，通过 `Roleplay_Dialogue` 识别角色台词和动作，通过 `Auth_Request` 识别确认请求。
+- coding 子图的 `pm_node`、`coder_node`、`executor_node`、`qa_node`、`debugger_node` 应在节点开头发出 `workflow.node_entered`，并在 `bridge_payload.phase` 中标明 `coding` 或 `tools`。
 
 ## 9. 常见问题排查
 
@@ -259,7 +270,27 @@ pnpm dev
 - 路径是否被正确解析，中文路径和带空格路径建议用反引号或引号包起来。
 - 读取不存在文件时，期望结果是明确失败，不是退回普通聊天。
 
-### 9.5 token 消耗异常
+### 9.5 LLM planner 没有执行工具
+
+这是预期边界：LLM planner 只负责输出严格 JSON 计划，不能直接执行工具。
+
+优先检查：
+
+- `coder_plan.planner_source` 是否为 `llm`。
+- `coder_plan.planner_result.error_kind` 是否为 `invalid_json`、`unsupported_action` 或 `invalid_action_input`。
+- `executor_action_name` 是否属于允许范围：`workspace.write`、`workspace.read`、`workspace.list`、`run.create`。
+- 如果 LLM 返回 shell、command、env、token、raw log 等字段，后端应拒绝该计划，而不是尝试执行。
+
+### 9.6 coding worker 接触了过多状态
+
+优先检查：
+
+- PM/Coder/Executor/QA/Debugger 是否通过 `coding/worker_payloads.py` 构造局部 payload。
+- Debugger payload 不应包含 `raw_error_ref`、`raw_error`、`stdout/stderr`、`workflow_trace` 或完整 `action_result`。
+- QA 可以接收 `raw_error_ref`，但不能接收 raw artifact 正文。
+- 当前 LangGraph `Send` 只作为 `CodingWorkerPayload.to_send()` 适配点保留；如果后续真正改成 Send 调度，必须先定义 state reducer，避免覆盖主 trace。
+
+### 9.7 token 消耗异常
 
 优先检查：
 

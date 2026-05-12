@@ -67,6 +67,9 @@ def test_agent_loop_graph_executes_workspace_write_action():
     assert result.run_id is None
     assert result.state["action_name"] == "workspace.write"
     assert result.state["workspace_tool_name"] == "write_workspace_text"
+    assert result.state["action_result"]["metadata"]["workflow_name"] == "coding"
+    assert "coder_node" in result.state["action_result"]["metadata"]["coding_workflow_node_names"]
+    assert "executor_node" in result.state["action_result"]["metadata"]["coding_workflow_node_names"]
     assert "已在 workspace 中创建文本文件" in result.output
     assert read_workspace_text("notes/loop.txt")["content"] == "loop ok"
 
@@ -110,6 +113,7 @@ def test_agent_loop_graph_executes_workspace_read_action():
     assert result.run_id is None
     assert result.state["action_name"] == "workspace.read"
     assert result.state["workspace_tool_name"] == "read_workspace_text"
+    assert result.state["action_result"]["metadata"]["workflow_name"] == "coding"
     assert "我读到了 `backend/app/demo.txt` 的内容" in result.output
     assert "demo content" in result.output
 
@@ -129,6 +133,7 @@ def test_agent_loop_graph_executes_workspace_list_action():
     assert result.run_id is None
     assert result.state["action_name"] == "workspace.list"
     assert result.state["workspace_tool_name"] == "list_workspace_entries"
+    assert result.state["action_result"]["metadata"]["workflow_name"] == "coding"
     assert "我列出了 `demo/nested` 下的内容" in result.output
     assert "文件: demo/nested/info.txt" in result.output
 
@@ -194,6 +199,9 @@ def test_agent_loop_graph_keeps_complex_file_request_on_run_create_path():
     assert result.run_status == "queued"
     assert result.run_action == "create"
     assert result.state["action_name"] == "run.create"
+    assert result.state["action_result"]["metadata"]["workflow_name"] == "coding"
+    assert "coder_node" in result.state["action_result"]["metadata"]["coding_workflow_node_names"]
+    assert "executor_node" in result.state["action_result"]["metadata"]["coding_workflow_node_names"]
 
 
 def test_agent_loop_graph_executes_run_inspect_action():

@@ -322,9 +322,13 @@ def _default_test_paths() -> list[str]:
 
 
 def _looks_like_text_file_write_request(prompt: str) -> bool:
-    return _contains_keyword(prompt, WORKSPACE_TOOL_WRITE_KEYWORDS) and _contains_keyword(
-        prompt,
-        WORKSPACE_TOOL_TEXT_FILE_KEYWORDS,
+    if not _contains_keyword(prompt, WORKSPACE_TOOL_WRITE_KEYWORDS):
+        return False
+    if _contains_keyword(prompt, WORKSPACE_TOOL_TEXT_FILE_KEYWORDS):
+        return True
+    return any(
+        Path(candidate).suffix
+        for candidate in _iter_prompt_path_candidates(prompt)
     )
 
 
@@ -360,10 +364,13 @@ def _target_location_from_prompt(prompt: str) -> str:
 
 
 def _first_text_file_candidate(prompt: str) -> str | None:
+    suffixed_candidate = None
     for candidate in _iter_prompt_path_candidates(prompt):
         if candidate.lower().endswith(".txt"):
             return candidate
-    return None
+        if suffixed_candidate is None and Path(candidate).suffix:
+            suffixed_candidate = candidate
+    return suffixed_candidate
 
 
 def _extract_requested_text_content(prompt: str) -> str:
@@ -374,8 +381,21 @@ def _extract_requested_text_content(prompt: str) -> str:
     for pattern in patterns:
         matched = re.search(pattern, prompt, flags=re.IGNORECASE | re.DOTALL)
         if matched is not None:
-            return matched.group(1).strip()
+            return _trim_followup_from_text_content(matched.group(1).strip())
     return ""
+
+
+def _trim_followup_from_text_content(content: str) -> str:
+    followup_pattern = re.compile(
+        r"\s*(?:，|,|。|；|;)?\s*"
+        r"(?:然后|之后|随后|再|并且|并|then)\s*"
+        r"(?:读|读取|读出来|查看|确认|列出|运行|测试|read|show|preview|list|run|test)",
+        flags=re.IGNORECASE,
+    )
+    matched = followup_pattern.search(content)
+    if matched is None:
+        return content
+    return content[: matched.start()].strip()
 
 
 def _sanitize_desktop_export_file_name(rel_path: str | None) -> str:

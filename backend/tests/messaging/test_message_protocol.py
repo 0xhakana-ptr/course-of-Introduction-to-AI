@@ -2,6 +2,7 @@ import importlib
 
 import pytest
 
+from backend.app.agent_workflow.output.action_events import emit_workflow_action_event
 from backend.app.message_queue import MessageQueue, message_queue
 from backend.app.messaging.runtime_events import CHANNEL_BY_MESSAGE_TYPE
 from backend.app.messaging.message_sender import MessageSender
@@ -30,6 +31,9 @@ def test_message_envelope_accepts_motion_message():
             "event_source": "character",
             "event_stage": "roleplay",
             "frontend_visible": True,
+            "bridge_event_type": "Roleplay_Dialogue",
+            "bridge_event_version": "1.0",
+            "bridge_payload": {"motion": "motion/@group/Idle/0"},
             "motion": "motion/@group/Idle/0",
             "node_name": "idle",
             "metadata": {"loop": False},
@@ -41,6 +45,9 @@ def test_message_envelope_accepts_motion_message():
     assert envelope.event_type == "character.motion"
     assert envelope.event_source == "character"
     assert envelope.event_stage == "roleplay"
+    assert envelope.bridge_event_type == "Roleplay_Dialogue"
+    assert envelope.bridge_event_version == "1.0"
+    assert envelope.bridge_payload["motion"] == "motion/@group/Idle/0"
     assert envelope.motion == "motion/@group/Idle/0"
 
 
@@ -60,6 +67,9 @@ def test_message_sender_queues_motion_message(monkeypatch):
     assert messages[0]["event_type"] == "character.motion"
     assert messages[0]["event_source"] == "character"
     assert messages[0]["event_stage"] == "roleplay"
+    assert messages[0]["bridge_event_type"] == "Roleplay_Dialogue"
+    assert messages[0]["bridge_event_version"] == "1.0"
+    assert messages[0]["bridge_payload"]["motion"] == "motion/@group/Idle/0"
     assert messages[0]["motion"] == "motion/@group/Idle/0"
     assert messages[0]["metadata"]["loop"] is False
 
@@ -80,6 +90,8 @@ def test_message_sender_queues_chat_message_with_top_level_node_name(monkeypatch
     assert messages[0]["event_type"] == "chat.message"
     assert messages[0]["event_source"] == "roleplay"
     assert messages[0]["event_stage"] == "roleplay"
+    assert messages[0]["bridge_event_type"] == "Roleplay_Dialogue"
+    assert messages[0]["bridge_payload"]["content"] == "hello"
     assert messages[0]["node_name"] == "agent_roleplay"
     assert messages[0]["metadata"]["node_name"] == "agent_roleplay"
 
@@ -111,6 +123,39 @@ def test_message_envelope_accepts_workflow_action_event():
     assert envelope.event_type == "workflow.action_started"
     assert envelope.event_stage == "tools"
     assert envelope.metadata["action_name"] == "workspace.write"
+
+
+def test_workflow_confirmation_action_event_outputs_bridge_auth_request(monkeypatch):
+    queue = MessageQueue()
+    message_sender_module = importlib.import_module("backend.app.messaging.message_sender")
+    monkeypatch.setattr(message_sender_module, "message_queue", queue)
+
+    ok = emit_workflow_action_event(
+        {
+            "emit_node_events": True,
+            "action_name": "ask_user_confirmation",
+            "action_input": {
+                "prompt": "是否允许写入桌面文件？",
+                "blocked_action_name": "workspace.export_desktop",
+                "blocked_action_input": {"path": "demo.txt", "content": "hello"},
+            },
+        },
+        action_status="started",
+    )
+
+    assert ok is True
+    messages = queue.get_messages()
+    assert len(messages) == 1
+    message = messages[0]
+    assert message["event_type"] == "workflow.action_started"
+    assert message["bridge_event_type"] == "Auth_Request"
+    assert message["bridge_event_version"] == "1.0"
+    assert message["metadata"]["auth_required"] is True
+    assert message["metadata"]["blocked_action_name"] == "workspace.export_desktop"
+    assert message["bridge_payload"]["auth_required"] is True
+    assert message["bridge_payload"]["prompt"] == "是否允许写入桌面文件？"
+    assert message["bridge_payload"]["blocked_action_name"] == "workspace.export_desktop"
+    assert message["bridge_payload"]["blocked_action_input"]["path"] == "demo.txt"
 
 
 @pytest.mark.parametrize(
@@ -191,6 +236,14 @@ def test_message_sender_outputs_valid_public_protocol(
     assert envelope.event_source == event_source
     assert envelope.event_stage == event_stage
     assert envelope.frontend_visible is True
+    expected_bridge_type = (
+        "Roleplay_Dialogue"
+        if message_type in {"quip", "expression", "motion", "chat"}
+        else "Status_Update"
+    )
+    assert envelope.bridge_event_type == expected_bridge_type
+    assert envelope.bridge_event_version == "1.0"
+    assert envelope.bridge_payload is not None
 
 
 def test_messages_route_exposes_motion_protocol(client):
@@ -219,5 +272,8 @@ def test_messages_route_exposes_motion_protocol(client):
     assert payload["messages"][0]["event_type"] == "character.motion"
     assert payload["messages"][0]["event_source"] == "character"
     assert payload["messages"][0]["event_stage"] == "roleplay"
+    assert payload["messages"][0]["bridge_event_type"] == "Roleplay_Dialogue"
+    assert payload["messages"][0]["bridge_event_version"] == "1.0"
+    assert payload["messages"][0]["bridge_payload"]["motion"] == "motion/@group/Idle/0"
     assert payload["messages"][0]["frontend_visible"] is True
     assert payload["messages"][0]["motion"] == "motion/@group/Idle/0"

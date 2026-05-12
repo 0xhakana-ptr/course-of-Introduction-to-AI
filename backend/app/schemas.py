@@ -1,7 +1,12 @@
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
-from .messaging.event_types import AGENT_EVENT_SOURCE, AGENT_EVENT_STAGE, AGENT_EVENT_TYPE
+from .messaging.event_types import (
+    AGENT_EVENT_SOURCE,
+    AGENT_EVENT_STAGE,
+    AGENT_EVENT_TYPE,
+    BRIDGE_EVENT_TYPE,
+)
 
 
 INTENT_TYPE = Literal["chat", "coding", "unknown"]
@@ -115,6 +120,9 @@ class MessageEnvelope(BaseModel):
     event_source: AGENT_EVENT_SOURCE | None = None
     event_stage: AGENT_EVENT_STAGE | None = None
     frontend_visible: bool | None = None
+    bridge_event_type: BRIDGE_EVENT_TYPE | None = None
+    bridge_event_version: str | None = None
+    bridge_payload: dict[str, Any] | None = None
     timestamp: str | None = None
     node_name: str | None = None
     metadata: dict[str, Any] | None = None

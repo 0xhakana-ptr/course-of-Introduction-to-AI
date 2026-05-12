@@ -63,10 +63,54 @@ def _action_event_type(action_status: str) -> AGENT_EVENT_TYPE:
     return "workflow.action_started"
 
 
+def _confirmation_metadata(
+    action_status: str,
+    *,
+    action_input: Mapping[str, object] | None = None,
+    result: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    result_data = result.get("data") if isinstance(result, Mapping) else None
+    result_metadata = result.get("metadata") if isinstance(result, Mapping) else None
+    input_map = action_input if isinstance(action_input, Mapping) else {}
+    data_map = result_data if isinstance(result_data, Mapping) else {}
+    metadata_map = result_metadata if isinstance(result_metadata, Mapping) else {}
+
+    prompt = (
+        _normalize_text(input_map.get("prompt"))
+        or _normalize_text(data_map.get("prompt"))
+        or "请确认是否继续。"
+    )
+    blocked_action_name = (
+        _normalize_text(input_map.get("blocked_action_name"))
+        or _normalize_text(data_map.get("blocked_action_name"))
+        or _normalize_text(metadata_map.get("blocked_action_name"))
+    )
+    blocked_action_input = input_map.get("blocked_action_input")
+    if blocked_action_input is None:
+        blocked_action_input = data_map.get("blocked_action_input")
+    auth_status = {
+        "started": "required",
+        "completed": "completed",
+        "failed": "failed",
+    }.get(action_status, "required")
+
+    metadata: dict[str, object] = {
+        "auth_required": True,
+        "auth_status": auth_status,
+        "confirmation_prompt": prompt,
+    }
+    if blocked_action_name:
+        metadata["blocked_action_name"] = blocked_action_name
+    if isinstance(blocked_action_input, Mapping):
+        metadata["blocked_action_input"] = dict(blocked_action_input)
+    return metadata
+
+
 def _action_event_metadata(
     action_name: str,
     *,
     action_status: str,
+    action_input: Mapping[str, object] | None = None,
     result: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     descriptor = _action_descriptor(action_name)
@@ -90,6 +134,14 @@ def _action_event_metadata(
         error = _normalize_text(result.get("error"))
         if error:
             metadata["error"] = error
+    if action_name == "ask_user_confirmation":
+        metadata.update(
+            _confirmation_metadata(
+                action_status,
+                action_input=action_input,
+                result=result,
+            )
+        )
     return metadata
 
 
@@ -111,6 +163,11 @@ def emit_workflow_action_event(
     metadata = _action_event_metadata(
         action_name,
         action_status=action_status,
+        action_input=(
+            state.get("action_input")
+            if isinstance(state.get("action_input"), Mapping)
+            else None
+        ),
         result=result,
     )
     try:

@@ -1,5 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import hljs from 'highlight.js/lib/core'
+import bash from 'highlight.js/lib/languages/bash'
+import c from 'highlight.js/lib/languages/c'
+import cpp from 'highlight.js/lib/languages/cpp'
+import css from 'highlight.js/lib/languages/css'
+import java from 'highlight.js/lib/languages/java'
+import javascript from 'highlight.js/lib/languages/javascript'
+import json from 'highlight.js/lib/languages/json'
+import markdown from 'highlight.js/lib/languages/markdown'
+import python from 'highlight.js/lib/languages/python'
+import typescript from 'highlight.js/lib/languages/typescript'
+import xml from 'highlight.js/lib/languages/xml'
+import 'highlight.js/styles/github-dark.css'
+import MarkdownIt from 'markdown-it'
+import markdownItKatex from 'markdown-it-katex'
+import 'katex/dist/katex.min.css'
 import { getIpcRenderer } from '../platform/electronIpc'
 
 type ChatLine = { role: 'user' | 'assistant' | 'system' | 'err'; text: string }
@@ -97,6 +113,56 @@ let lastStatusLogKey = ''
 let lastQuipLogAt = 0
 let lastQuipLogKey = ''
 
+hljs.registerLanguage('bash', bash)
+hljs.registerLanguage('c', c)
+hljs.registerLanguage('cpp', cpp)
+hljs.registerLanguage('css', css)
+hljs.registerLanguage('java', java)
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('json', json)
+hljs.registerLanguage('markdown', markdown)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('typescript', typescript)
+hljs.registerLanguage('xml', xml)
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+function highlightCodeBlock(code: string, language: string): string {
+  const normalizedLanguage = String(language || '').trim().toLowerCase()
+  const languageAliases: Record<string, string> = {
+    cplusplus: 'cpp',
+    js: 'javascript',
+    py: 'python',
+    shell: 'bash',
+    sh: 'bash',
+    ts: 'typescript',
+  }
+  const resolvedLanguage = languageAliases[normalizedLanguage] || normalizedLanguage
+  if (resolvedLanguage && hljs.getLanguage(resolvedLanguage)) {
+    const highlighted = hljs.highlight(code, {
+      language: resolvedLanguage,
+      ignoreIllegals: true,
+    }).value
+    return `<pre class="hljs code-block"><code>${highlighted}</code></pre>`
+  }
+  return `<pre class="hljs code-block"><code>${escapeHtml(code)}</code></pre>`
+}
+
+const markdownRenderer = new MarkdownIt({
+  breaks: true,
+  highlight: highlightCodeBlock,
+  html: false,
+  linkify: true,
+  typographer: true,
+}).use(markdownItKatex)
+
 // 存储部分消息
 const partialMessages = new Map<number, string>()
 const DESKTOP_EXPORT_TARGET_PATTERN = /(桌面|desktop)/i
@@ -124,6 +190,10 @@ function clearScreen() {
   lines.value = []
   push('system', '屏幕已清空（Ctrl+L）。')
   focusInputSoon()
+}
+
+function renderAssistantText(text: string): string {
+  return markdownRenderer.render(text || '')
 }
 
 function focusInputSoon() {
@@ -452,7 +522,12 @@ onUnmounted(() => {
 
     <div ref="outputRef" class="output" role="log" aria-live="polite">
       <div v-for="(l, i) in lines" :key="i" class="line" :class="l.role">
-        {{ l.text }}
+        <div
+          v-if="l.role === 'assistant'"
+          class="rich-message"
+          v-html="renderAssistantText(l.text)"
+        />
+        <template v-else>{{ l.text }}</template>
       </div>
     </div>
 
@@ -549,6 +624,63 @@ onUnmounted(() => {
 .line {
   line-height: 1.55;
   font-size: 12.5px;
+}
+
+.rich-message :deep(p) {
+  margin: 0 0 0.72em;
+}
+
+.rich-message :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.rich-message :deep(ul),
+.rich-message :deep(ol) {
+  margin: 0.4em 0 0.72em;
+  padding-left: 1.5em;
+}
+
+.rich-message :deep(li + li) {
+  margin-top: 0.22em;
+}
+
+.rich-message :deep(code) {
+  padding: 0.12em 0.34em;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #f3f6ff;
+}
+
+.rich-message :deep(pre) {
+  overflow: auto;
+  margin: 0.55em 0 0.75em;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.34);
+  white-space: pre;
+}
+
+.rich-message :deep(pre code) {
+  padding: 0;
+  background: transparent;
+}
+
+.rich-message :deep(blockquote) {
+  margin: 0.55em 0;
+  padding-left: 0.9em;
+  border-left: 3px solid rgba(183, 215, 255, 0.38);
+  color: rgba(234, 234, 234, 0.82);
+}
+
+.rich-message :deep(a) {
+  color: #b7d7ff;
+}
+
+.rich-message :deep(.katex-display) {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0.65em 0;
+  padding: 0.2em 0;
 }
 
 .line.user {

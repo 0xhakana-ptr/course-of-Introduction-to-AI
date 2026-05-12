@@ -14,6 +14,9 @@ def test_message_ids_are_unique_and_timestamp_is_normalized():
     assert messages[1]["_timestamp"].endswith("Z")
     assert messages[0]["_channel"] == "agent:chat"
     assert messages[1]["_channel"] == "agent:chat"
+    assert messages[0]["bridge_event_type"] == "Roleplay_Dialogue"
+    assert messages[0]["bridge_event_version"] == "1.0"
+    assert messages[0]["bridge_payload"]["content"] == "hello"
 
 
 def test_get_messages_since_id_returns_incremental_items_only():
@@ -58,3 +61,6 @@ def test_add_message_normalizes_runtime_event_fields():
     assert messages[0]["event_source"] == "run"
     assert messages[0]["event_stage"] == "run"
     assert messages[0]["frontend_visible"] is True
+    assert messages[0]["bridge_event_type"] == "Status_Update"
+    assert messages[0]["bridge_payload"]["status"] == "running"
+    assert messages[0]["bridge_payload"]["event_type"] == "run.started"

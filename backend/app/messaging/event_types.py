@@ -1,11 +1,18 @@
 from typing import Literal
 
 
+BRIDGE_EVENT_TYPE = Literal[
+    "Status_Update",
+    "Roleplay_Dialogue",
+    "Auth_Request",
+]
+
 AGENT_EVENT_TYPE = Literal[
     "workflow.trace",
     "workflow.node_entered",
     "workflow.completed",
     "workflow.failed",
+    "workflow.auth_required",
     "workflow.action_started",
     "workflow.action_completed",
     "workflow.action_failed",
