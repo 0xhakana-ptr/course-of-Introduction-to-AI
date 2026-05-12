@@ -80,3 +80,38 @@ def test_get_effective_workspace_dir_returns_project_root_when_configured():
         mock_settings.accessible_project_root = Path("/tmp/test-project")
         result = get_effective_workspace_dir()
         assert result == Path("/tmp/test-project")
+
+
+def test_check_write_permission_raises_when_project_readonly():
+    """项目只读模式下写入应抛出异常"""
+    with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+        mock_settings.accessible_project_root = Path("/tmp/test-project")
+        mock_settings.project_write_enabled = False
+
+        with pytest.raises(PermissionError) as exc_info:
+            from backend.app.tools.safe_fs import check_write_permission
+            check_write_permission()
+
+        assert "只读模式" in str(exc_info.value)
+
+
+def test_check_write_permission_passes_when_write_enabled():
+    """启用写入权限时检查通过"""
+    with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+        mock_settings.accessible_project_root = Path("/tmp/test-project")
+        mock_settings.project_write_enabled = True
+
+        from backend.app.tools.safe_fs import check_write_permission
+        # 不应抛出异常
+        check_write_permission()
+
+
+def test_check_write_permission_passes_when_no_project_root():
+    """未配置项目目录时允许写入（默认 workspace）"""
+    with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+        mock_settings.accessible_project_root = None
+        mock_settings.project_write_enabled = False
+
+        from backend.app.tools.safe_fs import check_write_permission
+        # 不应抛出异常
+        check_write_permission()

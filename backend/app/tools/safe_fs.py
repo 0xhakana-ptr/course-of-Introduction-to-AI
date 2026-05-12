@@ -65,6 +65,20 @@ def get_effective_workspace_dir() -> Path:
     return get_workspace_dir()
 
 
+def check_write_permission() -> None:
+    """检查是否有写入权限
+
+    Raises:
+        PermissionError: 项目只读模式下尝试写入
+    """
+    if settings.accessible_project_root and not settings.project_write_enabled:
+        raise PermissionError(
+            "当前项目配置为只读模式。\n"
+            "如需允许 AI 修改代码，请在 .env 中设置：\n"
+            "PROJECT_WRITE_ENABLED=true"
+        )
+
+
 def ensure_workspace_dirs() -> None:
     workspace_dir = get_workspace_dir()
     workspace_dir.mkdir(parents=True, exist_ok=True)
