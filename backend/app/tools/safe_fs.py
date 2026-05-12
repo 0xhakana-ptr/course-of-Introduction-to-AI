@@ -133,6 +133,21 @@ def _to_workspace_rel_path(target: Path) -> str:
 
 
 def safe_write_file(rel_path: str, content: str) -> str:
+    """安全写入文件到工作区
+
+    Args:
+        rel_path: 相对路径
+        content: 文件内容
+
+    Returns:
+        写入文件的绝对路径
+
+    Raises:
+        PermissionError: 无写入权限或路径在排除列表中
+    """
+    # 写入权限检查
+    check_write_permission()
+
     target = resolve_workspace_path(rel_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
