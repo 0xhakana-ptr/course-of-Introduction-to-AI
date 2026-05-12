@@ -3,6 +3,27 @@ from pathlib import Path
 from ..core.config import settings
 
 
+# 默认排除的目录
+DEFAULT_EXCLUDED_DIRS = frozenset({
+    # 版本控制
+    ".git", ".svn", ".hg",
+    # 依赖目录
+    "node_modules", "__pycache__", ".venv", "venv", "env",
+    # IDE 配置
+    ".idea", ".vscode",
+    # 构建输出
+    "dist", "build", ".next", ".nuxt", "target",
+})
+
+# 默认排除的文件
+DEFAULT_EXCLUDED_FILES = frozenset({
+    # 环境变量
+    ".env", ".env.local", ".env.development", ".env.production",
+    # 凭证文件
+    "credentials.json", "secrets.json", "secrets.yaml",
+})
+
+
 def get_workspace_dir() -> Path:
     return settings.workspace_dir.resolve()
 
