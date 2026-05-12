@@ -24,6 +24,32 @@ DEFAULT_EXCLUDED_FILES = frozenset({
 })
 
 
+def is_excluded_path(path: Path) -> bool:
+    """检查路径是否在排除列表中
+
+    Args:
+        path: 要检查的路径（Path 对象）
+
+    Returns:
+        True 表示路径被排除，False 表示允许访问
+    """
+    # 检查路径中的目录名
+    for part in path.parts:
+        if part in DEFAULT_EXCLUDED_DIRS:
+            return True
+
+    # 检查文件名
+    name = path.name
+    if name in DEFAULT_EXCLUDED_FILES:
+        return True
+
+    # 检查 .env.* 模式
+    if name.startswith(".env"):
+        return True
+
+    return False
+
+
 def get_workspace_dir() -> Path:
     return settings.workspace_dir.resolve()
 
