@@ -1,7 +1,9 @@
 import pytest
 from pathlib import Path
+from unittest.mock import patch
 
 from backend.app.tools.safe_fs import (
+    get_effective_workspace_dir,
     is_excluded_path,
     resolve_workspace_path,
     safe_list_entries,
@@ -61,3 +63,20 @@ def test_is_excluded_path_detects_excluded_files():
     # 正常文件不应被排除
     assert is_excluded_path(Path("project/config.json")) is False
     assert is_excluded_path(Path("project/src/main.py")) is False
+
+
+def test_get_effective_workspace_dir_returns_default_when_no_project_root():
+    """未配置 PROJECT_ROOT 时返回默认 workspace"""
+    with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+        mock_settings.accessible_project_root = None
+        mock_settings.workspace_dir.resolve.return_value = Path("/default/workspace")
+        result = get_effective_workspace_dir()
+        assert result == Path("/default/workspace")
+
+
+def test_get_effective_workspace_dir_returns_project_root_when_configured():
+    """配置 PROJECT_ROOT 时返回项目目录"""
+    with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+        mock_settings.accessible_project_root = Path("/tmp/test-project")
+        result = get_effective_workspace_dir()
+        assert result == Path("/tmp/test-project")

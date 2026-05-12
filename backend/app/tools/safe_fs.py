@@ -54,6 +54,17 @@ def get_workspace_dir() -> Path:
     return settings.workspace_dir.resolve()
 
 
+def get_effective_workspace_dir() -> Path:
+    """返回实际工作目录
+
+    - 配置了 PROJECT_ROOT 时返回项目目录
+    - 否则返回默认 workspace 目录
+    """
+    if settings.accessible_project_root:
+        return settings.accessible_project_root
+    return get_workspace_dir()
+
+
 def ensure_workspace_dirs() -> None:
     workspace_dir = get_workspace_dir()
     workspace_dir.mkdir(parents=True, exist_ok=True)
