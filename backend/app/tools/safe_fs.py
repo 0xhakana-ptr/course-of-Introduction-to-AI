@@ -94,14 +94,42 @@ def assert_within_workspace(target: Path) -> None:
 
 
 def resolve_workspace_path(rel_path: str) -> Path:
-    ensure_workspace_dirs()
-    target = (get_workspace_dir() / rel_path).resolve()
-    assert_within_workspace(target)
+    """解析相对路径到绝对路径（支持项目目录）
+
+    Args:
+        rel_path: 相对路径
+
+    Returns:
+        解析后的绝对路径
+
+    Raises:
+        PermissionError: 路径超出允许范围或在排除列表中
+    """
+    base_dir = get_effective_workspace_dir()
+
+    # 如果使用默认 workspace，确保目录存在
+    if not settings.accessible_project_root:
+        ensure_workspace_dirs()
+
+    target = (base_dir / rel_path).resolve()
+
+    # 安全检查：确保路径在允许范围内
+    try:
+        target.relative_to(base_dir)
+    except ValueError as exc:
+        raise PermissionError("路径超出允许访问范围") from exc
+
+    # 排除检查
+    if is_excluded_path(target):
+        raise PermissionError(
+            "该路径被安全策略排除（敏感目录或文件），不允许访问。"
+        )
+
     return target
 
 
 def _to_workspace_rel_path(target: Path) -> str:
-    return str(target.relative_to(get_workspace_dir())).replace("\\", "/")
+    return str(target.relative_to(get_effective_workspace_dir())).replace("\\", "/")
 
 
 def safe_write_file(rel_path: str, content: str) -> str:
