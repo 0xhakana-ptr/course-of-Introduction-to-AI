@@ -1,6 +1,8 @@
 import pytest
+from pathlib import Path
 
 from backend.app.tools.safe_fs import (
+    is_excluded_path,
     resolve_workspace_path,
     safe_list_entries,
     safe_list_files,
@@ -32,3 +34,30 @@ def test_safe_fs_blocks_workspace_escape():
 
     with pytest.raises(PermissionError):
         safe_write_file("../outside.txt", "blocked")
+
+
+def test_is_excluded_path_detects_excluded_dirs():
+    """测试排除目录检测"""
+    # .git 目录应被排除
+    assert is_excluded_path(Path("project/.git/config")) is True
+    assert is_excluded_path(Path("project/.git")) is True
+
+    # node_modules 应被排除
+    assert is_excluded_path(Path("project/node_modules/package/index.js")) is True
+
+    # 正常目录不应被排除
+    assert is_excluded_path(Path("project/src/main.py")) is False
+
+
+def test_is_excluded_path_detects_excluded_files():
+    """测试排除文件检测"""
+    # .env 文件应被排除
+    assert is_excluded_path(Path("project/.env")) is True
+    assert is_excluded_path(Path("project/.env.local")) is True
+
+    # credentials.json 应被排除
+    assert is_excluded_path(Path("project/credentials.json")) is True
+
+    # 正常文件不应被排除
+    assert is_excluded_path(Path("project/config.json")) is False
+    assert is_excluded_path(Path("project/src/main.py")) is False
