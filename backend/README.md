@@ -122,6 +122,23 @@ DESKTOP_EXPORT_DIR=C:\Users\<you>\Desktop\AI-Agent-Exports
 - 默认不覆盖同名文件
 - 不建议直接把整个真实桌面作为随意写入目录
 
+### 3.0.1 项目访问配置
+
+默认情况下，AI 只能访问 `backend/workspace/` 目录。如需让 AI 访问你的真实项目代码：
+
+```text
+# .env
+PROJECT_ROOT=E:/your-project
+PROJECT_WRITE_ENABLED=true
+```
+
+**安全说明：**
+
+- 未设置 `PROJECT_WRITE_ENABLED=true` 时，项目目录为只读模式
+- 敏感路径自动排除：`.git`、`.env`、`node_modules`、`__pycache__` 等
+- 敏感文件（如 `credentials.json`、`.env.local`）被保护，禁止访问
+- 排除列表位于 `backend/app/tools/safe_fs.py` 的 `DEFAULT_EXCLUDED_DIRS` 和 `DEFAULT_EXCLUDED_FILES`
+
 ### 3.1 运行测试
 
 ```powershell
