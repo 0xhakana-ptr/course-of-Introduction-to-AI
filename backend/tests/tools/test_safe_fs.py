@@ -167,3 +167,33 @@ def test_resolve_workspace_path_allows_normal_paths():
             # 正常文件路径应正常解析
             result = resolve_workspace_path("src/main.py")
             assert result.name == "main.py"
+
+
+def test_safe_write_file_blocked_when_readonly():
+    """项目只读模式下写入应被阻止"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+            mock_settings.accessible_project_root = Path(tmpdir)
+            mock_settings.project_write_enabled = False
+            mock_settings.workspace_dir = Path(tmpdir)
+
+            with pytest.raises(PermissionError) as exc_info:
+                safe_write_file("test.txt", "content")
+            assert "只读模式" in str(exc_info.value)
+
+
+def test_safe_write_file_allowed_when_write_enabled():
+    """启用写入权限时写入成功"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+            mock_settings.accessible_project_root = Path(tmpdir)
+            mock_settings.project_write_enabled = True
+            mock_settings.workspace_dir = Path(tmpdir)
+
+            result = safe_write_file("test.txt", "content")
+            assert Path(result).exists()
+            assert Path(result).read_text() == "content"
