@@ -115,3 +115,55 @@ def test_check_write_permission_passes_when_no_project_root():
         from backend.app.tools.safe_fs import check_write_permission
         # 不应抛出异常
         check_write_permission()
+
+
+def test_resolve_workspace_path_blocks_excluded_dirs():
+    """排除目录应被阻止访问"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+            mock_settings.accessible_project_root = Path(tmpdir)
+            mock_settings.workspace_dir = Path(tmpdir)  # 添加这个以避免 ensure_workspace_dirs 出错
+
+            # .git 目录应被阻止
+            with pytest.raises(PermissionError) as exc_info:
+                resolve_workspace_path(".git/config")
+            assert "排除" in str(exc_info.value)
+
+            # node_modules 应被阻止
+            with pytest.raises(PermissionError):
+                resolve_workspace_path("node_modules/package/index.js")
+
+
+def test_resolve_workspace_path_blocks_excluded_files():
+    """排除文件应被阻止访问"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+            mock_settings.accessible_project_root = Path(tmpdir)
+            mock_settings.workspace_dir = Path(tmpdir)
+
+            # .env 文件应被阻止
+            with pytest.raises(PermissionError) as exc_info:
+                resolve_workspace_path(".env")
+            assert "排除" in str(exc_info.value)
+
+            # credentials.json 应被阻止
+            with pytest.raises(PermissionError):
+                resolve_workspace_path("credentials.json")
+
+
+def test_resolve_workspace_path_allows_normal_paths():
+    """正常路径应允许访问"""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with patch("backend.app.tools.safe_fs.settings") as mock_settings:
+            mock_settings.accessible_project_root = Path(tmpdir)
+            mock_settings.workspace_dir = Path(tmpdir)
+
+            # 正常文件路径应正常解析
+            result = resolve_workspace_path("src/main.py")
+            assert result.name == "main.py"
