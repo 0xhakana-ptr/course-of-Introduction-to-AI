@@ -156,6 +156,22 @@ class Settings:
             int(max_persisted_raw) if max_persisted_raw.isdigit() else 200
         )
 
+        # 项目访问配置
+        self.accessible_project_root = self._resolve_accessible_project_root()
+        self.project_write_enabled = _read_bool_env("PROJECT_WRITE_ENABLED", default=False)
+
+    def _resolve_accessible_project_root(self) -> Path | None:
+        """解析并验证 PROJECT_ROOT 配置"""
+        raw = _read_env("PROJECT_ROOT")
+        if not raw:
+            return None
+        path = Path(raw).expanduser().resolve()
+        if not path.exists():
+            return None
+        if not path.is_dir():
+            return None
+        return path
+
     @property
     def conversation_dir(self) -> Path:
         return self.workspace_dir / self.conversation_dir_name
