@@ -7,7 +7,8 @@ from pathlib import Path
 from ...core.config import settings
 from ..safe_execute_command import safe_execute_command
 from ..safe_fs import (
-    get_workspace_dir,
+    check_write_permission,
+    get_effective_workspace_dir,
     resolve_workspace_path,
     safe_list_entries,
     safe_read_file,
@@ -70,7 +71,7 @@ def resolve_desktop_export_target(file_name: str) -> tuple[Path, Path]:
 
 
 def workspace_rel_from_target(target: Path) -> str:
-    return str(target.relative_to(get_workspace_dir())).replace("\\", "/")
+    return str(target.relative_to(get_effective_workspace_dir())).replace("\\", "/")
 
 
 def list_workspace_entries(
@@ -192,6 +193,8 @@ def move_workspace_path(
     *,
     overwrite: bool = False,
 ) -> dict[str, object]:
+    check_write_permission()
+
     normalized_source = resolve_workspace_rel_path(source_path)
     normalized_target = resolve_workspace_rel_path(target_path)
     source = resolve_workspace_path(normalized_source)
@@ -233,6 +236,8 @@ def copy_workspace_path(
     overwrite: bool = False,
     recursive: bool = False,
 ) -> dict[str, object]:
+    check_write_permission()
+
     normalized_source = resolve_workspace_rel_path(source_path)
     normalized_target = resolve_workspace_rel_path(target_path)
     source = resolve_workspace_path(normalized_source)
@@ -274,6 +279,8 @@ def delete_workspace_path(
     *,
     recursive: bool = False,
 ) -> dict[str, object]:
+    check_write_permission()
+
     normalized_path = resolve_workspace_rel_path(rel_path)
     target = resolve_workspace_path(normalized_path)
     if not target.exists():

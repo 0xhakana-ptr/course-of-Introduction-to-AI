@@ -1,4 +1,4 @@
-from ..safe_fs import get_workspace_dir, resolve_workspace_path
+from ..safe_fs import get_effective_workspace_dir, resolve_workspace_path
 from ...core.text_utils import clip_text
 
 
@@ -16,7 +16,7 @@ def normalize_positive_limit(value: int | None, *, default: int) -> int:
 def resolve_workspace_rel_path(rel_path: str | None) -> str:
     normalized = normalize_rel_path(rel_path)
     target = resolve_workspace_path(normalized)
-    return str(target.relative_to(get_workspace_dir())).replace("\\", "/")
+    return str(target.relative_to(get_effective_workspace_dir())).replace("\\", "/")
 
 
 def clip_output(text: str | None, *, limit: int) -> tuple[str, int, bool]:
