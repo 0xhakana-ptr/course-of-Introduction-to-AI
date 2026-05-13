@@ -1,7 +1,7 @@
 {
   "name": "cyber-waifu-vue",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.6.5",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {

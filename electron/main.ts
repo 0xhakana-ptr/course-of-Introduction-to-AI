@@ -33,88 +33,88 @@ const pendingCommandResponses = new Map<string, (value: Live2DCommandResponse) =
 
 // AI Agent 消息类型定义
 type QuipMessage = {
-  type: 'quip'
-  content: string
-  node_name: string
-  timestamp: string
-  event_type?: string
-  event_source?: string
-  event_stage?: string
-  metadata?: {
-    priority: 'low' | 'medium' | 'high'
-    duration?: number
-    node_label?: string
-    phase?: string
-    runtime_event?: string
-  }
+    type: 'quip'
+    content: string
+    node_name: string
+    timestamp: string
+    event_type?: string
+    event_source?: string
+    event_stage?: string
+    metadata?: {
+        priority: 'low' | 'medium' | 'high'
+        duration?: number
+        node_label?: string
+        phase?: string
+        runtime_event?: string
+    }
 }
 
 type ExpressionMessage = {
-  type: 'expression'
-  expression: string
-  intensity?: number
-  node_name: string
-  timestamp: string
-  metadata?: {
-    duration?: number
-    transition?: 'smooth' | 'instant'
-  }
+    type: 'expression'
+    expression: string
+    intensity?: number
+    node_name: string
+    timestamp: string
+    metadata?: {
+        duration?: number
+        transition?: 'smooth' | 'instant'
+    }
 }
 
 type ChatMessage = {
-  type: 'chat'
-  role: 'user' | 'assistant' | 'system'
-  content: string
-  timestamp: string
-  metadata?: {
-    is_partial: boolean
-    sequence_id?: number
-    total_parts?: number
-    node_name?: string
-  }
+    type: 'chat'
+    role: 'user' | 'assistant' | 'system'
+    content: string
+    timestamp: string
+    metadata?: {
+        is_partial: boolean
+        sequence_id?: number
+        total_parts?: number
+        node_name?: string
+    }
 }
 
 type ErrorMessage = {
-  type: 'error'
-  code: string
-  message: string
-  details?: any
-  timestamp: string
-  node_name?: string
+    type: 'error'
+    code: string
+    message: string
+    details?: any
+    timestamp: string
+    node_name?: string
 }
 
 type StatusUpdate = {
-  type: 'status'
-  status: 'idle' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
-  progress?: number
-  node_name?: string
-  timestamp: string
-  event_type?: string
-  event_source?: string
-  event_stage?: string
-  metadata?: {
-    node_label?: string
-    phase?: string
-    runtime_event?: string
-    action_name?: string
-    action_label?: string
-    action_status?: 'started' | 'completed' | 'failed'
-    action_category?: string
-    safety_level?: string
-    requires_confirmation?: boolean
-  }
+    type: 'status'
+    status: 'idle' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
+    progress?: number
+    node_name?: string
+    timestamp: string
+    event_type?: string
+    event_source?: string
+    event_stage?: string
+    metadata?: {
+        node_label?: string
+        phase?: string
+        runtime_event?: string
+        action_name?: string
+        action_label?: string
+        action_status?: 'started' | 'completed' | 'failed'
+        action_category?: string
+        safety_level?: string
+        requires_confirmation?: boolean
+    }
 }
 
 type AgentMessage = QuipMessage | ExpressionMessage | ChatMessage | ErrorMessage | StatusUpdate
 type AgentMessageEnvelope = AgentMessage & {
-  _id?: string
-  _channel?: string
-  _timestamp?: string
+    _id?: string
+    _channel?: string
+    _timestamp?: string
 }
 type BackendMessagesResponse = {
-  ok?: boolean
-  messages?: unknown[]
-  count?: number
+    ok?: boolean
+    messages?: unknown[]
+    count?: number
 }
 
 type Live2DApiRequest =
@@ -309,16 +309,22 @@ function createWindow() {
     if (!app.isPackaged) {
         const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
         void mainWindow.loadURL(devServerUrl)
-        mainWindow.webContents.openDevTools({ mode: 'detach' })
         return
     }
 
     void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
 }
 
+function showAndFocus(win: BrowserWindow) {
+    if (win.isDestroyed()) return
+    if (!win.isVisible()) win.show()
+    if (win.isMinimized()) win.restore()
+    win.focus()
+}
+
 function createConsoleWindow() {
     if (consoleWindow && !consoleWindow.isDestroyed()) {
-        consoleWindow.focus()
+        showAndFocus(consoleWindow)
         return
     }
 
@@ -357,7 +363,7 @@ function createConsoleWindow() {
 
 function createQuipWindow() {
     if (quipWindow && !quipWindow.isDestroyed()) {
-        quipWindow.focus()
+        showAndFocus(quipWindow)
         return
     }
 
@@ -398,7 +404,7 @@ function createQuipWindow() {
 
 function createChatWindow() {
     if (chatWindow && !chatWindow.isDestroyed()) {
-        chatWindow.focus()
+        showAndFocus(chatWindow)
         return
     }
 
@@ -434,6 +440,49 @@ function createChatWindow() {
         query: { mode: 'chat' },
     })
 }
+
+ipcMain.on('ui:openConsole', () => {
+    createConsoleWindow()
+})
+
+ipcMain.on('ui:openChat', () => {
+    createChatWindow()
+})
+
+ipcMain.on('ui:toggleConsole', () => {
+    if (consoleWindow && !consoleWindow.isDestroyed()) {
+        if (consoleWindow.isVisible() && !consoleWindow.isMinimized()) {
+            consoleWindow.hide()
+        } else {
+            showAndFocus(consoleWindow)
+        }
+        return
+    }
+
+    createConsoleWindow()
+})
+
+ipcMain.on('ui:toggleChat', () => {
+    if (chatWindow && !chatWindow.isDestroyed()) {
+        if (chatWindow.isVisible() && !chatWindow.isMinimized()) {
+            chatWindow.hide()
+        } else {
+            showAndFocus(chatWindow)
+        }
+        return
+    }
+
+    createChatWindow()
+})
+
+ipcMain.on('ui:toggleDevTools', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.webContents.isDevToolsOpened()) {
+        mainWindow.webContents.closeDevTools()
+    } else {
+        mainWindow.webContents.openDevTools({ mode: 'detach' })
+    }
+})
 
 // 🌟 核心：监听来自 Vue 前端的退出信号 
 ipcMain.on('close-app', () => {
@@ -967,13 +1016,28 @@ type ManualResizeState = {
     lastBoundsKey: string
 }
 
+type ManualDragState = {
+    startBounds: Electron.Rectangle
+    startCursor: { x: number; y: number }
+    timer: NodeJS.Timeout
+    lastBoundsKey: string
+}
+
 const manualResizeStateByWinId = new Map<number, ManualResizeState>()
+const manualDragStateByWinId = new Map<number, ManualDragState>()
 
 function stopManualResizeByWinId(winId: number) {
     const st = manualResizeStateByWinId.get(winId)
     if (!st) return
     clearInterval(st.timer)
     manualResizeStateByWinId.delete(winId)
+}
+
+function stopManualDragByWinId(winId: number) {
+    const st = manualDragStateByWinId.get(winId)
+    if (!st) return
+    clearInterval(st.timer)
+    manualDragStateByWinId.delete(winId)
 }
 
 function computeResizedBounds(
@@ -1081,4 +1145,60 @@ ipcMain.on('window:manualResizeEnd', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed()) return
     stopManualResizeByWinId(win.id)
+})
+
+ipcMain.on('window:manualDragStart', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+
+    // Ensure only one manual operation runs at a time.
+    stopManualResizeByWinId(win.id)
+    stopManualDragByWinId(win.id)
+
+    const startBounds = win.getBounds()
+    const startCursor = screen.getCursorScreenPoint()
+
+    // Ensure dragging remains interactive even if renderer hover state flips.
+    try {
+        win.setIgnoreMouseEvents(false)
+    } catch {
+        // ignore
+    }
+
+    const timer = setInterval(() => {
+        if (win.isDestroyed()) {
+            stopManualDragByWinId(win.id)
+            return
+        }
+
+        const p = screen.getCursorScreenPoint()
+        const dx = p.x - startCursor.x
+        const dy = p.y - startCursor.y
+        const next = {
+            x: Math.round(startBounds.x + dx),
+            y: Math.round(startBounds.y + dy),
+            width: startBounds.width,
+            height: startBounds.height,
+        }
+
+        const key = `${next.x},${next.y},${next.width},${next.height}`
+        const st = manualDragStateByWinId.get(win.id)
+        if (st && st.lastBoundsKey === key) return
+        if (st) st.lastBoundsKey = key
+
+        win.setBounds(next)
+    }, 16)
+
+    manualDragStateByWinId.set(win.id, {
+        startBounds,
+        startCursor,
+        timer,
+        lastBoundsKey: `${startBounds.x},${startBounds.y},${startBounds.width},${startBounds.height}`,
+    })
+})
+
+ipcMain.on('window:manualDragEnd', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    stopManualDragByWinId(win.id)
 })

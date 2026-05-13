@@ -109,11 +109,21 @@ function showAgentQuipMessage(message: AgentQuipMessage) {
 const isHoveringWindow = ref(false)
 const isCtrlHeld = ref(false)
 const isManualResizing = ref(false)
+const isManualDragging = ref(false)
 const shouldFade = computed(
-  () => isHoveringWindow.value && !isCtrlHeld.value && !isCliMode.value && !isChatMode.value && !isManualResizing.value,
+  () =>
+    isHoveringWindow.value &&
+    !isCtrlHeld.value &&
+    !isCliMode.value &&
+    !isChatMode.value &&
+    !isManualResizing.value &&
+    !isManualDragging.value,
 )
 const isInteractive = computed(() => isHoveringWindow.value && isCtrlHeld.value && !isCliMode.value && !isChatMode.value)
 const showCtrlResizeHint = computed(() => (isInteractive.value || isManualResizing.value) && isMainLive2DMode.value)
+const showCtrlTopButtons = computed(
+  () => isMainLive2DMode.value && isHoveringWindow.value && isCtrlHeld.value && !isManualResizing.value,
+)
 let lastIgnoreMouseEvents: boolean | null = null
 
 let cursorPollTimer: number | null = null
@@ -685,6 +695,18 @@ function minimizeSelf() {
   ipcRenderer?.send('quip:minimize')
 }
 
+function openLive2DConsole() {
+  ipcRenderer?.send('ui:toggleConsole')
+}
+
+function openAIChat() {
+  ipcRenderer?.send('ui:toggleChat')
+}
+
+function toggleDevTools() {
+  ipcRenderer?.send('ui:toggleDevTools')
+}
+
 function setWindowClickThrough(ignore: boolean) {
   if (!ipcRenderer?.send) return
   if (lastIgnoreMouseEvents === ignore) return
@@ -722,6 +744,45 @@ function startManualResize(dir: ManualResizeDir, e: PointerEvent) {
   }
 
   ipcRenderer.send('window:manualResizeStart', { dir })
+}
+
+function startManualDrag(e: PointerEvent) {
+  if (!ipcRenderer?.send) return
+  if (!isInteractive.value) return
+  if (isManualResizing.value) return
+  e.preventDefault()
+  e.stopPropagation()
+
+  isManualDragging.value = true
+  syncPassthroughState()
+
+  try {
+    ;(e.currentTarget as any)?.setPointerCapture?.(e.pointerId)
+  } catch {
+    // ignore
+  }
+
+  ipcRenderer.send('window:manualDragStart')
+}
+
+function stopManualDrag(e?: PointerEvent) {
+  if (!ipcRenderer?.send) return
+  if (!isManualDragging.value) return
+
+  e?.preventDefault?.()
+  e?.stopPropagation?.()
+
+  try {
+    if (typeof e?.pointerId === 'number') {
+      ;(e?.currentTarget as any)?.releasePointerCapture?.(e.pointerId)
+    }
+  } catch {
+    // ignore
+  }
+
+  ipcRenderer.send('window:manualDragEnd')
+  isManualDragging.value = false
+  syncPassthroughState()
 }
 
 function stopManualResize(e?: PointerEvent) {
@@ -1439,10 +1500,33 @@ onMounted(async () => {
     rootEl.addEventListener('pointermove', onMove)
     rootEl.addEventListener('pointerleave', onLeave)
 
+    // Safety: if the drag-zone is unmounted (e.g. Ctrl released) or focus changes,
+    // ensure we always stop manual operations so the window won't "stick" to cursor.
+    const onGlobalPointerUp = (e: PointerEvent) => {
+      stopManualDrag(e)
+      stopManualResize(e)
+    }
+    const onGlobalPointerCancel = (e: PointerEvent) => {
+      stopManualDrag(e)
+      stopManualResize(e)
+    }
+    const onGlobalBlur = () => {
+      stopManualDrag()
+      stopManualResize()
+    }
+
+    window.addEventListener('pointerup', onGlobalPointerUp, true)
+    window.addEventListener('pointercancel', onGlobalPointerCancel, true)
+    window.addEventListener('blur', onGlobalBlur)
+
     onBeforeUnmount(() => {
       rootEl.removeEventListener('pointerenter', onEnter)
       rootEl.removeEventListener('pointermove', onMove)
       rootEl.removeEventListener('pointerleave', onLeave)
+
+      window.removeEventListener('pointerup', onGlobalPointerUp, true)
+      window.removeEventListener('pointercancel', onGlobalPointerCancel, true)
+      window.removeEventListener('blur', onGlobalBlur)
     })
 
     // Start polling immediately as a reliable fallback.
@@ -1751,6 +1835,35 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
       <div class="corner-hint corner-hint-right" aria-hidden="true" />
     </template>
 
+    <div v-if="ipcRenderer && showCtrlTopButtons" class="ctrl-top-buttons" style="-webkit-app-region: no-drag">
+      <button class="ctrl-round" type="button" title="打开 Live2D 控制台" @click="openLive2DConsole">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="ctrl-icon">
+          <path
+            fill="currentColor"
+            d="M4 6.25A3.25 3.25 0 0 1 7.25 3h9.5A3.25 3.25 0 0 1 20 6.25v11.5A3.25 3.25 0 0 1 16.75 21h-9.5A3.25 3.25 0 0 1 4 17.75V6.25Zm3.25-.75a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h9.5a.75.75 0 0 0 .75-.75V6.25a.75.75 0 0 0-.75-.75h-9.5Zm1.08 4.03a1 1 0 0 1 1.41-.1l2.24 1.86a1 1 0 0 1 0 1.54l-2.24 1.86a1 1 0 1 1-1.28-1.54l1.31-1.09-1.31-1.09a1 1 0 0 1-.13-1.41ZM13.3 15.25a1 1 0 0 1 1-1h2.55a1 1 0 1 1 0 2H14.3a1 1 0 0 1-1-1Z"
+          />
+        </svg>
+      </button>
+
+      <button class="ctrl-round" type="button" title="打开 AI Chat" @click="openAIChat">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="ctrl-icon">
+          <path
+            fill="currentColor"
+            d="M6.5 4A4.5 4.5 0 0 0 2 8.5v4A4.5 4.5 0 0 0 6.5 17H7v2.2c0 .72.84 1.12 1.4.66L11 17h6.5A4.5 4.5 0 0 0 22 12.5v-4A4.5 4.5 0 0 0 17.5 4h-11Zm-2 4.5A2.5 2.5 0 0 1 7 6h11a2.5 2.5 0 0 1 2.5 2.5v4A2.5 2.5 0 0 1 18 15h-7.5a1 1 0 0 0-.64.23L9 15.95V16a1 1 0 0 1-1 1H6.5A2.5 2.5 0 0 1 4 14.5v-6Z"
+          />
+        </svg>
+      </button>
+
+      <button class="ctrl-round" type="button" title="打开/关闭 DevTools" @click="toggleDevTools">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="ctrl-icon">
+          <path
+            fill="currentColor"
+            d="M20.7 11.3a1 1 0 0 1 0 1.4l-4.3 4.3a1 1 0 0 1-1.4-1.4l.55-.55-1.65-1.65-2.5 2.5a1 1 0 0 1-.7.29H7a1 1 0 0 1-.7-.29l-3-3a1 1 0 0 1 0-1.4l4.3-4.3a1 1 0 1 1 1.4 1.4l-.55.55 1.65 1.65 2.5-2.5A1 1 0 0 1 14.1 7H17a1 1 0 0 1 .7.29l3 3ZM16.6 9h-2.1l-2.3 2.3a1 1 0 0 1-1.4 0L8 8.5 6.5 10l2.8 2.8a1 1 0 0 1 0 1.4L7.5 16H9.9l2.6-2.6a1 1 0 0 1 1.4 0l2.4 2.4 1.5-1.5-2.8-2.8a1 1 0 0 1 0-1.4L16.6 9Z"
+          />
+        </svg>
+      </button>
+    </div>
+
     <AgentChat v-if="isChatMode" />
 
     <template v-if="isQuipMode">
@@ -1793,7 +1906,14 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
         <canvas ref="canvasRef" class="stage" />
 
         <!-- Drag only in the middle 75% area while interactive (Ctrl held). -->
-        <div v-if="ipcRenderer && isInteractive && !isManualResizing" class="drag-zone" aria-hidden="true" />
+        <div
+          v-if="ipcRenderer && (isInteractive || isManualDragging) && !isManualResizing"
+          class="drag-zone"
+          aria-hidden="true"
+          @pointerdown="startManualDrag"
+          @pointerup="stopManualDrag"
+          @pointercancel="stopManualDrag"
+        />
 
         <!-- Larger manual resize hit areas (Windows frameless + transparent makes native border hard to grab). -->
         <template v-if="ipcRenderer && (isInteractive || isManualResizing)">
@@ -1841,8 +1961,8 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
   height: 75%;
   z-index: 997;
   background: transparent;
-  -webkit-app-region: drag;
   user-select: none;
+  cursor: move;
 }
 
 
@@ -1868,6 +1988,47 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
   border-right: 3px solid rgba(255, 255, 255, 0.85);
   border-top: 3px solid rgba(255, 255, 255, 0.85);
   border-top-right-radius: 4px;
+}
+
+.ctrl-top-buttons {
+  position: absolute;
+  top: 44px;
+  left: 10px;
+  z-index: 1004;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.ctrl-round {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.ctrl-round:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.26);
+}
+
+.ctrl-round:active {
+  transform: translateY(1px);
+}
+
+.ctrl-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .titlebar {
