@@ -520,12 +520,20 @@ agent_workflow/
 
 职责：
 
-- 管理 workspace 边界
+- 管理 workspace / 真实项目访问边界
 - 阻止危险命令
 - 为 Agent 或 run 提供受限本地工具
 - 解析受控文件任务，包括 read/write/list/move/copy/delete/search/test 和多行内容写入
 
 所有涉及本地文件和命令的高风险能力，应优先落在这里统一约束。
+
+真实项目访问边界：
+
+- 默认只使用 `backend/workspace/`，不会访问用户真实项目。
+- `PROJECT_ROOT` 配置后，`safe_fs.py` 会把文件工具根目录切到该真实项目目录。
+- `PROJECT_WRITE_ENABLED=false` 时真实项目为只读；写入必须显式设置 `PROJECT_WRITE_ENABLED=true`。
+- `.git`、`.env*`、`node_modules`、`__pycache__`、`.venv`、`dist`、`build` 等路径由 `safe_fs.py` 统一拒绝。
+- 新增文件工具或 Agent 文件动作时，必须继续走 `resolve_workspace_path()`、`safe_read_file()`、`safe_write_file()` 等安全入口，不要直接使用 `Path(...).read_text()` 或 `write_text()` 访问用户项目。
 
 文件写入约束：
 

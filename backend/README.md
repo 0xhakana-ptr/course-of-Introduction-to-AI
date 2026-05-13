@@ -122,6 +122,23 @@ DESKTOP_EXPORT_DIR=C:\Users\<you>\Desktop\AI-Agent-Exports
 - 默认不覆盖同名文件
 - 不建议直接把整个真实桌面作为随意写入目录
 
+### 3.0.1 可选：真实项目访问
+
+默认情况下，文件工具仍只访问 `backend/workspace/`。如果需要让桌宠读取真实项目代码，可以在 `backend/.env` 中配置项目根目录：
+
+```text
+PROJECT_ROOT=D:\Code\your-project
+PROJECT_WRITE_ENABLED=false
+```
+
+说明：
+
+- `PROJECT_ROOT` 为空时使用默认 `backend/workspace/`
+- `PROJECT_WRITE_ENABLED=false` 是默认值，真实项目目录只读
+- 只有设置 `PROJECT_WRITE_ENABLED=true` 后，文件工具才允许写入真实项目目录
+- `.git`、`.env*`、`node_modules`、`__pycache__`、`.venv`、`dist`、`build` 等敏感或生成路径会被安全层拒绝访问
+- 即使开启真实项目写入，Agent 层仍应保留高风险文件操作确认，不应绕过 `app/tools/safe_fs.py`
+
 ### 3.1 运行测试
 
 ```powershell
