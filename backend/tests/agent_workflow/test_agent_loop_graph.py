@@ -98,6 +98,113 @@ def test_agent_loop_graph_executes_workspace_write_then_read_multistep():
     assert "hello multi" in result.output
 
 
+def test_agent_loop_graph_resolves_recent_created_file_reference():
+    session_id = "file-context-session"
+    create_result = run_agent_loop(
+        "请创建 notes/context-memory.txt，内容是remember me",
+        None,
+        session_id=session_id,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+    read_result = run_agent_loop(
+        "请读取刚才创建的文件",
+        None,
+        session_id=session_id,
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert create_result.ok is True
+    assert create_result.state["file_context"]["last_created_file"] == "notes/context-memory.txt"
+    assert read_result.ok is True
+    assert read_result.intent == "coding"
+    assert read_result.state["action_name"] == "workspace.read"
+    assert read_result.state["action_input"]["rel_path"] == "notes/context-memory.txt"
+    assert "remember me" in read_result.output
+
+
+def test_agent_loop_graph_copies_recent_file_without_explicit_target():
+    session_id = "file-copy-session"
+    create_result = run_agent_loop(
+        "请创建 notes/context-copy.txt，内容是copy me",
+        None,
+        session_id=session_id,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+    copy_result = run_agent_loop(
+        "把刚才那个文件复制一份",
+        None,
+        session_id=session_id,
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert create_result.ok is True
+    assert copy_result.ok is True
+    assert copy_result.intent == "coding"
+    assert copy_result.state["action_name"] == "workspace.copy"
+    assert copy_result.state["action_input"]["source_path"] == "notes/context-copy.txt"
+    assert copy_result.state["action_input"]["target_path"] == "notes/context-copy-copy.txt"
+    assert read_workspace_text("notes/context-copy-copy.txt")["content"] == "copy me"
+
+
+def test_agent_loop_graph_deletes_first_recent_search_result_reference():
+    session_id = "file-search-context-session"
+    safe_write_file("notes/context-search/a.txt", "hello search context")
+    safe_write_file("notes/context-search/b.txt", "other content")
+
+    search_result = run_agent_loop(
+        "请在 notes/context-search 下搜索 hello",
+        None,
+        session_id=session_id,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+    delete_result = run_agent_loop(
+        "确认删除刚才搜索到的文件",
+        None,
+        session_id=session_id,
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+
+    assert search_result.ok is True
+    assert search_result.state["file_context"]["last_search_results"][0]["path"] == "notes/context-search/a.txt"
+    assert delete_result.ok is True
+    assert delete_result.intent == "coding"
+    assert delete_result.state["action_name"] == "workspace.delete"
+    assert delete_result.state["action_input"]["rel_path"] == "notes/context-search/a.txt"
+    assert delete_result.state["file_context"]["last_deleted_file"] == "notes/context-search/a.txt"
+
+
+def test_agent_loop_graph_searches_then_copies_first_result_in_one_turn():
+    safe_write_file("notes/search-copy/source.txt", "hello queued copy")
+    safe_write_file("notes/search-copy/other.txt", "other")
+
+    result = run_agent_loop(
+        "请查找 notes/search-copy 下包含 hello 的文件，然后把第一个结果复制到 notes/search-copy/backup.txt",
+        None,
+        intent="coding",
+        emit_chat_message=False,
+        emit_node_events=False,
+    )
+    action_names = [step["action"]["name"] for step in result.runtime_steps]
+
+    assert result.ok is True
+    assert result.state["step_count"] == 2
+    assert result.state["action_name"] == "workspace.copy"
+    assert result.state["action_input"]["source_path"] == "notes/search-copy/source.txt"
+    assert result.state["action_input"]["target_path"] == "notes/search-copy/backup.txt"
+    assert "workspace.search" in action_names
+    assert "workspace.copy" in action_names
+    assert read_workspace_text("notes/search-copy/backup.txt")["content"] == "hello queued copy"
+
+
 def test_agent_loop_graph_executes_workspace_read_action():
     safe_write_file("backend/app/demo.txt", "demo content")
 

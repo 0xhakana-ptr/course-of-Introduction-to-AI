@@ -26,6 +26,8 @@ MESSAGE_CHANNEL = Literal[
 ]
 MESSAGE_ROLE = Literal["user", "assistant", "system"]
 MESSAGE_STATUS = Literal["idle", "running", "paused", "done", "error", "cancelled"]
+MESSAGE_CONTENT_TYPE = Literal["plain_text", "markdown"]
+MESSAGE_RENDER_MODE = Literal["plain_text", "rich_text"]
 EXPRESSION_MODE = Literal["set", "add"]
 WORKSPACE_TOOL_CATEGORY = Literal["context", "execution"]
 WORKSPACE_TOOL_OUTPUT_KIND = Literal[
@@ -34,6 +36,8 @@ WORKSPACE_TOOL_OUTPUT_KIND = Literal[
     "file_preview",
     "command_result",
     "file_write",
+    "file_operation",
+    "text_search",
 ]
 WORKSPACE_TOOL_ERROR_CODE = Literal[
     "WORKSPACE_TOOL_UNREGISTERED",
@@ -59,6 +63,8 @@ class ChatResponse(BaseModel):
     runtime_mode: str | None = None
     route_scope: AGENT_ROUTE_SCOPE | None = None
     runtime_warning: str | None = None
+    content_type: MESSAGE_CONTENT_TYPE = "markdown"
+    render_mode: MESSAGE_RENDER_MODE = "rich_text"
 
 
 class ClearConversationResponse(BaseModel):
@@ -127,6 +133,8 @@ class MessageEnvelope(BaseModel):
     node_name: str | None = None
     metadata: dict[str, Any] | None = None
     content: str | None = None
+    content_type: MESSAGE_CONTENT_TYPE | None = None
+    render_mode: MESSAGE_RENDER_MODE | None = None
     role: MESSAGE_ROLE | None = None
     expression: str | None = None
     motion: str | None = None

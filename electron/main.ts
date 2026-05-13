@@ -485,6 +485,8 @@ type AgentChatResponse = {
     output: string
     error?: string
     run_id?: string | null
+    content_type?: 'plain_text' | 'markdown'
+    render_mode?: 'plain_text' | 'rich_text'
 }
 
 async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse> {
@@ -513,7 +515,9 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
                 const ok = typeof json?.ok === 'boolean' ? json.ok : true
                 const error = typeof json?.error === 'string' ? json.error : undefined
                 const runId = typeof json?.run_id === 'string' ? json.run_id : null
-                return { ok, output: out || text, error, run_id: runId }
+                const contentType = json?.content_type === 'plain_text' ? 'plain_text' : json?.content_type === 'markdown' ? 'markdown' : undefined
+                const renderMode = json?.render_mode === 'plain_text' ? 'plain_text' : json?.render_mode === 'rich_text' ? 'rich_text' : undefined
+                return { ok, output: out || text, error, run_id: runId, content_type: contentType, render_mode: renderMode }
             } catch {
                 return { ok: true, output: text }
             }

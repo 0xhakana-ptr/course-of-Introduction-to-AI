@@ -3,9 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from ...tools.workspace_tools import (
+    WORKSPACE_TOOL_NAME_COPY,
+    WORKSPACE_TOOL_NAME_DELETE,
     WORKSPACE_TOOL_NAME_LIST,
+    WORKSPACE_TOOL_NAME_MOVE,
     WORKSPACE_TOOL_NAME_OVERVIEW,
     WORKSPACE_TOOL_NAME_READ,
+    WORKSPACE_TOOL_NAME_SEARCH,
     WORKSPACE_TOOL_NAME_TEST,
     WORKSPACE_TOOL_NAME_WRITE,
     build_workspace_tool_user_output,
@@ -23,6 +27,10 @@ WORKSPACE_ACTION_TOOL_MAP: dict[str, str] = {
     "workspace.list": WORKSPACE_TOOL_NAME_LIST,
     "workspace.test": WORKSPACE_TOOL_NAME_TEST,
     "workspace.export_desktop": WORKSPACE_TOOL_NAME_WRITE,
+    "workspace.move": WORKSPACE_TOOL_NAME_MOVE,
+    "workspace.copy": WORKSPACE_TOOL_NAME_COPY,
+    "workspace.delete": WORKSPACE_TOOL_NAME_DELETE,
+    "workspace.search": WORKSPACE_TOOL_NAME_SEARCH,
 }
 
 
@@ -38,8 +46,16 @@ def _descriptor_for_workspace_action(
     )
     input_keys = tuple(tool_descriptor.input_keys) if tool_descriptor else ()
     output_keys = ("summary", "data", "error")
-    safety_level = "medium" if tool_name in {WORKSPACE_TOOL_NAME_WRITE, WORKSPACE_TOOL_NAME_TEST} else "low"
-    if action_name == "workspace.export_desktop" or tool_name == WORKSPACE_TOOL_NAME_TEST:
+    safety_level = "medium" if tool_name in {
+        WORKSPACE_TOOL_NAME_WRITE,
+        WORKSPACE_TOOL_NAME_TEST,
+        WORKSPACE_TOOL_NAME_MOVE,
+        WORKSPACE_TOOL_NAME_COPY,
+    } else "low"
+    if action_name == "workspace.export_desktop" or tool_name in {
+        WORKSPACE_TOOL_NAME_TEST,
+        WORKSPACE_TOOL_NAME_DELETE,
+    }:
         safety_level = "high"
     return AgentActionDescriptor(
         name=action_name,
@@ -94,6 +110,10 @@ def list_workspace_action_definitions() -> list[AgentActionDefinition]:
         "workspace.list": "列出工作区目录",
         "workspace.test": "运行工作区测试",
         "workspace.export_desktop": "导出文本到桌面目录",
+        "workspace.move": "移动或重命名工作区路径",
+        "workspace.copy": "复制工作区路径",
+        "workspace.delete": "删除工作区路径",
+        "workspace.search": "搜索工作区文本",
     }
     definitions: list[AgentActionDefinition] = []
     for action_name, tool_name in WORKSPACE_ACTION_TOOL_MAP.items():
@@ -106,6 +126,7 @@ def list_workspace_action_definitions() -> list[AgentActionDefinition]:
                     requires_confirmation=action_name in {
                         "workspace.export_desktop",
                         "workspace.test",
+                        "workspace.delete",
                     },
                 ),
                 executor=lambda action_input, action_name=action_name, tool_name=tool_name: _execute_workspace_action(

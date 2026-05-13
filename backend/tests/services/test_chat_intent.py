@@ -45,6 +45,14 @@ def test_detect_intent_returns_coding_for_directory_listing_prompt():
     assert detect_intent("请列出 notes/listed 目录结构") == "coding"
 
 
+def test_detect_intent_returns_coding_for_workspace_file_search_prompt():
+    assert detect_intent("请查找 notes/file-flow 下包含 hello 的文件") == "coding"
+
+
+def test_detect_intent_returns_coding_for_workspace_file_delete_prompt():
+    assert detect_intent("请删除 notes/delete-flow/remove.txt") == "coding"
+
+
 def test_detect_intent_returns_coding_for_demo_build_prompt():
     assert detect_intent("请实现一个简单的计算器 demo") == "coding"
 

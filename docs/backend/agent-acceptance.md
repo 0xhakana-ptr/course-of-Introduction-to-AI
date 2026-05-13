@@ -115,6 +115,62 @@ Invoke-RestMethod http://127.0.0.1:8000/messages
 - 消息流中应出现 `workflow.action_started` 与 `workflow.action_completed`。
 - 最终仍应出现 `workflow.completed`。
 
+文件上下文验收：
+
+```powershell
+$sessionId = "manual-file-context"
+$body = @{ prompt = '请创建 notes/context-demo.txt，内容是remember me'; context = $null; session_id = $sessionId } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/chat -ContentType "application/json" -Body $body
+$body = @{ prompt = '请读取刚才创建的文件'; context = $null; session_id = $sessionId } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/chat -ContentType "application/json" -Body $body
+```
+
+合格标准：
+
+- 第二轮不需要再次写明路径，也应解析到 `notes/context-demo.txt`。
+- 同一 `session_id` 下应支持“刚才创建的文件”“刚才那个文件”“刚才搜索到的文件”等指代。
+- 删除、桌面导出、测试等高风险动作仍应保留确认逻辑，不能因为有文件上下文而绕过安全门。
+
+多行内容验收：
+
+```powershell
+$prompt = @'
+请创建 notes/rich.md，内容如下：
+# Title
+
+$$
+\int \frac{1}{x} \, dx = \ln|x| + C
+$$
+
+```python
+print("hello")
+```
+
+然后读出来确认
+'@
+$body = @{ prompt = $prompt; context = $null } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/chat -ContentType "application/json" -Body $body
+```
+
+合格标准：
+
+- Markdown、代码块、LaTeX block 应写入文件正文。
+- “然后读出来确认”不应被写入文件正文。
+- 写入 `.py/.js/.cpp/.sh/.json/.yaml` 等代码文件时，如果用户只提供一个最外层 fenced code block，后端应剥离外层代码围栏，只写入代码正文。
+
+搜索结果多步验收：
+
+```powershell
+$body = @{ prompt = '请查找 notes 下包含 hello 的文件，然后把第一个结果复制到 notes/search-backup.txt'; context = $null } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/chat -ContentType "application/json" -Body $body
+```
+
+合格标准：
+
+- 第一阶段应执行 `workspace.search`，不能误判成直接复制目录。
+- `observe` 阶段应基于第一个搜索结果继续排队后续 `workspace.copy/read/delete`。
+- 最终消息仍应有 `workflow.completed` 或 `workflow.failed`。
+
 读取不存在的文件：
 
 ```powershell
@@ -229,6 +285,7 @@ pnpm dev
 - 文件创建、读取、失败、确认请求都不会让输入框永久不可用。
 - 如果使用 WebSocket，`WS /messages/ws` 的消息结构应与 `GET /messages` 一致。
 - 每条前端消息应包含 Bridge JSON 字段：`bridge_event_type`、`bridge_event_version`、`bridge_payload`。
+- assistant 文本消息应显式携带 `content_type=markdown` 和 `render_mode=rich_text`，前端应根据协议字段渲染 Markdown、代码块和 LaTeX，而不是只靠消息来源猜测。
 - 前端可通过 `bridge_event_type=Status_Update` 识别节点/动作/终态状态，通过 `Roleplay_Dialogue` 识别角色台词和动作，通过 `Auth_Request` 识别确认请求。
 - coding 子图的 `pm_node`、`coder_node`、`executor_node`、`qa_node`、`debugger_node` 应在节点开头发出 `workflow.node_entered`，并在 `bridge_payload.phase` 中标明 `coding` 或 `tools`。
 
@@ -306,12 +363,13 @@ pnpm dev
 
 当前核心自动化测试：
 
-- `backend/tests/test_agent_loop_acceptance.py`
-- `backend/tests/test_agent_loop_graph.py`
-- `backend/tests/test_agent_actions.py`
-- `backend/tests/test_workspace_tools.py`
-- `backend/tests/test_conversation_store.py`
-- `backend/tests/test_llm_client.py`
+- `backend/tests/acceptance/test_agent_loop_acceptance.py`
+- `backend/tests/agent_workflow/test_agent_loop_graph.py`
+- `backend/tests/agent_workflow/test_file_workflow_graph.py`
+- `backend/tests/agent_workflow/test_agent_actions.py`
+- `backend/tests/tools/test_workspace_tools.py`
+- `backend/tests/storage/test_conversation_store.py`
+- `backend/tests/llm/test_llm_client.py`
 
 推荐提交前执行：
 

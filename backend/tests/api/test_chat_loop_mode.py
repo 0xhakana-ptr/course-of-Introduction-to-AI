@@ -35,6 +35,8 @@ def test_chat_route_uses_loop_runtime_for_chat(monkeypatch, client):
     assert payload["runtime_mode"] == "loop"
     assert payload["route_scope"] == "primary_loop"
     assert payload["runtime_warning"] is None
+    assert payload["content_type"] == "markdown"
+    assert payload["render_mode"] == "rich_text"
 
     messages = client.get("/messages").json()["messages"]
     status_messages = [message for message in messages if message["type"] == "status"]

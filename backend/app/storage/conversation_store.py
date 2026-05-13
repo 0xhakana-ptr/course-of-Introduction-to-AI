@@ -698,13 +698,19 @@ class ConversationStore:
             if session_path.exists():
                 session_path.unlink()
                 removed_from_disk = True
-            return removed_from_cache or removed_from_disk
+            from .file_context_store import file_context_store
+
+            removed_file_context = file_context_store.clear_session(session_id)
+            return removed_from_cache or removed_from_disk or removed_file_context
 
     def clear_all(self) -> None:
         with self._lock:
             self._sessions.clear()
             self._session_metadata.clear()
             self._last_cleanup_monotonic = 0.0
+            from .file_context_store import file_context_store
+
+            file_context_store.clear_all()
             conversation_dir = settings.conversation_dir
             if not conversation_dir.exists():
                 return

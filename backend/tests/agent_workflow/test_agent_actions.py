@@ -16,6 +16,10 @@ def test_default_action_registry_exposes_required_actions():
         "workspace.list",
         "workspace.test",
         "workspace.export_desktop",
+        "workspace.move",
+        "workspace.copy",
+        "workspace.delete",
+        "workspace.search",
         "run.create",
         "run.inspect",
         "run.retry",
@@ -40,11 +44,17 @@ def test_default_action_registry_exposes_required_actions():
         descriptor for descriptor in descriptors
         if descriptor["name"] == "workspace.test"
     )
+    delete_descriptor = next(
+        descriptor for descriptor in descriptors
+        if descriptor["name"] == "workspace.delete"
+    )
     assert export_descriptor["requires_confirmation"] is True
     assert export_descriptor["safety_level"] == "high"
     assert cancel_descriptor["requires_confirmation"] is True
     assert test_descriptor["requires_confirmation"] is True
     assert test_descriptor["safety_level"] == "high"
+    assert delete_descriptor["requires_confirmation"] is True
+    assert delete_descriptor["safety_level"] == "high"
 
 
 def test_action_registry_executes_workspace_write_action():
@@ -62,6 +72,29 @@ def test_action_registry_executes_workspace_write_action():
     assert "已在 workspace 中创建文本文件" in result.summary
     assert result.metadata["tool_name"] == "write_workspace_text"
     assert read_workspace_text("notes/action.txt")["content"] == "hello action"
+
+
+def test_action_registry_executes_workspace_file_search_action():
+    registry = build_default_action_registry()
+    registry.execute(
+        "workspace.write",
+        {
+            "rel_path": "notes/search-action.txt",
+            "content": "hello registry",
+        },
+    )
+
+    result = registry.execute(
+        "workspace.search",
+        {
+            "rel_path": "notes",
+            "query": "registry",
+        },
+    )
+
+    assert result.ok is True
+    assert "找到 1 条匹配" in result.summary
+    assert result.metadata["tool_name"] == "search_workspace_text"
 
 
 def test_action_registry_blocks_desktop_export_when_not_configured():

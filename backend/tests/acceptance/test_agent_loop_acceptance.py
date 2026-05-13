@@ -233,6 +233,114 @@ def test_acceptance_workspace_list_returns_terminal_and_listing(client):
     _assert_workflow_terminal(messages)
 
 
+def test_acceptance_workspace_move_copy_and_search_return_terminal(client):
+    safe_write_file("notes/file-flow/a.txt", "hello file flow")
+
+    move_response = client.post(
+        "/chat",
+        json={"prompt": "请把 notes/file-flow/a.txt 改名为 b.txt", "context": None},
+    )
+    copy_response = client.post(
+        "/chat",
+        json={
+            "prompt": "请把 notes/file-flow/b.txt 复制到 notes/file-flow/c.txt",
+            "context": None,
+        },
+    )
+    search_response = client.post(
+        "/chat",
+        json={"prompt": "请查找 notes/file-flow 下包含 hello 的文件", "context": None},
+    )
+
+    assert move_response.status_code == 200
+    assert copy_response.status_code == 200
+    assert search_response.status_code == 200
+    assert "新路径: `notes/file-flow/b.txt`" in move_response.json()["output"]
+    assert read_workspace_text("notes/file-flow/b.txt")["content"] == "hello file flow"
+    assert read_workspace_text("notes/file-flow/c.txt")["content"] == "hello file flow"
+    assert "找到 2 条匹配" in search_response.json()["output"]
+
+    messages = _messages(client)
+    _assert_action_event(messages, action_name="workspace.move")
+    _assert_action_event(messages, action_name="workspace.copy")
+    _assert_action_event(messages, action_name="workspace.search")
+    _assert_workflow_terminal(messages)
+
+
+def test_acceptance_workspace_delete_requires_confirmation_then_deletes(client):
+    safe_write_file("notes/delete-flow/remove.txt", "remove me")
+
+    blocked_response = client.post(
+        "/chat",
+        json={"prompt": "请删除 notes/delete-flow/remove.txt", "context": None},
+    )
+
+    assert blocked_response.status_code == 200
+    blocked_payload = blocked_response.json()
+    assert blocked_payload["ok"] is True
+    assert "需要你明确确认" in blocked_payload["output"]
+    assert read_workspace_text("notes/delete-flow/remove.txt")["content"] == "remove me"
+
+    confirmed_response = client.post(
+        "/chat",
+        json={"prompt": "确认删除 notes/delete-flow/remove.txt", "context": None},
+    )
+
+    assert confirmed_response.status_code == 200
+    confirmed_payload = confirmed_response.json()
+    assert confirmed_payload["ok"] is True
+    assert "已删除文件" in confirmed_payload["output"]
+    with pytest.raises(FileNotFoundError):
+        read_workspace_text("notes/delete-flow/remove.txt")
+
+    messages = _messages(client)
+    _assert_action_event(messages, action_name="ask_user_confirmation")
+    _assert_action_event(messages, action_name="workspace.delete")
+    _assert_workflow_terminal(messages)
+
+
+def test_acceptance_workspace_directory_copy_search_and_recursive_delete(client):
+    safe_write_file("notes/dir-flow/source/a.txt", "hello directory")
+    safe_write_file("notes/dir-flow/source/nested/b.txt", "nested directory")
+
+    copy_response = client.post(
+        "/chat",
+        json={
+            "prompt": "请复制 notes/dir-flow/source 目录到 notes/dir-flow/source-copy 目录",
+            "context": None,
+        },
+    )
+    search_response = client.post(
+        "/chat",
+        json={"prompt": "请在 notes/dir-flow/source-copy 下搜索 hello", "context": None},
+    )
+    delete_response = client.post(
+        "/chat",
+        json={
+            "prompt": "确认删除 notes/dir-flow/source-copy 目录及其内容",
+            "context": None,
+        },
+    )
+
+    assert copy_response.status_code == 200
+    assert search_response.status_code == 200
+    assert delete_response.status_code == 200
+    assert copy_response.json()["ok"] is True
+    assert search_response.json()["ok"] is True
+    assert delete_response.json()["ok"] is True
+    assert read_workspace_text("notes/dir-flow/source/a.txt")["content"] == "hello directory"
+    assert "找到 1 条匹配" in search_response.json()["output"]
+    assert "已删除目录" in delete_response.json()["output"]
+    with pytest.raises(FileNotFoundError):
+        read_workspace_text("notes/dir-flow/source-copy/a.txt")
+
+    messages = _messages(client)
+    _assert_action_event(messages, action_name="workspace.copy")
+    _assert_action_event(messages, action_name="workspace.search")
+    _assert_action_event(messages, action_name="workspace.delete")
+    _assert_workflow_terminal(messages)
+
+
 def test_acceptance_desktop_export_disabled_returns_clear_terminal(client):
     response = client.post(
         "/chat",

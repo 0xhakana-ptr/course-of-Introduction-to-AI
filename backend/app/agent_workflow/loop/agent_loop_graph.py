@@ -13,22 +13,22 @@ engineering state can stay isolated from roleplay and frontend state.
 
 from __future__ import annotations
 
-import re
 from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from ...core.config import settings
 from ...llm.client import call_llm_sync
 from ...schemas import INTENT_TYPE
 from ...services.chat_action.intent import detect_intent, detect_run_action, extract_run_reference
+from ...storage.file_context_store import file_context_store
 from ...tools.workspace_tools import (
-    WORKSPACE_TOOL_ERROR_EXECUTION_FAILED,
-    WORKSPACE_TOOL_ERROR_TARGET_DISABLED,
-    WORKSPACE_TOOL_ERROR_TARGET_UNSUPPORTED,
+    WORKSPACE_TOOL_NAME_COPY,
+    WORKSPACE_TOOL_NAME_DELETE,
     WORKSPACE_TOOL_NAME_LIST,
+    WORKSPACE_TOOL_NAME_MOVE,
     WORKSPACE_TOOL_NAME_OVERVIEW,
     WORKSPACE_TOOL_NAME_READ,
+    WORKSPACE_TOOL_NAME_SEARCH,
     WORKSPACE_TOOL_NAME_TEST,
     WORKSPACE_TOOL_NAME_WRITE,
     normalize_workspace_tool_plan,
@@ -38,6 +38,12 @@ from ..actions import default_action_registry
 from ..actions.models import AgentActionResult
 from ..contracts.workflow_results import WorkflowAgentResult, invoke_graph_with_result
 from ..coding import RUN_ACTIONS_FOR_CODING_WORKFLOW, SIMPLE_WORKSPACE_ACTIONS, run_coding_workflow
+from ..file import (
+    file_state_from_action_result,
+    merge_file_context,
+    prompt_references_file_context,
+    resolve_prompt_file_references,
+)
 from ..output.action_events import emit_workflow_action_event
 from ..output.completion_events import emit_workflow_terminal_status
 from ..output.node_events import emit_workflow_node_entered
@@ -57,6 +63,21 @@ from ..state.state_support import (
 )
 from ..runtime.graph_nodes import register_agent_graph_nodes
 from .action_plan import ActionPlan
+from .file_followups import (
+    copy_action_from_file_context,
+    initial_search_prompt_from_multistep,
+    workspace_dynamic_followup_queue,
+    workspace_followup_queue,
+)
+from .planning import (
+    apply_overwrite_confirmation_to_action,
+    build_recovery_action_plan,
+    coerce_bool,
+    coerce_int,
+    make_action_plan,
+    should_replan_after_failure,
+    with_confirmation_guard,
+)
 
 
 class AgentLoopState(TypedDict, total=False):
@@ -90,6 +111,7 @@ class AgentLoopState(TypedDict, total=False):
     workspace_tool_name: str | None
     workspace_tool_error: str | None
     workspace_tool_error_code: str | None
+    file_context: dict[str, object]
     runtime_mode: str
 
 
@@ -99,6 +121,10 @@ WORKSPACE_ACTION_BY_TOOL_NAME = {
     WORKSPACE_TOOL_NAME_WRITE: "workspace.write",
     WORKSPACE_TOOL_NAME_LIST: "workspace.list",
     WORKSPACE_TOOL_NAME_TEST: "workspace.test",
+    WORKSPACE_TOOL_NAME_MOVE: "workspace.move",
+    WORKSPACE_TOOL_NAME_COPY: "workspace.copy",
+    WORKSPACE_TOOL_NAME_DELETE: "workspace.delete",
+    WORKSPACE_TOOL_NAME_SEARCH: "workspace.search",
 }
 
 WORKSPACE_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW = set(SIMPLE_WORKSPACE_ACTIONS)
@@ -115,67 +141,6 @@ RUN_ACTION_TO_AGENT_ACTION = {
     RUN_ACTION_RERUN: "run.rerun",
     RUN_ACTION_CANCEL: "run.cancel",
 }
-
-RUN_ACTIONS_REQUIRING_ID = {
-    "run.inspect",
-    "run.retry",
-    "run.rerun",
-    "run.cancel",
-}
-
-RECOVERY_REASON_DESKTOP_EXPORT_DISABLED = "desktop_export_disabled"
-RECOVERY_REASON_FILE_EXISTS = "file_exists"
-RECOVERY_REASON_MISSING_RUN_ID = "missing_run_id"
-RECOVERY_REASON_UNSUPPORTED_WRITE_TARGET = "unsupported_write_target"
-CONFIRMATION_KEYWORDS = (
-    "确认",
-    "同意",
-    "允许",
-    "继续执行",
-)
-ENGLISH_CONFIRMATION_PATTERN = re.compile(
-    r"\b(?:confirm|confirmed|allow|proceed|yes)\b",
-    re.IGNORECASE,
-)
-MULTI_STEP_CONNECTORS = (
-    "然后",
-    "之后",
-    "随后",
-    "再",
-    "并",
-    "并且",
-    "then",
-)
-READ_CONFIRMATION_KEYWORDS = (
-    "读取",
-    "读一下",
-    "读出来",
-    "查看",
-    "确认内容",
-    "确认一下",
-    "read",
-    "show",
-    "preview",
-)
-OVERWRITE_CONFIRMATION_KEYWORDS = (
-    "覆盖",
-    "替换",
-    "overwrite",
-    "replace",
-)
-NEGATED_OVERWRITE_KEYWORDS = (
-    "不要覆盖",
-    "不覆盖",
-    "别覆盖",
-    "不要替换",
-    "不替换",
-    "别替换",
-    "do not overwrite",
-    "don't overwrite",
-    "dont overwrite",
-    "without overwriting",
-)
-
 
 def _normalize_text(value: object, *, default: str = "") -> str:
     text = str(value or "").strip()
@@ -209,363 +174,84 @@ def _coerce_action_queue(value: object) -> list[dict[str, object]]:
     return queue
 
 
-def _workspace_action_from_prompt(prompt: str) -> tuple[str, dict[str, object], dict[str, object] | None]:
-    plan_model = normalize_workspace_tool_plan(plan_workspace_tool(prompt))
+def _workspace_action_from_prompt(
+    prompt: str,
+    file_context: object | None = None,
+) -> tuple[str, dict[str, object], dict[str, object] | None]:
+    contextual_copy = copy_action_from_file_context(prompt, file_context)
+    if contextual_copy is not None:
+        return contextual_copy
+
+    planning_prompt, file_context_reference = resolve_prompt_file_references(
+        prompt,
+        file_context,
+    )
+    initial_search_prompt = initial_search_prompt_from_multistep(planning_prompt)
+    if initial_search_prompt:
+        planning_prompt = initial_search_prompt
+    plan_model = normalize_workspace_tool_plan(plan_workspace_tool(planning_prompt))
     if plan_model is None:
         return "run.create", {"prompt": prompt}, None
 
     tool_name = _normalize_text(plan_model.tool_name, default=WORKSPACE_TOOL_NAME_OVERVIEW)
     tool_input = dict(plan_model.tool_input)
+    workspace_plan = plan_model.as_dict()
+    if file_context_reference:
+        workspace_plan.update(
+            {
+                "file_context_reference": file_context_reference,
+                "contextual_prompt": planning_prompt,
+            }
+        )
     if (
         tool_name == WORKSPACE_TOOL_NAME_WRITE
         and _normalize_text(tool_input.get("target_location")).lower() == "desktop"
     ):
-        return "workspace.export_desktop", tool_input, plan_model.as_dict()
+        return "workspace.export_desktop", tool_input, workspace_plan
 
     action_name = WORKSPACE_ACTION_BY_TOOL_NAME.get(tool_name, "run.create")
     if bool(plan_model.terminal) or tool_name == WORKSPACE_TOOL_NAME_WRITE:
-        return action_name, tool_input, plan_model.as_dict()
+        return action_name, tool_input, workspace_plan
 
-    return "run.create", {"prompt": prompt}, plan_model.as_dict()
-
-
-def _prompt_requests_read_confirmation(prompt: str) -> bool:
-    text = str(prompt or "").strip().lower()
-    return (
-        any(connector in text for connector in MULTI_STEP_CONNECTORS)
-        and any(keyword in text for keyword in READ_CONFIRMATION_KEYWORDS)
-    )
+    return "run.create", {"prompt": prompt}, workspace_plan
 
 
-def _workspace_followup_queue(
-    *,
+def _contextual_workspace_action_from_prompt(
     prompt: str,
-    action_name: str,
-    action_input: dict[str, object],
-) -> list[dict[str, object]]:
-    rel_path = _normalize_text(action_input.get("rel_path"))
-    if (
-        action_name != "workspace.write"
-        or not rel_path
-        or not _prompt_requests_read_confirmation(prompt)
-    ):
-        return []
-
-    return [
-        {
-            "action_name": "workspace.read",
-            "action_input": {"rel_path": rel_path},
-        }
-    ]
-
-
-def _coerce_bool(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _coerce_int(value: object, *, default: int) -> int:
-    try:
-        parsed = int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default
-
-
-def _prompt_confirms_action(prompt: str) -> bool:
-    text = str(prompt or "").strip()
-    return (
-        any(keyword in text for keyword in CONFIRMATION_KEYWORDS)
-        or ENGLISH_CONFIRMATION_PATTERN.search(text) is not None
-    )
-
-
-def _prompt_confirms_overwrite(prompt: str) -> bool:
-    text = str(prompt or "").strip().lower()
-    if any(keyword.lower() in text for keyword in NEGATED_OVERWRITE_KEYWORDS):
-        return False
-    return any(keyword.lower() in text for keyword in OVERWRITE_CONFIRMATION_KEYWORDS)
-
-
-def _apply_overwrite_confirmation_to_action(
-    *,
-    prompt: str,
-    action_name: str,
-    action_input: dict[str, object],
-    workspace_plan: dict[str, object] | None = None,
-) -> tuple[dict[str, object], dict[str, object] | None]:
-    if action_name not in {"workspace.write", "workspace.export_desktop"}:
-        return action_input, workspace_plan
-    if not _prompt_confirms_overwrite(prompt):
-        return action_input, workspace_plan
-    if not _normalize_text(action_input.get("rel_path")):
-        return action_input, workspace_plan
-
-    confirmed_input = {**action_input, "overwrite": True}
-    if workspace_plan is None:
-        return confirmed_input, None
-
-    tool_input = workspace_plan.get("tool_input")
-    confirmed_plan = {
-        **workspace_plan,
-        "tool_input": {
-            **(dict(tool_input) if isinstance(tool_input, dict) else {}),
-            "overwrite": True,
-        },
-    }
-    return confirmed_input, confirmed_plan
-
-
-def _desktop_export_confirmation_is_needed(action_input: dict[str, object]) -> bool:
-    target_location = _normalize_text(action_input.get("target_location")).lower()
-    if target_location != "desktop":
-        return False
-    return settings.desktop_export_enabled and settings.desktop_export_dir is not None
-
-
-def _action_requires_runtime_confirmation(
-    action_name: str,
-    action_input: dict[str, object],
-) -> bool:
-    if action_name in RUN_ACTIONS_REQUIRING_ID and not _normalize_text(action_input.get("run_id")):
-        return False
-    definition = default_action_registry.get(action_name)
-    if definition is None:
-        return False
-    if action_name == "workspace.export_desktop":
-        return _desktop_export_confirmation_is_needed(action_input)
-    return bool(definition.descriptor.requires_confirmation)
-
-
-def _action_safety_level(action_name: str) -> str:
-    definition = default_action_registry.get(action_name)
-    if definition is None:
-        return "unknown"
-    return definition.descriptor.safety_level
-
-
-def _make_action_plan(
-    action_name: str,
-    action_input: dict[str, object],
-    *,
-    reason: str,
-    planner_source: str = "rules",
-    terminal: bool = True,
-    next_action_queue: list[dict[str, object]] | None = None,
-    details: dict[str, object] | None = None,
-) -> ActionPlan:
-    return ActionPlan(
-        action_name=action_name,
-        action_input=dict(action_input),
-        reason=reason,
-        safety_level=_action_safety_level(action_name),
-        requires_confirmation=_action_requires_runtime_confirmation(action_name, action_input),
-        next_action_queue=next_action_queue,
-        planner_source=planner_source,
-        terminal=terminal,
-        details=dict(details or {}),
-    )
-
-
-def _confirmation_target_label(
-    action_name: str,
-    action_input: dict[str, object],
-) -> str:
-    if action_name.startswith("run."):
-        return _normalize_text(action_input.get("run_id"), default="目标任务")
-    if action_name.startswith("workspace."):
-        return _normalize_text(action_input.get("rel_path"), default="目标路径")
-    return "当前动作"
-
-
-def _build_action_confirmation_prompt(
-    action_name: str,
-    action_input: dict[str, object],
-) -> str:
-    definition = default_action_registry.get(action_name)
-    descriptor = definition.descriptor if definition is not None else None
-    action_label = descriptor.user_visible_label if descriptor is not None else action_name
-    safety_level = descriptor.safety_level if descriptor is not None else "unknown"
-    target_label = _confirmation_target_label(action_name, action_input)
-    return (
-        "这一步会执行有风险的动作，需要你明确确认后我再继续。\n\n"
-        f"动作: {action_label}\n"
-        f"动作名: `{action_name}`\n"
-        f"风险等级: `{safety_level}`\n"
-        f"目标: `{target_label}`\n\n"
-        "如果确认执行，请重新发送同一条请求，并明确写上“确认执行”或 `confirm`。"
-    )
-
-
-def _with_confirmation_guard(
-    *,
-    prompt: str,
-    plan: ActionPlan,
-) -> ActionPlan:
-    if (
-        plan.action_name == "ask_user_confirmation"
-        or not _action_requires_runtime_confirmation(plan.action_name, plan.action_input)
-        or _prompt_confirms_action(prompt)
-    ):
-        return plan
-
-    confirmation_prompt = _build_action_confirmation_prompt(plan.action_name, plan.action_input)
-    return _make_action_plan(
-        "ask_user_confirmation",
-        {
-            "prompt": confirmation_prompt,
-            "blocked_action_name": plan.action_name,
-            "blocked_action_input": plan.action_input,
-        },
-        reason="Runtime confirmation is required before executing a risky action.",
-        planner_source=plan.planner_source,
-        details={
-            **plan.details,
-            "confirmation_required": True,
-            "blocked_action_name": plan.action_name,
-            "blocked_action_plan": plan.as_dict(),
-        },
-    )
-
-
-def _is_file_exists_error(action_result: dict[str, object]) -> bool:
-    error = _normalize_text(action_result.get("error")).lower()
-    summary = _normalize_text(action_result.get("summary")).lower()
-    return "file already exists" in error or "file already exists" in summary
-
-
-def _build_recovery_message(
-    *,
-    reason: str,
-    state: AgentLoopState,
-    action_result: dict[str, object],
-) -> str:
-    action_input = state.get("action_input") or {}
-    action_name = _normalize_text(state.get("action_name"))
-    if reason == RECOVERY_REASON_DESKTOP_EXPORT_DISABLED:
-        return (
-            "我还不能直接导出到桌面，因为桌面导出没有启用或没有配置 "
-            "`DESKTOP_EXPORT_DIR`。\n\n"
-            "如果要继续，请先配置 `DESKTOP_EXPORT_ENABLED=true` 和 "
-            "`DESKTOP_EXPORT_DIR`，或者让我改为创建到项目 workspace 里。"
-        )
-    if reason == RECOVERY_REASON_FILE_EXISTS:
-        rel_path = _normalize_text(action_input.get("rel_path"), default="目标文件")
-        target_location = _normalize_text(action_input.get("target_location"), default="workspace")
-        target_label = "桌面导出目录" if target_location == "desktop" else "workspace"
-        return (
-            f"`{rel_path}` 在 {target_label} 中已经存在，我不会直接覆盖。\n\n"
-            "如果你确认要覆盖，请明确告诉我“覆盖这个文件”；"
-            "如果不想覆盖，请给我一个新的文件名。"
-        )
-    if reason == RECOVERY_REASON_MISSING_RUN_ID:
-        action_label = action_name.split(".", 1)[1] if "." in action_name else action_name
-        return (
-            f"我需要一个明确的 `run_id` 才能继续执行 `{action_label}`。\n\n"
-            "请把要处理的 `run_id` 发给我，我再继续查看、重试、重跑或取消。"
-        )
-    if reason == RECOVERY_REASON_UNSUPPORTED_WRITE_TARGET:
-        return (
-            "当前只支持写入项目 workspace，或显式配置过的桌面导出目录。\n\n"
-            "请改为 workspace 路径，或先配置桌面导出目录。"
-        )
-
-    summary = _normalize_text(action_result.get("summary"), default="工具执行失败。")
-    return f"这一步没有完成：{summary}"
-
-
-def _recovery_reason_for_action_result(
-    state: AgentLoopState,
-    action_result: dict[str, object],
-) -> str | None:
-    if bool(action_result.get("ok")):
+    file_context: object,
+) -> tuple[str, dict[str, object], dict[str, object] | None] | None:
+    if not prompt_references_file_context(prompt):
         return None
-
-    action_name = _normalize_text(state.get("action_name"))
-    action_input = state.get("action_input") or {}
-    metadata = action_result.get("metadata")
-    metadata_dict = dict(metadata) if isinstance(metadata, dict) else {}
-    tool_error_code = _normalize_text(metadata_dict.get("tool_error_code"))
-
-    if action_name == "workspace.export_desktop" and tool_error_code == WORKSPACE_TOOL_ERROR_TARGET_DISABLED:
-        return RECOVERY_REASON_DESKTOP_EXPORT_DISABLED
-    if action_name.startswith("workspace.") and tool_error_code == WORKSPACE_TOOL_ERROR_TARGET_UNSUPPORTED:
-        return RECOVERY_REASON_UNSUPPORTED_WRITE_TARGET
-    if (
-        action_name.startswith("workspace.")
-        and tool_error_code == WORKSPACE_TOOL_ERROR_EXECUTION_FAILED
-        and _is_file_exists_error(action_result)
-    ):
-        return RECOVERY_REASON_FILE_EXISTS
-    if action_name in RUN_ACTIONS_REQUIRING_ID and not _normalize_text(action_input.get("run_id")):
-        return RECOVERY_REASON_MISSING_RUN_ID
-    return None
-
-
-def _should_replan_after_failure(
-    state: AgentLoopState,
-    action_result: dict[str, object],
-) -> tuple[bool, str | None, str | None]:
-    if _coerce_bool(state.get("recovery_attempted")):
-        return False, None, None
-
-    reason = _recovery_reason_for_action_result(state, action_result)
-    if reason is None:
-        return False, None, None
-
-    message = _build_recovery_message(
-        reason=reason,
-        state=state,
-        action_result=action_result,
+    action_name, action_input, workspace_plan = _workspace_action_from_prompt(
+        prompt,
+        file_context,
     )
-    return True, reason, message
-
-
-def _build_recovery_action_plan(state: AgentLoopState) -> ActionPlan:
-    reason = _normalize_text(state.get("recovery_reason"))
-    message = _normalize_text(state.get("recovery_message"), default="这一步需要你补充确认后才能继续。")
-
-    if reason == RECOVERY_REASON_FILE_EXISTS:
-        return _make_action_plan(
-            "ask_user_confirmation",
-            {"prompt": message},
-            reason="Recoverable tool failure asks the user before overwrite.",
-            planner_source="recovery",
-            next_action_queue=[],
-            details={"recovery_reason": reason},
-        )
-
-    return _make_action_plan(
-        "final.answer",
-        {"content": message},
-        reason="Recoverable tool failure is converted to a clear final answer.",
-        planner_source="recovery",
-        next_action_queue=[],
-        details={"recovery_reason": reason},
-    )
+    if action_name == "run.create":
+        return None
+    return action_name, action_input, workspace_plan
 
 
 def _build_action_plan(state: AgentLoopState) -> ActionPlan:
-    if _coerce_bool(state.get("recovery_attempted")) and _normalize_text(state.get("recovery_reason")):
-        return _build_recovery_action_plan(state)
+    if coerce_bool(state.get("recovery_attempted")) and _normalize_text(state.get("recovery_reason")):
+        return build_recovery_action_plan(state)
 
     prompt = _normalize_text(state.get("user_input"))
     intent = _normalize_text(state.get("intent"), default=detect_intent(prompt))
+    file_context = state.get("file_context") or {}
     action_queue = _coerce_action_queue(state.get("action_queue"))
     if action_queue:
         next_action = action_queue[0]
         remaining_queue = action_queue[1:]
         action_name = _normalize_text(next_action.get("action_name"))
         action_input = dict(next_action.get("action_input") or {})
-        action_input, _ = _apply_overwrite_confirmation_to_action(
+        action_input, _ = apply_overwrite_confirmation_to_action(
             prompt=prompt,
             action_name=action_name,
             action_input=action_input,
         )
-        return _with_confirmation_guard(
+        return with_confirmation_guard(
             prompt=prompt,
-            plan=_make_action_plan(
+            plan=make_action_plan(
                 action_name,
                 action_input,
                 reason="Agent Loop continues with the next queued action.",
@@ -578,8 +264,38 @@ def _build_action_plan(state: AgentLoopState) -> ActionPlan:
             ),
         )
 
+    contextual_workspace_action = _contextual_workspace_action_from_prompt(prompt, file_context)
+    if contextual_workspace_action is not None:
+        action_name, action_input, workspace_plan = contextual_workspace_action
+        action_input, workspace_plan = apply_overwrite_confirmation_to_action(
+            prompt=prompt,
+            action_name=action_name,
+            action_input=action_input,
+            workspace_plan=workspace_plan,
+        )
+        followup_queue = workspace_followup_queue(
+            prompt=prompt,
+            action_name=action_name,
+            action_input=action_input,
+        )
+        return with_confirmation_guard(
+            prompt=prompt,
+            plan=make_action_plan(
+                action_name,
+                action_input,
+                reason="Prompt references recent file context and selected a workspace action.",
+                next_action_queue=followup_queue,
+                details={
+                    "intent": "coding",
+                    "resolved_intent": "coding",
+                    "workspace_tool_plan": workspace_plan,
+                    "file_context_used": True,
+                },
+            ),
+        )
+
     if intent == "chat":
-        return _make_action_plan(
+        return make_action_plan(
             "chat.reply",
             {"prompt": prompt, "context": state.get("context")},
             reason="Chat intent uses direct LLM reply action.",
@@ -591,9 +307,9 @@ def _build_action_plan(state: AgentLoopState) -> ActionPlan:
         target_run_id = extract_run_reference(prompt) if run_action != RUN_ACTION_CREATE else None
         if run_action != RUN_ACTION_CREATE:
             action_name = RUN_ACTION_TO_AGENT_ACTION.get(run_action, "run.inspect")
-            return _with_confirmation_guard(
+            return with_confirmation_guard(
                 prompt=prompt,
-                plan=_make_action_plan(
+                plan=make_action_plan(
                     action_name,
                     {"run_id": target_run_id},
                     reason=f"Coding prompt selected run control action `{run_action}`.",
@@ -605,8 +321,11 @@ def _build_action_plan(state: AgentLoopState) -> ActionPlan:
                 ),
             )
 
-        action_name, action_input, workspace_plan = _workspace_action_from_prompt(prompt)
-        action_input, workspace_plan = _apply_overwrite_confirmation_to_action(
+        action_name, action_input, workspace_plan = _workspace_action_from_prompt(
+            prompt,
+            file_context,
+        )
+        action_input, workspace_plan = apply_overwrite_confirmation_to_action(
             prompt=prompt,
             action_name=action_name,
             action_input=action_input,
@@ -617,14 +336,14 @@ def _build_action_plan(state: AgentLoopState) -> ActionPlan:
                 "prompt": prompt,
                 "context": state.get("context"),
             }
-        followup_queue = _workspace_followup_queue(
+        followup_queue = workspace_followup_queue(
             prompt=prompt,
             action_name=action_name,
             action_input=action_input,
         )
-        return _with_confirmation_guard(
+        return with_confirmation_guard(
             prompt=prompt,
-            plan=_make_action_plan(
+            plan=make_action_plan(
                 action_name,
                 action_input,
                 reason=(
@@ -641,7 +360,7 @@ def _build_action_plan(state: AgentLoopState) -> ActionPlan:
             ),
         )
 
-    return _make_action_plan(
+    return make_action_plan(
         "final.answer",
         {
             "content": (
@@ -685,6 +404,9 @@ def plan_node(state: AgentLoopState) -> AgentLoopState:
         state_updates["action_queue"] = _coerce_action_queue(
             plan_details.get("next_action_queue")
         )
+    resolved_intent = _normalize_text(plan_details.get("resolved_intent"))
+    if resolved_intent in {"chat", "coding", "unknown"}:
+        state_updates["intent"] = resolved_intent
     next_state = merge_agent_state(
         state,
         action_name=action_name,
@@ -864,8 +586,9 @@ def _state_updates_from_action_result(
     action_name = _normalize_text(state.get("action_name"))
     data = result.data if isinstance(result.data, dict) else {}
     metadata = dict(result.metadata)
+    action_result_payload = result.as_dict()
     updates: dict[str, object] = {
-        "action_result": result.as_dict(),
+        "action_result": action_result_payload,
         "output": result.summary,
         "error": None if result.ok else state.get("error"),
         "ui_status": "loop_action_done" if result.ok else "loop_action_failed",
@@ -879,6 +602,32 @@ def _state_updates_from_action_result(
                 "workspace_tool_error_code": metadata.get("tool_error_code"),
             }
         )
+        if result.ok:
+            file_state_update = file_state_from_action_result(
+                action_name,
+                dict(state.get("action_input") or {}),
+                action_result_payload,
+            )
+            if file_state_update:
+                if _normalize_text(state.get("session_id")):
+                    file_context = file_context_store.update_context(
+                        state.get("session_id"),
+                        file_state_update,
+                    )
+                else:
+                    file_context = merge_file_context(
+                        state.get("file_context"),
+                        file_state_update,
+                    )
+                updates["file_context"] = file_context
+                action_result_metadata = dict(action_result_payload.get("metadata") or {})
+                action_result_metadata.update(
+                    {
+                        "file_state": file_state_update,
+                        "file_context": file_context,
+                    }
+                )
+                action_result_payload["metadata"] = action_result_metadata
         if not result.ok:
             updates["ui_status"] = "workspace_tool_failed"
         return updates
@@ -940,14 +689,21 @@ def act_node(state: AgentLoopState) -> AgentLoopState:
 def observe_node(state: AgentLoopState) -> AgentLoopState:
     emit_workflow_node_entered(state, "observe_node")
     action_result = _coerce_action_result(state.get("action_result"))
-    step_count = _coerce_int(state.get("step_count"), default=0) + 1
-    max_steps = _coerce_int(state.get("max_steps"), default=3)
-    should_replan, recovery_reason, recovery_message = _should_replan_after_failure(
+    step_count = coerce_int(state.get("step_count"), default=0) + 1
+    max_steps = coerce_int(state.get("max_steps"), default=3)
+    should_replan, recovery_reason, recovery_message = should_replan_after_failure(
         state,
         action_result,
     )
     action_ok = bool(action_result.get("ok"))
     action_queue = _coerce_action_queue(state.get("action_queue"))
+    if action_ok and not should_replan:
+        action_queue.extend(
+            workspace_dynamic_followup_queue(
+                prompt=_normalize_text(state.get("user_input")),
+                action_result=action_result,
+            )
+        )
     should_continue_queue = action_ok and not should_replan and bool(action_queue)
     done = not should_replan and not should_continue_queue
     if should_continue_queue:
@@ -975,7 +731,7 @@ def observe_node(state: AgentLoopState) -> AgentLoopState:
         stop_reason=stop_reason,
         step_count=step_count,
         max_steps=max_steps,
-        recovery_attempted=_coerce_bool(state.get("recovery_attempted")) or should_replan,
+        recovery_attempted=coerce_bool(state.get("recovery_attempted")) or should_replan,
         recovery_reason=recovery_reason or state.get("recovery_reason"),
         recovery_message=recovery_message or state.get("recovery_message"),
         action_queue=action_queue if should_continue_queue or should_replan else [],
@@ -993,9 +749,9 @@ def observe_node(state: AgentLoopState) -> AgentLoopState:
 
 def decide_continue_node(state: AgentLoopState) -> AgentLoopState:
     emit_workflow_node_entered(state, "decide_continue_node")
-    done = _coerce_bool(state.get("done"))
-    step_count = _coerce_int(state.get("step_count"), default=0)
-    max_steps = _coerce_int(state.get("max_steps"), default=3)
+    done = coerce_bool(state.get("done"))
+    step_count = coerce_int(state.get("step_count"), default=0)
+    max_steps = coerce_int(state.get("max_steps"), default=3)
     updates: dict[str, object] = {
         "done": done,
         "ui_status": _normalize_text(state.get("ui_status"), default="loop_decided"),
@@ -1036,7 +792,7 @@ def decide_continue_node(state: AgentLoopState) -> AgentLoopState:
 
 
 def route_after_decision(state: AgentLoopState) -> str:
-    if not _coerce_bool(state.get("done")):
+    if not coerce_bool(state.get("done")):
         return "plan_node"
     if state.get("error"):
         return "failure_node"
@@ -1153,6 +909,7 @@ def run_agent_loop(
     initial_state["recovery_attempted"] = False
     initial_state["recovery_reason"] = None
     initial_state["recovery_message"] = None
+    initial_state["file_context"] = file_context_store.get_context(session_id)
     return invoke_graph_with_result(
         agent_loop_graph,
         initial_state=initial_state,

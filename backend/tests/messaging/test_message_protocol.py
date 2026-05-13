@@ -92,7 +92,13 @@ def test_message_sender_queues_chat_message_with_top_level_node_name(monkeypatch
     assert messages[0]["event_stage"] == "roleplay"
     assert messages[0]["bridge_event_type"] == "Roleplay_Dialogue"
     assert messages[0]["bridge_payload"]["content"] == "hello"
+    assert messages[0]["bridge_payload"]["content_type"] == "markdown"
+    assert messages[0]["bridge_payload"]["render_mode"] == "rich_text"
     assert messages[0]["node_name"] == "agent_roleplay"
+    assert messages[0]["content_type"] == "markdown"
+    assert messages[0]["render_mode"] == "rich_text"
+    assert messages[0]["metadata"]["content_type"] == "markdown"
+    assert messages[0]["metadata"]["render_mode"] == "rich_text"
     assert messages[0]["metadata"]["node_name"] == "agent_roleplay"
 
 
@@ -156,6 +162,38 @@ def test_workflow_confirmation_action_event_outputs_bridge_auth_request(monkeypa
     assert message["bridge_payload"]["prompt"] == "是否允许写入桌面文件？"
     assert message["bridge_payload"]["blocked_action_name"] == "workspace.export_desktop"
     assert message["bridge_payload"]["blocked_action_input"]["path"] == "demo.txt"
+
+
+def test_workflow_workspace_action_event_outputs_bridge_status_quip(monkeypatch):
+    queue = MessageQueue()
+    message_sender_module = importlib.import_module("backend.app.messaging.message_sender")
+    monkeypatch.setattr(message_sender_module, "message_queue", queue)
+
+    ok = emit_workflow_action_event(
+        {
+            "emit_node_events": True,
+            "action_name": "workspace.search",
+            "action_input": {
+                "rel_path": "notes",
+                "query": "hello",
+            },
+        },
+        action_status="started",
+    )
+
+    assert ok is True
+    messages = queue.get_messages()
+    assert len(messages) == 1
+    message = messages[0]
+    assert message["event_type"] == "workflow.action_started"
+    assert message["message"] == "正在搜索文件内容..."
+    assert message["bridge_event_type"] == "Status_Update"
+    assert message["metadata"]["quip"] == "正在搜索文件内容..."
+    assert message["metadata"]["action_target"] == "notes"
+    assert message["metadata"]["action_query"] == "hello"
+    assert message["bridge_payload"]["message"] == "正在搜索文件内容..."
+    assert message["bridge_payload"]["quip"] == "正在搜索文件内容..."
+    assert message["bridge_payload"]["action_target"] == "notes"
 
 
 @pytest.mark.parametrize(

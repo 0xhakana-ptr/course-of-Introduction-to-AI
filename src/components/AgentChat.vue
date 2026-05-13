@@ -18,8 +18,33 @@ import markdownItKatex from 'markdown-it-katex'
 import 'katex/dist/katex.min.css'
 import { getIpcRenderer } from '../platform/electronIpc'
 
-type ChatLine = { role: 'user' | 'assistant' | 'system' | 'err'; text: string }
-type AgentChatResponse = { ok: boolean; output: string }
+type FileActionCard = {
+  title: string
+  status: 'completed' | 'failed'
+  actionName?: string
+  target?: string
+  source?: string
+  result?: string
+  query?: string
+  matchCount?: number
+  tool?: string
+  error?: string
+}
+type MessageContentType = 'plain_text' | 'markdown'
+type MessageRenderMode = 'plain_text' | 'rich_text'
+type ChatLine = {
+  role: 'user' | 'assistant' | 'system' | 'err'
+  text: string
+  contentType?: MessageContentType
+  renderMode?: MessageRenderMode
+  fileAction?: FileActionCard
+}
+type AgentChatResponse = {
+  ok: boolean
+  output: string
+  content_type?: MessageContentType
+  render_mode?: MessageRenderMode
+}
 
 // AI Agent 消息类型定义
 type ChatMessage = {
@@ -32,7 +57,11 @@ type ChatMessage = {
     sequence_id?: number
     total_parts?: number
     node_name?: string
+    content_type?: MessageContentType
+    render_mode?: MessageRenderMode
   }
+  content_type?: MessageContentType
+  render_mode?: MessageRenderMode
 }
 
 type ExpressionMessage = {
@@ -60,18 +89,42 @@ type StatusUpdate = {
   type: 'status'
   status: 'idle' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
   progress?: number
+  message?: string
   node_name?: string
   timestamp: string
   event_type?: string
   event_source?: string
   event_stage?: string
+  bridge_payload?: {
+    message?: string
+    action_target?: string
+    action_name?: string
+    action_label?: string
+    action_status?: 'started' | 'completed' | 'failed'
+    metadata?: Record<string, unknown>
+  }
   metadata?: {
     node_label?: string
     phase?: string
     runtime_event?: string
+    quip?: string
+    action_target?: string
     action_name?: string
     action_label?: string
     action_status?: 'started' | 'completed' | 'failed'
+    action_rel_path?: string
+    action_source_path?: string
+    action_target_path?: string
+    action_query?: string
+    result_path?: string
+    result_source_path?: string
+    result_target_path?: string
+    result_match_count?: number
+    tool_name?: string
+    tool_output_kind?: string
+    tool_error_code?: string
+    error?: string
+    ok?: boolean
     action_category?: string
     safety_level?: string
     requires_confirmation?: boolean
@@ -175,8 +228,8 @@ const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
 const desktopConfirmVisible = ref(false)
 let desktopConfirmResolver: ((confirmed: boolean) => void) | null = null
 
-function push(role: ChatLine['role'], text: string) {
-  lines.value.push({ role, text })
+function push(role: ChatLine['role'], text: string, extra: Omit<ChatLine, 'role' | 'text'> = {}) {
+  lines.value.push({ role, text, ...extra })
   // Keep last ~500 lines
   if (lines.value.length > 500) lines.value.splice(0, lines.value.length - 500)
   void nextTick(() => {
@@ -194,6 +247,10 @@ function clearScreen() {
 
 function renderAssistantText(text: string): string {
   return markdownRenderer.render(text || '')
+}
+
+function shouldRenderRichMessage(line: ChatLine): boolean {
+  return line.role === 'assistant' && (line.renderMode || 'rich_text') === 'rich_text'
 }
 
 function focusInputSoon() {
@@ -221,12 +278,18 @@ function handleChat(_event: any, data: ChatMessage) {
       for (let i = 0; i < total_parts; i++) {
         fullContent += partialMessages.get(i) || ''
       }
-      push('assistant', fullContent)
+      push('assistant', fullContent, {
+        contentType: data.content_type || metadata.content_type || 'markdown',
+        renderMode: data.render_mode || metadata.render_mode || 'rich_text',
+      })
       partialMessages.clear()
     }
   } else {
     // 完整消息，直接显示
-    push('assistant', content)
+    push('assistant', content, {
+      contentType: data.content_type || metadata?.content_type || 'markdown',
+      renderMode: data.render_mode || metadata?.render_mode || 'rich_text',
+    })
   }
 }
 
@@ -268,6 +331,8 @@ function getDisplayNodeName(data: Pick<StatusUpdate | QuipMessage, 'node_name' |
 
 function getActionStatusText(data: StatusUpdate): string | null {
   if (!data.event_type?.startsWith('workflow.action_')) return null
+  const quip = data.message || data.metadata?.quip || data.bridge_payload?.message
+  if (quip) return `[动作] ${quip}`
   const label = data.metadata?.action_label || data.metadata?.action_name || getDisplayNodeName(data)
   const actionStatus = data.metadata?.action_status
   if (actionStatus === 'started' || data.event_type === 'workflow.action_started') {
@@ -280,6 +345,57 @@ function getActionStatusText(data: StatusUpdate): string | null {
     return `[动作] 执行失败：${label}`
   }
   return `[动作] ${label}`
+}
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function numberField(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function getStatusMetadata(data: StatusUpdate): Record<string, unknown> {
+  const bridgeMetadata = data.bridge_payload?.metadata
+  return {
+    ...(bridgeMetadata && typeof bridgeMetadata === 'object' ? bridgeMetadata : {}),
+    ...(data.metadata || {}),
+  }
+}
+
+function buildFileActionCard(data: StatusUpdate): FileActionCard | null {
+  const metadata = getStatusMetadata(data)
+  const actionName = stringField(metadata.action_name || data.bridge_payload?.action_name)
+  if (!actionName.startsWith('workspace.')) return null
+
+  const status = stringField(metadata.action_status || data.bridge_payload?.action_status)
+  if (status !== 'completed' && status !== 'failed') return null
+
+  const target = (
+    stringField(metadata.result_target_path)
+    || stringField(metadata.result_path)
+    || stringField(metadata.action_target_path)
+    || stringField(metadata.action_rel_path)
+    || stringField(metadata.action_target || data.bridge_payload?.action_target)
+  )
+  const source = stringField(metadata.result_source_path) || stringField(metadata.action_source_path)
+  const query = stringField(metadata.action_query)
+  const matchCount = numberField(metadata.result_match_count)
+  const error = stringField(metadata.error || metadata.tool_error_code)
+  const title = data.message || stringField(metadata.quip) || (status === 'completed' ? '文件动作完成。' : '文件动作失败。')
+
+  return {
+    title,
+    status,
+    actionName,
+    target,
+    source,
+    result: stringField(metadata.result_path),
+    query,
+    matchCount,
+    tool: stringField(metadata.tool_name || metadata.tool_output_kind),
+    error,
+  }
 }
 
 function handleQuip(_event: any, data: QuipMessage) {
@@ -317,6 +433,7 @@ function handleStatus(_event: any, data: StatusUpdate) {
   const node = getDisplayNodeName(data)
   const isTerminalStatus = data.status === 'done' || data.status === 'error' || data.status === 'cancelled'
   const actionStatusText = getActionStatusText(data)
+  const fileActionCard = buildFileActionCard(data)
   if (isTerminalStatus) {
     isSending.value = false
   }
@@ -327,14 +444,16 @@ function handleStatus(_event: any, data: StatusUpdate) {
       throttleMs: STATUS_LOG_THROTTLE_MS,
       lastKey: lastStatusLogKey,
       lastAt: lastStatusLogAt,
-      force: isTerminalStatus || data.event_type === 'workflow.action_failed',
+      force: Boolean(fileActionCard) || isTerminalStatus || data.event_type === 'workflow.action_failed',
     },
   )
   if (!logDecision.shouldLog) return
   lastStatusLogAt = logDecision.nextAt
   lastStatusLogKey = logDecision.nextKey
   
-  if (actionStatusText) {
+  if (fileActionCard) {
+    push('system', actionStatusText || fileActionCard.title, { fileAction: fileActionCard })
+  } else if (actionStatusText) {
     push('system', actionStatusText)
   } else if (data.status === 'running') {
     push('system', `[状态] 正在运行... 节点: ${node} 进度: ${data.progress || 0}%`)
@@ -416,7 +535,12 @@ async function sendPrompt(prompt: string) {
   try {
     const context = buildContext()
     const res = (await ipcRenderer.invoke('agent:chat', { prompt: trimmed, context })) as AgentChatResponse
-    if (res?.ok) push('assistant', res.output || '(ok)')
+    if (res?.ok) {
+      push('assistant', res.output || '(ok)', {
+        contentType: res.content_type || 'markdown',
+        renderMode: res.render_mode || 'rich_text',
+      })
+    }
     else push('err', res?.output || '(error)')
   } catch (e) {
     push('err', String(e))
@@ -523,10 +647,50 @@ onUnmounted(() => {
     <div ref="outputRef" class="output" role="log" aria-live="polite">
       <div v-for="(l, i) in lines" :key="i" class="line" :class="l.role">
         <div
-          v-if="l.role === 'assistant'"
+          v-if="shouldRenderRichMessage(l)"
           class="rich-message"
           v-html="renderAssistantText(l.text)"
         />
+        <div
+          v-else-if="l.fileAction"
+          class="file-action-card"
+          :class="l.fileAction.status"
+        >
+          <div class="file-action-head">
+            <span class="file-action-title">{{ l.fileAction.title }}</span>
+            <span class="file-action-badge">{{ l.fileAction.status }}</span>
+          </div>
+          <div class="file-action-grid">
+            <div v-if="l.fileAction.actionName">
+              <span>动作</span>
+              <code>{{ l.fileAction.actionName }}</code>
+            </div>
+            <div v-if="l.fileAction.source">
+              <span>来源</span>
+              <code>{{ l.fileAction.source }}</code>
+            </div>
+            <div v-if="l.fileAction.target">
+              <span>目标</span>
+              <code>{{ l.fileAction.target }}</code>
+            </div>
+            <div v-if="l.fileAction.query">
+              <span>查询</span>
+              <code>{{ l.fileAction.query }}</code>
+            </div>
+            <div v-if="typeof l.fileAction.matchCount === 'number'">
+              <span>命中</span>
+              <code>{{ l.fileAction.matchCount }}</code>
+            </div>
+            <div v-if="l.fileAction.tool">
+              <span>工具</span>
+              <code>{{ l.fileAction.tool }}</code>
+            </div>
+            <div v-if="l.fileAction.error" class="file-action-error">
+              <span>错误</span>
+              <code>{{ l.fileAction.error }}</code>
+            </div>
+          </div>
+        </div>
         <template v-else>{{ l.text }}</template>
       </div>
     </div>
@@ -696,6 +860,74 @@ onUnmounted(() => {
 }
 
 .line.err {
+  color: #ffb4b4;
+}
+
+.file-action-card {
+  margin: 6px 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(183, 215, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(183, 215, 255, 0.06);
+  color: rgba(234, 234, 234, 0.88);
+  white-space: normal;
+}
+
+.file-action-card.failed {
+  border-color: rgba(255, 180, 180, 0.28);
+  background: rgba(255, 180, 180, 0.07);
+}
+
+.file-action-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.file-action-title {
+  font-weight: 800;
+}
+
+.file-action-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.file-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px 12px;
+}
+
+.file-action-grid > div {
+  min-width: 0;
+}
+
+.file-action-grid span {
+  display: block;
+  margin-bottom: 2px;
+  color: rgba(234, 234, 234, 0.52);
+  font-size: 10.5px;
+}
+
+.file-action-grid code {
+  display: block;
+  overflow: hidden;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.26);
+  color: #f3f6ff;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-action-error code {
   color: #ffb4b4;
 }
 

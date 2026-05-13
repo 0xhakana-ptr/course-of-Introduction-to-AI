@@ -5,9 +5,13 @@ from backend.app.core.config import settings
 from backend.app.schemas import WorkspaceToolDescriptorInfo, WorkspaceToolInfo
 from backend.app.tools.safe_fs import safe_write_file
 from backend.app.tools.workspace_tools import (
+    WORKSPACE_TOOL_NAME_COPY,
+    WORKSPACE_TOOL_NAME_DELETE,
     WORKSPACE_TOOL_NAME_LIST,
+    WORKSPACE_TOOL_NAME_MOVE,
     WORKSPACE_TOOL_NAME_OVERVIEW,
     WORKSPACE_TOOL_NAME_READ,
+    WORKSPACE_TOOL_NAME_SEARCH,
     WORKSPACE_TOOL_NAME_TEST,
     WORKSPACE_TOOL_NAME_WRITE,
     WORKSPACE_TOOL_OUTPUT_KIND_FILE_PREVIEW,
@@ -19,17 +23,21 @@ from backend.app.tools.workspace_tools import (
     build_workspace_tool_context,
     build_workspace_tool_user_output,
     build_workspace_overview,
+    copy_workspace_path,
+    delete_workspace_path,
     execute_workspace_tool_plan,
     get_workspace_tool_descriptor,
     get_workspace_tool_definition,
     list_workspace_tool_descriptors,
     list_workspace_entries,
     list_workspace_tool_names,
+    move_workspace_path,
     normalize_workspace_tool_plan,
     normalize_workspace_tool_result,
     plan_workspace_tool,
     read_workspace_text,
     run_workspace_tests,
+    search_workspace_text,
     summarize_command_failure,
     write_workspace_text,
 )
@@ -202,6 +210,28 @@ def test_workspace_tools_can_write_text_inside_workspace():
     assert preview["content"] == "hello workspace"
 
 
+def test_workspace_tools_can_move_copy_delete_and_search_text():
+    safe_write_file("notes/files/source.txt", "hello file tools\nsecond line")
+
+    moved = move_workspace_path("notes/files/source.txt", "notes/files/renamed.txt")
+    copied = copy_workspace_path("notes/files/renamed.txt", "notes/files/copied.txt")
+    search = search_workspace_text("hello", rel_path="notes/files")
+    deleted = delete_workspace_path("notes/files/copied.txt")
+
+    assert moved["source_path"] == "notes/files/source.txt"
+    assert moved["target_path"] == "notes/files/renamed.txt"
+    assert copied["source_path"] == "notes/files/renamed.txt"
+    assert copied["target_path"] == "notes/files/copied.txt"
+    assert search["match_count"] == 2
+    assert {match["path"] for match in search["matches"]} == {
+        "notes/files/copied.txt",
+        "notes/files/renamed.txt",
+    }
+    assert deleted["path"] == "notes/files/copied.txt"
+    with pytest.raises(FileNotFoundError):
+        read_workspace_text("notes/files/copied.txt")
+
+
 def test_workspace_tool_planning_can_select_workspace_write_tool():
     plan = plan_workspace_tool("请创建 notes/todo.txt，内容是buy milk")
     result = execute_workspace_tool_plan(plan)
@@ -247,6 +277,66 @@ def test_workspace_tool_planning_trims_followup_from_written_content():
     assert read_workspace_text("notes/followup.txt")["content"] == "hello"
 
 
+def test_workspace_tool_planning_preserves_multiline_markdown_content():
+    prompt = """请创建 notes/rich.md，内容如下：
+# Title
+
+$$
+\\int \\frac{1}{x} \\, dx = \\ln|x| + C
+$$
+
+```python
+print("hello")
+```
+
+然后读出来确认"""
+
+    plan = plan_workspace_tool(prompt)
+    result = execute_workspace_tool_plan(plan)
+    content = read_workspace_text("notes/rich.md")["content"]
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_WRITE
+    assert "# Title" in plan["tool_input"]["content"]
+    assert "```python" in plan["tool_input"]["content"]
+    assert "\\int \\frac{1}{x}" in plan["tool_input"]["content"]
+    assert "然后读出来确认" not in plan["tool_input"]["content"]
+    assert result["ok"] is True
+    assert content == plan["tool_input"]["content"]
+
+
+def test_workspace_tool_planning_strips_outer_code_fence_for_code_file():
+    prompt = """请创建 scripts/demo.py，代码如下：
+```python
+print("hello")
+```
+然后读出来确认"""
+
+    plan = plan_workspace_tool(prompt)
+    result = execute_workspace_tool_plan(plan)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_WRITE
+    assert plan["tool_input"]["rel_path"] == "scripts/demo.py"
+    assert plan["tool_input"]["content"] == 'print("hello")'
+    assert result["ok"] is True
+    assert read_workspace_text("scripts/demo.py")["content"] == 'print("hello")'
+
+
+def test_workspace_tool_planning_does_not_trim_followup_words_inside_code_block():
+    prompt = """请创建 scripts/followup_words.py，代码如下：
+```python
+print("然后读出来确认")
+```
+然后读出来确认"""
+
+    plan = plan_workspace_tool(prompt)
+    result = execute_workspace_tool_plan(plan)
+
+    assert plan["tool_name"] == WORKSPACE_TOOL_NAME_WRITE
+    assert plan["tool_input"]["content"] == 'print("然后读出来确认")'
+    assert result["ok"] is True
+    assert read_workspace_text("scripts/followup_words.py")["content"] == 'print("然后读出来确认")'
+
+
 def test_workspace_tool_planning_supports_quoted_chinese_space_path():
     plan = plan_workspace_tool("请创建 `notes/中文 文件.txt`，内容是你好")
     result = execute_workspace_tool_plan(plan)
@@ -260,6 +350,93 @@ def test_workspace_tool_planning_supports_quoted_chinese_space_path():
     }
     assert result["ok"] is True
     assert read_workspace_text("notes/中文 文件.txt")["content"] == "你好"
+
+
+def test_workspace_tool_planning_can_move_copy_delete_and_search_paths():
+    safe_write_file("notes/ops/a.txt", "hello ops")
+
+    move_plan = plan_workspace_tool("请把 notes/ops/a.txt 改名为 b.txt")
+    move_result = execute_workspace_tool_plan(move_plan)
+    copy_plan = plan_workspace_tool("请把 notes/ops/b.txt 复制到 notes/ops/c.txt")
+    copy_result = execute_workspace_tool_plan(copy_plan)
+    search_plan = plan_workspace_tool("请查找 notes/ops 下包含 hello 的文件")
+    search_result = execute_workspace_tool_plan(search_plan)
+
+    assert move_plan["tool_name"] == WORKSPACE_TOOL_NAME_MOVE
+    assert move_plan["tool_input"] == {
+        "source_path": "notes/ops/a.txt",
+        "target_path": "notes/ops/b.txt",
+        "overwrite": False,
+    }
+    assert move_result["ok"] is True
+    assert read_workspace_text("notes/ops/b.txt")["content"] == "hello ops"
+
+    assert copy_plan["tool_name"] == WORKSPACE_TOOL_NAME_COPY
+    assert copy_plan["tool_input"] == {
+        "source_path": "notes/ops/b.txt",
+        "target_path": "notes/ops/c.txt",
+        "overwrite": False,
+        "recursive": False,
+    }
+    assert copy_result["ok"] is True
+    assert read_workspace_text("notes/ops/c.txt")["content"] == "hello ops"
+
+    assert search_plan["tool_name"] == WORKSPACE_TOOL_NAME_SEARCH
+    assert search_plan["tool_input"]["rel_path"] == "notes/ops"
+    assert search_plan["tool_input"]["query"] == "hello"
+    assert search_result["ok"] is True
+    assert search_result["data"]["match_count"] == 2
+
+    delete_plan = plan_workspace_tool("请删除 notes/ops/c.txt")
+    delete_result = execute_workspace_tool_plan(delete_plan)
+
+    assert delete_plan["tool_name"] == WORKSPACE_TOOL_NAME_DELETE
+    assert delete_plan["tool_input"] == {
+        "rel_path": "notes/ops/c.txt",
+        "recursive": False,
+    }
+    assert delete_result["ok"] is True
+    assert "已删除文件" in delete_result["summary"]
+
+
+def test_workspace_tool_planning_supports_directory_copy_search_and_recursive_delete():
+    safe_write_file("notes/tree/source/a.txt", "hello tree")
+    safe_write_file("notes/tree/source/nested/b.txt", "nested tree")
+
+    copy_plan = plan_workspace_tool("请复制 notes/tree/source 目录到 notes/tree/source-copy 目录")
+    copy_result = execute_workspace_tool_plan(copy_plan)
+    search_plan = plan_workspace_tool("请在 notes/tree/source-copy 下搜索 hello")
+    search_result = execute_workspace_tool_plan(search_plan)
+
+    assert copy_plan["tool_name"] == WORKSPACE_TOOL_NAME_COPY
+    assert copy_plan["tool_input"] == {
+        "source_path": "notes/tree/source",
+        "target_path": "notes/tree/source-copy",
+        "overwrite": False,
+        "recursive": True,
+    }
+    assert copy_result["ok"] is True
+    assert read_workspace_text("notes/tree/source-copy/a.txt")["content"] == "hello tree"
+    assert read_workspace_text("notes/tree/source-copy/nested/b.txt")["content"] == "nested tree"
+
+    assert search_plan["tool_name"] == WORKSPACE_TOOL_NAME_SEARCH
+    assert search_plan["tool_input"]["rel_path"] == "notes/tree/source-copy"
+    assert search_plan["tool_input"]["query"] == "hello"
+    assert search_result["ok"] is True
+    assert search_result["data"]["match_count"] == 1
+
+    delete_plan = plan_workspace_tool("请删除 notes/tree/source-copy 目录及其内容")
+    delete_result = execute_workspace_tool_plan(delete_plan)
+
+    assert delete_plan["tool_name"] == WORKSPACE_TOOL_NAME_DELETE
+    assert delete_plan["tool_input"] == {
+        "rel_path": "notes/tree/source-copy",
+        "recursive": True,
+    }
+    assert delete_result["ok"] is True
+    assert "已删除目录" in delete_result["summary"]
+    with pytest.raises(FileNotFoundError):
+        read_workspace_text("notes/tree/source-copy/a.txt")
 
 
 def test_workspace_tool_planning_can_read_quoted_chinese_space_path():
@@ -352,6 +529,10 @@ def test_workspace_tool_registry_can_resolve_registered_tools():
     assert WORKSPACE_TOOL_NAME_READ in names
     assert WORKSPACE_TOOL_NAME_TEST in names
     assert WORKSPACE_TOOL_NAME_WRITE in names
+    assert WORKSPACE_TOOL_NAME_MOVE in names
+    assert WORKSPACE_TOOL_NAME_COPY in names
+    assert WORKSPACE_TOOL_NAME_DELETE in names
+    assert WORKSPACE_TOOL_NAME_SEARCH in names
     assert read_tool is not None
     assert read_tool.name == WORKSPACE_TOOL_NAME_READ
     assert read_descriptor is not None
@@ -378,6 +559,8 @@ def test_workspace_tool_descriptors_follow_public_schema():
             "file_preview",
             "command_result",
             "file_write",
+            "file_operation",
+            "text_search",
         }
 
     with pytest.raises(ValidationError):

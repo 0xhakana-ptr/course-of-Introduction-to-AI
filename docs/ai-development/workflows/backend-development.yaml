@@ -1,0 +1,129 @@
+name: backend-development
+version: 1
+description: >
+  Standard AI-assisted backend development workflow for this desktop pet
+  LangGraph Agent project.
+
+required_docs:
+  - docs/ai-development/00-ai-backend-development-protocol.md
+  - docs/backend/module-map.md
+  - docs/backend/agent-acceptance.md
+  - docs/backend/api-specification.md
+  - docs/design/main-guides/AI Agent 开发框架与蓝图 - Google Docs.md
+  - docs/design/main-guides/AI Agent 架构优化V2 - Google Docs.md
+  - docs/design/main-guides/AI桌宠全栈开发工作流程指南 - Google Docs.md
+
+default_loop:
+  - design_review
+  - task_decomposition
+  - risk_gate
+  - implementation
+  - verification
+  - self_review
+  - documentation_sync
+  - remaining_work_report
+
+stages:
+  - id: design_review
+    goal: Check project direction and relevant design docs before coding.
+    outputs:
+      - selected_design_references
+      - architecture_constraints
+
+  - id: task_decomposition
+    goal: Split the user request into clear low-risk implementation steps.
+    template: docs/ai-development/templates/task-brief.md
+    outputs:
+      - task_breakdown
+      - non_goals
+      - verification_plan
+
+  - id: risk_gate
+    goal: Decide whether the task can proceed automatically or requires user confirmation.
+    outputs:
+      - risk_level
+      - confirmation_required
+
+  - id: implementation
+    goal: Apply small, focused code or documentation changes.
+    rules:
+      - Do not edit backend/.env.
+      - Do not bypass workspace safety.
+      - Do not expose raw engineering artifacts to frontend roleplay.
+      - Keep top-level Turn Controller small.
+      - Prefer subgraphs for complex agent workflows.
+
+  - id: verification
+    goal: Run focused tests first, then broader tests when needed.
+    outputs:
+      - commands_run
+      - pass_fail_result
+
+  - id: self_review
+    goal: Review architecture alignment, safety boundaries, protocol compatibility, and test coverage.
+    checklist:
+      - main_guide_alignment
+      - api_or_bridge_protocol_compatibility
+      - workspace_safety
+      - engineering_state_isolation
+      - frontend_raw_output_filtering
+      - failure_path_tests
+
+  - id: documentation_sync
+    goal: Update docs and remaining work counts when behavior or architecture changes.
+    update_when:
+      - modules_added_or_removed
+      - architecture_boundary_changed
+      - bridge_json_changed
+      - environment_variable_added
+      - plan_stage_completed
+
+  - id: remaining_work_report
+    goal: Report what changed, verification result, and exact remaining work count.
+
+risk_gate:
+  can_auto_execute:
+    - focused bug fix
+    - tests
+    - small refactor
+    - documentation sync
+    - type fixes
+    - error message improvements
+    - status event improvements
+    - acceptance test additions
+
+  require_user_confirmation:
+    - delete large code
+    - remove compatibility layer
+    - change public API
+    - change Bridge JSON protocol
+    - change storage format
+    - edit backend/.env
+    - add large dependency
+    - change architecture direction
+    - run dangerous file operation
+    - bypass safety confirmation
+    - change teammate-facing interface contract
+
+verification:
+  backend_full:
+    command: scripts/ai/verify-backend.ps1
+    equivalent: uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
+
+  frontend_build:
+    command: scripts/ai/verify-frontend.ps1
+    equivalent: pnpm build
+
+  file_workflow:
+    command: scripts/ai/verify-file-workflow.ps1
+    equivalent: uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests/tools/test_workspace_tools.py backend/tests/acceptance/test_agent_loop_acceptance.py -q
+
+current_backend_priorities:
+  - id: file_workflow_subgraph
+    summary: Build a dedicated file workflow instead of adding endless parser rules.
+  - id: file_context_memory
+    summary: Track last created/read/searched files for natural follow-up tasks.
+  - id: rich_text_protocol
+    summary: Add content_type/render_mode fields so frontend does not guess rich text.
+  - id: multi_step_file_tasks
+    summary: Support write/read/run/observe/repair loops for file tasks.

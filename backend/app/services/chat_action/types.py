@@ -28,6 +28,8 @@ class ChatServiceResult:
     runtime_mode: str | None = None
     route_scope: str | None = None
     runtime_warning: str | None = None
+    content_type: str = "markdown"
+    render_mode: str = "rich_text"
 
     def with_updates(self, **updates: object) -> "ChatServiceResult":
         return replace(self, **updates)

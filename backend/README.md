@@ -182,10 +182,12 @@ $env:AI_AGENT_MESSAGES_ENDPOINT="http://127.0.0.1:8000/messages"
 - Chat 窗口是否显示节点过程提示和中文节点名
 - 字幕窗口是否显示后端 `agent:quip`
 - 简单 read/write 工具任务是否不创建 run
+- “刚才创建的文件”“刚才搜索到的文件”等同会话文件指代是否能继续执行
+- Markdown、代码块、LaTeX 是否通过 `content_type=markdown`、`render_mode=rich_text` 正常渲染
 - 桌面文本导出请求是否先弹出确认框
 - `/runs/{run_id}` 是否返回 `detail_sections`
 
-更完整的验收步骤见 [`docs/backend-agent-acceptance.md`](../docs/backend-agent-acceptance.md)。
+更完整的验收步骤见 [`docs/backend/agent-acceptance.md`](../docs/backend/agent-acceptance.md)。
 
 ## 4. 后端目录概览
 
@@ -215,17 +217,25 @@ backend/
 - `app/api/`：HTTP / WebSocket 路由层
 - `app/services/`：业务入口与领域动作
 - `app/agent_workflow/`：LangGraph 编排、诊断、摘要、修复决策
-- `app/storage/`：会话与 run 持久化
-- `app/tools/`：受限文件系统与命令执行工具
+- `app/storage/`：会话、文件上下文与 run 持久化
+- `app/tools/`：受限文件系统、文件任务解析与命令执行工具
 - `app/llm/`：OpenAI-compatible LLM 客户端
 - `app/messaging/` 与 `app/message_queue.py`：统一消息投递
 - `backend/dev/`：开发期手动调试脚本，不属于正式后端入口
 - `backend/workspace/`：运行时数据目录，不是源码目录
 
+开发入口速查：
+
+- 改接口：先看 `app/api/*_routes.py`，复杂逻辑下沉到 `app/services/*_interface.py`
+- 改聊天 Agent 主线：先看 `app/agent_workflow/loop/`，不要恢复旧 route graph
+- 改文件/命令工具：先看 `app/tools/`，不要绕过 workspace 安全限制
+- 改前端消息协议：先看 `app/messaging/`，不要让前端靠文本猜测状态或富文本
+- 改持久化：先看 `app/storage/`，涉及格式变化时需要单独计划
+
 ## 5. 详细文档
 
-- 接口说明：[`docs/backend-api-specification.md`](../docs/backend-api-specification.md)
-- 目录与模块地图：[`docs/backend-module-map.md`](../docs/backend-module-map.md)
-- 功能验收与排障：[`docs/backend-agent-acceptance.md`](../docs/backend-agent-acceptance.md)
+- 接口说明：[`docs/backend/api-specification.md`](../docs/backend/api-specification.md)
+- 目录与模块地图：[`docs/backend/module-map.md`](../docs/backend/module-map.md)
+- 功能验收与排障：[`docs/backend/agent-acceptance.md`](../docs/backend/agent-acceptance.md)
 
 如果你要继续开发后端，优先看“模块地图”；如果你要联调接口，优先看“API 说明”。

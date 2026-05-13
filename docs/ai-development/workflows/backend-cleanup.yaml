@@ -1,0 +1,236 @@
+name: backend-cleanup
+version: 1
+title: Backend Cleanup And Refactor Workflow
+title_zh: 后端整理与拆分工作流
+description: >
+  Agent-readable workflow for cleaning backend noise, documenting module
+  boundaries, and reducing oversized backend modules without changing the
+  desktop pet Agent architecture direction.
+
+required_docs:
+  - docs/ai-development/00-ai-backend-development-protocol.md
+  - docs/ai-development/workflows/backend-development.yaml
+  - docs/backend/module-map.md
+  - docs/backend/agent-acceptance.md
+  - docs/backend/api-specification.md
+  - docs/design/main-guides/AI Agent 开发框架与蓝图 - Google Docs.md
+  - docs/design/main-guides/AI Agent 架构优化V2 - Google Docs.md
+  - docs/design/main-guides/AI桌宠全栈开发工作流程指南 - Google Docs.md
+
+scope:
+  allowed_paths:
+    - backend/app/
+    - backend/tests/
+    - backend/README.md
+    - docs/backend/
+    - docs/ai-development/
+  forbidden_paths:
+    - backend/.env
+  generated_noise:
+    - backend/**/__pycache__/
+    - backend/**/*.pyc
+    - backend/.pytest_cache/
+
+architecture_constraints:
+  - Keep LongCat or other LLM providers as brain providers, not as the Agent itself.
+  - Keep LangGraph-style workflow/subgraph boundaries as the Agent behavior layer.
+  - Keep the loop runtime as the long-term direction; do not re-expand legacy route logic.
+  - Keep public backend API and frontend Bridge JSON stable unless a separate plan approves the change.
+  - Keep workspace safety checks before file writes, file deletes, shell execution, or desktop access.
+  - Do not expose raw engineering logs, tool traces, or internal JSON as roleplay chat output.
+
+execution_contract:
+  default_order:
+    - inspect_current_state
+    - choose_next_pending_phase
+    - implement_smallest_safe_slice
+    - run_focused_verification
+    - run_full_backend_verification_when_source_changes
+    - update_docs_or_workflow_status
+    - report_remaining_work
+  batch_size: one_phase_or_smaller
+  stop_conditions:
+    - public API change is required
+    - Bridge JSON protocol change is required
+    - compatibility layer removal affects teammate imports
+    - storage format migration is required
+    - destructive cleanup is not limited to generated files
+
+verification:
+  backend_full:
+    command: scripts/ai/verify-backend.ps1
+    equivalent: uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
+    required_when:
+      - backend source files changed
+      - tests changed
+      - package imports changed
+
+  file_workflow:
+    command: scripts/ai/verify-file-workflow.ps1
+    equivalent: uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests/tools/test_workspace_tools.py backend/tests/acceptance/test_agent_loop_acceptance.py -q
+    required_when:
+      - backend/app/tools/workspace_tools.py changed
+      - backend/app/agent_workflow/file/ changed
+      - file task behavior changed
+
+  frontend_build:
+    command: scripts/ai/verify-frontend.ps1
+    equivalent: pnpm build
+    required_when:
+      - frontend contract changed
+      - Bridge JSON changed
+      - frontend files changed
+
+phases:
+  - id: p0_noise_and_empty_folder_cleanup
+    status: done
+    completed_on: 2026-05-12
+    completed_summary: >
+      Removed generated backend __pycache__ folders and removed the empty
+      backend/app/agent_workflow/graph/ source directory after confirming it
+      had no source files and no active imports.
+    goal: Remove generated backend noise and empty source folders without moving real code.
+    tasks:
+      - Confirm generated cache folders are ignored by .gitignore.
+      - Remove backend __pycache__ folders and pyc files only.
+      - Remove backend/app/agent_workflow/graph/ only if it contains no source file and has no imports.
+      - Update module documentation if visible structure changes.
+    non_goals:
+      - Do not move backend packages.
+      - Do not rename public modules.
+      - Do not edit backend/.env.
+    verification:
+      - command: scripts/ai/verify-backend.ps1
+        reason: Import graph should remain valid after cleanup.
+
+  - id: p1_backend_module_map_sync
+    status: done
+    completed_on: 2026-05-12
+    completed_summary: >
+      Updated backend module documentation with stable entry points, internal
+      helper boundaries, non-source directories, and the current loop/action
+      package map.
+    goal: Make backend directory boundaries clear enough that teammates know where to add code.
+    tasks:
+      - Update docs/backend/module-map.md with current backend/app package responsibilities.
+      - Update backend/README.md only if run or development instructions are stale.
+      - Mark generated and local-only directories such as backend/workspace as non-source assets.
+      - Document which modules are stable entry points and which are internal helpers.
+    non_goals:
+      - Do not duplicate long design documents in README.
+      - Do not turn README into a changelog.
+    verification:
+      - command: rg -n "docs/ai-workflows|docs/plan/" docs backend AGENTS.md -g "*.md"
+        reason: Detect stale old doc paths after docs reorganization.
+
+  - id: p2_workspace_tools_split
+    status: done
+    completed_on: 2026-05-12
+    completed_summary: >
+      Kept backend/app/tools/workspace_tools.py as the public facade and
+      extracted workspace constants, utility normalization, file operations,
+      and output formatting into backend/app/tools/workspace/. Existing
+      safe_fs.py and workspace_tool_models.py remain the safety and model
+      owners to avoid duplicate wrapper modules.
+    goal: Split oversized workspace tool logic while keeping tool behavior and public imports stable.
+    current_hotspot:
+      path: backend/app/tools/workspace_tools.py
+      reason: This file is large and mixes path safety, request parsing, execution, and result formatting.
+    target_shape:
+      - backend/app/tools/workspace_tools.py remains the public facade.
+      - backend/app/tools/safe_fs.py owns path validation and workspace boundaries.
+      - backend/app/tools/workspace_tool_models.py owns public workspace tool models.
+      - backend/app/tools/workspace/constants.py owns workspace tool constants and keyword sets.
+      - backend/app/tools/workspace/utils.py owns shared normalization helpers.
+      - backend/app/tools/workspace/file_ops.py owns read/write/list/search operations.
+      - backend/app/tools/workspace/formatters.py owns user-facing tool result formatting.
+    tasks:
+      - Extract pure helpers first.
+      - Keep existing public function names available from workspace_tools.py.
+      - Add or adjust focused tests before changing behavior.
+      - Preserve safety confirmation behavior.
+    non_goals:
+      - Do not make the file Agent smarter by adding keyword rules.
+      - Do not bypass confirmation or workspace checks.
+      - Do not change frontend protocol.
+    verification:
+      - command: scripts/ai/verify-file-workflow.ps1
+        reason: File workflow behavior must remain stable.
+      - command: scripts/ai/verify-backend.ps1
+        reason: Full backend import and behavior check.
+
+  - id: p3_agent_loop_graph_split
+    status: done
+    completed_on: 2026-05-12
+    completed_summary: >
+      Kept backend/app/agent_workflow/loop/agent_loop_graph.py as the public
+      graph facade and extracted file follow-up logic plus planning,
+      confirmation, and recovery helpers into loop/file_followups.py and
+      loop/planning.py. Event emission remains owned by agent_workflow/output/
+      to avoid duplicate event layers.
+    goal: Reduce top-level loop controller size without moving Agent behavior back to route mode.
+    current_hotspot:
+      path: backend/app/agent_workflow/loop/agent_loop_graph.py
+      reason: This file is the Turn Controller and has accumulated planning, follow-up, execution, and event logic.
+    target_shape:
+      - backend/app/agent_workflow/loop/agent_loop_graph.py remains the public graph facade.
+      - backend/app/agent_workflow/loop/planning.py owns ActionPlan construction, runtime confirmation, overwrite confirmation, and recovery helpers.
+      - backend/app/agent_workflow/loop/file_followups.py owns file follow-up detection and context use.
+      - backend/app/agent_workflow/output/ owns status, quip, action, and terminal event emission helpers.
+      - backend/app/agent_workflow/loop/execution.py may own execution orchestration later, but only if extraction stays low-risk.
+    tasks:
+      - Extract pure helper functions with tests where practical.
+      - Keep run_agent_loop and create_agent_loop_graph public entry points stable.
+      - Keep LangGraph node boundaries visible.
+      - Keep node-start JSON events simple and frontend-compatible.
+    non_goals:
+      - Do not rebuild the entire Agent runtime.
+      - Do not reintroduce route-first behavior.
+      - Do not change Bridge JSON without a separate protocol plan.
+    verification:
+      - command: scripts/ai/verify-backend.ps1
+        reason: Loop imports and acceptance behavior must remain stable.
+
+  - id: p4_schema_and_storage_review
+    status: done
+    completed_on: 2026-05-13
+    completed_summary: >
+      Reviewed schema import usage and conversation storage responsibilities.
+      Kept backend/app/schemas.py as the stable API contract aggregator because
+      it is shared by API routes, services, messaging, tools, and tests.
+      Deferred conversation_store.py splitting to a dedicated storage refactor
+      because it touches session metadata, context compression, persistence
+      shape, TTL pruning, and compatibility behavior.
+    goal: Assess whether schemas and storage should be split after high-risk hotspots are handled.
+    current_hotspots:
+      - backend/app/schemas.py
+      - backend/app/storage/conversation_store.py
+    tasks:
+      - Review API schema import usage.
+      - Decide whether schema split is worth the API churn.
+      - Split only if imports can stay backward-compatible or the team accepts the change.
+    non_goals:
+      - Do not change API response shapes during cleanup.
+      - Do not migrate storage format without a migration plan.
+    verification:
+      - command: scripts/ai/verify-backend.ps1
+        reason: API schema and storage changes are broad.
+
+progress_reporting:
+  format:
+    changed:
+      - files_or_modules_changed
+    verified:
+      - commands_run
+    remaining:
+      - pending_phase_count
+      - pending_phase_ids
+  count_rule: Count only phases with status other than done.
+
+done_when:
+  - Generated backend cache folders are absent from the working tree.
+  - Empty backend source folders are removed or documented with a purpose.
+  - Backend module documentation matches current package boundaries.
+  - workspace_tools.py is a stable public facade instead of a large mixed-responsibility module.
+  - agent_loop_graph.py is a stable public facade with extracted helper modules.
+  - Full backend verification passes.
