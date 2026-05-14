@@ -16,40 +16,59 @@
     "map": {
         // 这些就是后端 AI agent 只需要知道的“通用标签”
         "开心": [
-            "expr/@name/Happy",
-            "expr/开心.exp3.json"
+            "expr/expressions/阿尼亚.exp3.json",
+            "expr/expressions/比心.exp3.json",
+            "expr/expressions/星星.exp3.json"
         ],
-        "生气": "expr/@name/生气",
-        "难过": "expr/@name/Sad",
-        "疑惑": "expr/@name/Question",
-        "看傻了": "expr/@name/Blank",
-        "害羞": "expr/@name/Shy",
-        "黑脸": "expr/@name/Dark",
-        "眩晕": "expr/@name/Dizzy",
+        "生气": [
+            "expr/@name/生气",
+            "expr/expressions/生气.exp3.json"
+        ],
+        "难过": [
+            "expr/@name/荷包蛋",
+            "expr/expressions/哭.exp3.json"
+        ],
+        "疑惑": [
+            "expr/expressions/眼镜.exp3.json"
+        ],
+        "看傻了": [
+            "expr/@name/- -"
+        ],
+        "害羞": [
+            "expr/expressions/脸红.exp3.json"
+        ],
+        "黑脸": [
+            "expr/expressions/脸黑.exp3.json"
+        ],
+        //"眩晕": ["expr/@name/Dizzy"],
+        "淘气":[
+            "expr/expressions/吐舌.exp3.json"
+        ],
 
         //工作流标签
         // 思考状态
         "thinking": [
-            "expr/expressions/眼镜.exp3.json",
-            "expr/expressions/外套.exp3.json"
+            "expr/expressions/眼镜.exp3.json"
         ],
         
         // 专注状态
-        "focused": "expr/expressions/眼镜.exp3.json",
+        "focused": "expr/@name/眼镜",
         
         // 编程状态
         "coding": [
-            "expr/expressions/眼镜.exp3.json"
+            "expr/@name/眼镜"
         ],
         
         // 工作状态
         "working": [
-            "expr/expressions/眼镜.exp3.json"
+            "expr/@name/眼镜",
+            "expr/expressions/外套.exp3.json"
         ],
         
         // 分析状态
         "analyzing": [
-            "expr/expressions/眼镜.exp3.json"
+            "expr/@name/眼镜"
+            
         ],
         
         // 担忧状态
@@ -59,6 +78,7 @@
         
         // 开心状态
         "happy": [
+            "expr/expressions/阿尼亚.exp3.json",
             "expr/expressions/比心.exp3.json",
             "expr/expressions/星星.exp3.json"
         ],
