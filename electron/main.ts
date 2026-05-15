@@ -23,7 +23,6 @@ if (forceAngle) {
 
 let mainWindow: BrowserWindow | null
 let consoleWindow: BrowserWindow | null
-let quipWindow: BrowserWindow | null
 let chatWindow: BrowserWindow | null
 let mouseTracking: { dispose: () => void } | null = null
 const mouseTrackDebug = String(process.env.MOUSETRACK_DEBUG ?? '').trim() === '1'
@@ -361,47 +360,6 @@ function createConsoleWindow() {
     })
 }
 
-function createQuipWindow() {
-    if (quipWindow && !quipWindow.isDestroyed()) {
-        showAndFocus(quipWindow)
-        return
-    }
-
-    quipWindow = new BrowserWindow({
-        width: 420,
-        height: 140,
-        minWidth: 260,
-        minHeight: 90,
-        backgroundColor: '#00000000',
-        transparent: true,
-        frame: false,
-        alwaysOnTop: true,
-        hasShadow: false,
-        skipTaskbar: true,
-        // 允许拖动边缘/四角进行缩放（Windows 无边框下需要 thickFrame 提供原生缩放边框）
-        resizable: true,
-        thickFrame: true,
-        webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-        },
-    })
-
-    quipWindow.on('closed', () => {
-        quipWindow = null
-    })
-
-    if (!app.isPackaged) {
-        const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
-        void quipWindow.loadURL(`${devServerUrl}/?mode=quip`)
-        return
-    }
-
-    void quipWindow.loadFile(path.join(__dirname, '../dist/index.html'), {
-        query: { mode: 'quip' },
-    })
-}
-
 function createChatWindow() {
     if (chatWindow && !chatWindow.isDestroyed()) {
         showAndFocus(chatWindow)
@@ -510,23 +468,12 @@ ipcMain.on('window:setIgnoreMouseEvents', (event, ignore: unknown) => {
     }
 })
 
-ipcMain.on('quip:minimize', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    win.minimize()
-})
-
-// Any renderer can push quip text; main process forwards it to the quip window.
-ipcMain.on('quip:setText', (_event, text: unknown) => {
-    if (!quipWindow || quipWindow.isDestroyed()) return
-    const t = typeof text === 'string' ? text : String(text ?? '')
-    quipWindow.webContents.send('quip:text', t)
-})
 
 type AgentChatRequest = {
     prompt: string
     // Optional context string; UI may pass recent history.
     context?: string
+    sessionId?: string
 }
 
 type AgentChatResponse = {
@@ -534,6 +481,7 @@ type AgentChatResponse = {
     output: string
     error?: string
     run_id?: string | null
+    session_id?: string
     content_type?: 'plain_text' | 'markdown'
     render_mode?: 'plain_text' | 'rich_text'
 }
@@ -549,7 +497,7 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ prompt, context }),
+                body: JSON.stringify({ prompt, context, session_id: req.sessionId }),
             })
 
             const text = await res.text()
@@ -566,7 +514,8 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
                 const runId = typeof json?.run_id === 'string' ? json.run_id : null
                 const contentType = json?.content_type === 'plain_text' ? 'plain_text' : json?.content_type === 'markdown' ? 'markdown' : undefined
                 const renderMode = json?.render_mode === 'plain_text' ? 'plain_text' : json?.render_mode === 'rich_text' ? 'rich_text' : undefined
-                return { ok, output: out || text, error, run_id: runId, content_type: contentType, render_mode: renderMode }
+                const sessionId = typeof json?.session_id === 'string' ? json.session_id : undefined
+                return { ok, output: out || text, error, run_id: runId, session_id: sessionId, content_type: contentType, render_mode: renderMode }
             } catch {
                 return { ok: true, output: text }
             }
@@ -589,7 +538,7 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
 
 ipcMain.handle('agent:chat', async (_event, payload: unknown): Promise<AgentChatResponse> => {
     const p = payload as Partial<AgentChatRequest> | null
-    return await runBackendAgent({ prompt: String(p?.prompt ?? ''), context: typeof p?.context === 'string' ? p.context : '' })
+    return await runBackendAgent({ prompt: String(p?.prompt ?? ''), context: typeof p?.context === 'string' ? p.context : '', sessionId: typeof p?.sessionId === 'string' ? p.sessionId : undefined })
 })
 
 ipcMain.handle('window:isCursorOver', (event) => {
@@ -599,6 +548,78 @@ ipcMain.handle('window:isCursorOver', (event) => {
     const { x, y } = screen.getCursorScreenPoint()
     const b = win.getBounds()
     return x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height
+})
+
+// Chat session management via backend API
+ipcMain.handle('chat:listSessions', async (_event, payload: unknown): Promise<any> => {
+    const baseUrl = resolveAgentBaseUrl()
+    if (!baseUrl) return { ok: false, sessions: [] }
+    try {
+        const limit = (payload as any)?.limit || 20
+        const res = await fetch(`${baseUrl}/chat/sessions?limit=${limit}`, {
+            headers: { accept: 'application/json' },
+        })
+        if (!res.ok) return { ok: false, sessions: [] }
+        const json = await res.json()
+        return { ok: true, sessions: json?.sessions || json?.items || [] }
+    } catch (e) {
+        return { ok: false, sessions: [], error: String(e) }
+    }
+})
+
+ipcMain.handle('chat:loadSession', async (_event, payload: unknown): Promise<any> => {
+    const baseUrl = resolveAgentBaseUrl()
+    const sessionId = (payload as any)?.sessionId
+    if (!baseUrl || !sessionId) return { ok: false, messages: [] }
+    try {
+        const res = await fetch(`${baseUrl}/chat/sessions/${sessionId}/messages`, {
+            headers: { accept: 'application/json' },
+        })
+        if (!res.ok) return { ok: false, messages: [] }
+        const json = await res.json()
+        // Extract messages from the response
+        const messages = json?.messages || json?.recent_messages || []
+        return { ok: true, messages, sessionId }
+    } catch (e) {
+        return { ok: false, messages: [], error: String(e) }
+    }
+})
+
+ipcMain.handle('chat:deleteSession', async (_event, payload: unknown): Promise<any> => {
+    const baseUrl = resolveAgentBaseUrl()
+    const sessionId = (payload as any)?.sessionId
+    if (!baseUrl || !sessionId) return { ok: false }
+    try {
+        const res = await fetch(`${baseUrl}/chat/sessions/${sessionId}/messages`, {
+            method: 'DELETE',
+        })
+        return { ok: res.ok }
+    } catch (e) {
+        return { ok: false, error: String(e) }
+    }
+})
+
+ipcMain.handle('chat:exportSession', async (_event, payload: unknown): Promise<any> => {
+    const baseUrl = resolveAgentBaseUrl()
+    const sessionId = (payload as any)?.sessionId
+    if (!baseUrl || !sessionId) return { ok: false }
+    try {
+        const res = await fetch(`${baseUrl}/chat/sessions/${sessionId}/messages`, {
+            headers: { accept: 'application/json' },
+        })
+        if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
+        const json = await res.json()
+        const messages = json?.messages || []
+        // Format as readable text
+        const lines: string[] = []
+        for (const msg of messages) {
+            const role = msg.role === 'user' ? '你' : msg.role === 'assistant' ? 'AI' : msg.role
+            lines.push(`[${role}] ${msg.content}`)
+        }
+        return { ok: true, text: lines.join('\n\n'), sessionId }
+    } catch (e) {
+        return { ok: false, error: String(e) }
+    }
 })
 
 // CLI window -> main window command bridge
@@ -707,8 +728,8 @@ function dispatchAgentMessage(message: AgentMessageEnvelope) {
 
     switch (channel) {
         case 'agent:quip':
-            if (quipWindow && !quipWindow.isDestroyed()) {
-                quipWindow.webContents.send('agent:quip', message)
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('agent:quip', message)
             }
             if (chatWindow && !chatWindow.isDestroyed()) {
                 chatWindow.webContents.send('agent:quip', message)
@@ -879,7 +900,6 @@ app.whenReady().then(() => {
     mouseTracking = installGlobalMouseTracking(() => mainWindow)
     createWindow()
     createConsoleWindow()
-    createQuipWindow()
     createChatWindow()
     startLive2DWebSocketServer()
     startBackendMessageBridge()

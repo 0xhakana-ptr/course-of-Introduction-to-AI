@@ -1,9 +1,10 @@
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import agent_router, chat_router, health_router, llm_router, message_router, run_router
+from .api import agent_router, chat_router, health_router, llm_router, message_router, run_router, workspace_router
 from .api.error_handlers import register_exception_handlers
 from .core.config import settings
 from .core.logging_config import configure_logging
@@ -33,7 +34,15 @@ async def lifespan(app: FastAPI):
         )
     else:
         logger.info("Startup recovery completed: scanned_count=%s", recovery.scanned_count)
+
+    # Start idle quip background loop
+    idle_task = asyncio.create_task(_idle_quip_loop())
     yield
+    idle_task.cancel()
+    try:
+        await idle_task
+    except asyncio.CancelledError:
+        pass
 
 
 def create_app() -> FastAPI:
@@ -44,8 +53,21 @@ def create_app() -> FastAPI:
     app.include_router(agent_router)
     app.include_router(chat_router)
     app.include_router(run_router)
+    app.include_router(workspace_router)
     app.include_router(message_router)
     return app
+
+
+
+async def _idle_quip_loop():
+    """Periodically check and emit idle quips when the agent is inactive."""
+    from .agent_workflow.layers.roleplay_output import roleplay_agent
+    while True:
+        await asyncio.sleep(6)
+        try:
+            roleplay_agent.emit_idle_quip_if_due()
+        except Exception:
+            pass
 
 
 app = create_app()

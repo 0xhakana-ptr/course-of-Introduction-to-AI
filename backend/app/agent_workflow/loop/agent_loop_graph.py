@@ -1,4 +1,4 @@
-"""Top-level turn controller for one `/chat` request.
+"""Layer 3 work engine: pure LangGraph agent loop for coding/work requests.
 
 This module keeps the existing LangGraph file name for import stability, but
 its architectural role is now narrower than a full coding/debugging agent
@@ -364,9 +364,9 @@ def _build_action_plan(state: AgentLoopState) -> ActionPlan:
         "final.answer",
         {
             "content": (
-                "我这次没有完全听懂你的意思。"
-                "\n\n如果你只是想聊天，可以直接继续说；"
-                "如果你想让我处理代码任务，可以补充目标、文件、报错或 run_id。"
+                "??????????????"
+                "\n\n?????????????????"
+                "?????????????????????????? run_id?"
             )
         },
         reason="Unknown intent falls back to final answer.",
@@ -428,18 +428,6 @@ def plan_node(state: AgentLoopState) -> AgentLoopState:
     )
 
 
-def _execute_chat_reply(state: AgentLoopState) -> AgentActionResult:
-    result = call_llm_sync(
-        _normalize_text(state.get("user_input")),
-        state.get("context"),
-    )
-    return AgentActionResult(
-        action_name="chat.reply",
-        ok=result.ok,
-        summary=result.output,
-        data={"content": result.output},
-        error=result.error if not result.ok else None,
-    )
 
 
 def _agent_action_result_from_mapping(
@@ -513,8 +501,6 @@ def _execute_action_via_coding_workflow(state: AgentLoopState) -> AgentActionRes
 
 def _execute_selected_action(state: AgentLoopState) -> AgentActionResult:
     action_name = _normalize_text(state.get("action_name"))
-    if action_name == "chat.reply":
-        return _execute_chat_reply(state)
     if action_name in AGENT_ACTIONS_DISPATCHED_TO_CODING_WORKFLOW:
         return _execute_action_via_coding_workflow(state)
     return default_action_registry.execute(
@@ -544,11 +530,11 @@ def _build_user_visible_run_action_output(
             run_id=run_id,
             status=status,
             snapshot_summary=summary,
-            next_action=next_action or "等待后台开始执行，然后继续查询任务状态。",
+            next_action=next_action or "????????????????????",
         )
 
     if action == "inspect":
-        next_action = next_action or "需要时继续查询任务状态。"
+        next_action = next_action or "????????????"
         if bool(data.get("terminal")):
             return build_run_terminal_output(
                 run_id=run_id,
@@ -690,7 +676,7 @@ def observe_node(state: AgentLoopState) -> AgentLoopState:
     emit_workflow_node_entered(state, "observe_node")
     action_result = _coerce_action_result(state.get("action_result"))
     step_count = coerce_int(state.get("step_count"), default=0) + 1
-    max_steps = coerce_int(state.get("max_steps"), default=3)
+    max_steps = coerce_int(state.get("max_steps"), default=15)
     should_replan, recovery_reason, recovery_message = should_replan_after_failure(
         state,
         action_result,
@@ -751,7 +737,7 @@ def decide_continue_node(state: AgentLoopState) -> AgentLoopState:
     emit_workflow_node_entered(state, "decide_continue_node")
     done = coerce_bool(state.get("done"))
     step_count = coerce_int(state.get("step_count"), default=0)
-    max_steps = coerce_int(state.get("max_steps"), default=3)
+    max_steps = coerce_int(state.get("max_steps"), default=15)
     updates: dict[str, object] = {
         "done": done,
         "ui_status": _normalize_text(state.get("ui_status"), default="loop_decided"),
@@ -801,53 +787,39 @@ def route_after_decision(state: AgentLoopState) -> str:
 
 def finalize_node(state: AgentLoopState) -> AgentLoopState:
     emit_workflow_node_entered(state, "finalize_node")
-    next_state = append_workflow_trace(
+    # Roleplay stripped - handled by Layer 2 (RoleplayAgent)
+    next_state = merge_agent_state(
         state,
+        error=None,
+        ui_status="work_engine_finalized",
+    )
+    next_state = append_workflow_trace(
+        next_state,
         node="finalize_node",
-        event="loop_finalized",
-        ui_status=_normalize_text(state.get("ui_status"), default="loop_finalized"),
+        event="work_engine_finalized",
+        ui_status="work_engine_finalized",
         details={"stop_reason": state.get("stop_reason") or "completed"},
     )
-    next_state = merge_agent_state(
-        next_state,
-        error=None,
-        ui_status=_normalize_text(state.get("ui_status"), default="loop_finalized"),
-    )
-    next_state = append_workflow_trace(
-        next_state,
-        node="roleplay_node",
-        event="roleplay_emit",
-        ui_status=_normalize_text(next_state.get("ui_status")),
-        details={"node_name": "agent_loop_roleplay"},
-    )
-    from ..output.roleplay import emit_roleplay_state
-
-    emitted_state = emit_roleplay_state(
-        next_state,
-        default_node_name="agent_loop_roleplay",
-    )
-    emit_workflow_terminal_status(emitted_state, node_name="finalize_node")
-    return emitted_state
+    emit_workflow_terminal_status(next_state, node_name="finalize_node")
+    return next_state
 
 
 def failure_node(state: AgentLoopState) -> AgentLoopState:
-    emit_workflow_node_entered(state, "failure_node")
+    # Roleplay stripped - handled by Layer 2 (RoleplayAgent)
     next_state = merge_agent_state(
         state,
-        output=_normalize_text(state.get("output"), default="Agent Loop 执行失败。"),
-        ui_status=_normalize_text(state.get("ui_status"), default="loop_failed"),
+        output=_normalize_text(state.get("output"), default="Agent Loop failed"),
+        ui_status="work_engine_failed",
     )
     next_state = append_workflow_trace(
         next_state,
         node="failure_node",
-        event="loop_failed",
-        ui_status=_normalize_text(next_state.get("ui_status")),
+        event="work_engine_failed",
+        ui_status="work_engine_failed",
         details={"error": state.get("error")},
     )
     emit_workflow_terminal_status(next_state, node_name="failure_node")
     return next_state
-
-
 def create_agent_loop_graph():
     workflow = StateGraph(AgentLoopState)
     register_agent_graph_nodes(
@@ -863,8 +835,8 @@ def create_agent_loop_graph():
         },
         failure_builder=build_workflow_node_failure_state,
     )
-    workflow.set_entry_point("perceive_node")
-    workflow.add_edge("perceive_node", "plan_node")
+    # perceive_node removed - Layer 1 handles intent detection
+    workflow.set_entry_point("plan_node")
     workflow.add_edge("plan_node", "act_node")
     workflow.add_edge("act_node", "observe_node")
     workflow.add_edge("observe_node", "decide_continue_node")
@@ -904,7 +876,7 @@ def run_agent_loop(
     )
     initial_state["runtime_mode"] = "loop"
     initial_state["step_count"] = 0
-    initial_state["max_steps"] = 3
+    initial_state["max_steps"] = 15
     initial_state["action_queue"] = []
     initial_state["recovery_attempted"] = False
     initial_state["recovery_reason"] = None

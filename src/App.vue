@@ -4,6 +4,7 @@ import * as PIXI from 'pixi.js'
 import { getIpcRenderer } from './platform/electronIpc'
 import Live2DConsole from './components/Live2DConsole.vue'
 import AgentChat from './components/AgentChat.vue'
+import QuipOverlay from './components/QuipOverlay.vue'
 import { installLive2DFocusMouseTracking } from './mouseTracking'
 
 (window as any).PIXI = PIXI
@@ -28,80 +29,8 @@ const ipcRenderer = getIpcRenderer()
 const modelUrl = computed(() => new URL(DEFAULT_MODEL_JSON_PATH, window.location.href).toString())
 const isModel3 = computed(() => DEFAULT_MODEL_JSON_PATH.toLowerCase().endsWith('.model3.json'))
 const isCliMode = computed(() => new URLSearchParams(window.location.search).get('mode') === 'cli')
-const isQuipMode = computed(() => new URLSearchParams(window.location.search).get('mode') === 'quip')
 const isChatMode = computed(() => new URLSearchParams(window.location.search).get('mode') === 'chat')
-const isMainLive2DMode = computed(() => !isCliMode.value && !isQuipMode.value && !isChatMode.value)
-
-const quipText = ref('')
-const WORKFLOW_QUIP_THROTTLE_MS = 900
-
-type AgentQuipMessage = {
-  type: 'quip'
-  content?: string
-  node_name?: string
-  event_type?: string
-  event_source?: string
-  event_stage?: string
-  metadata?: {
-    priority?: 'low' | 'medium' | 'high'
-    duration?: number
-    node_label?: string
-    phase?: string
-  }
-}
-
-let lastWorkflowQuipAt = 0
-let pendingWorkflowQuipText = ''
-let pendingWorkflowQuipTimer: number | null = null
-
-function setQuipText(text: string) {
-  quipText.value = text.trim()
-}
-
-function clearPendingWorkflowQuip() {
-  if (pendingWorkflowQuipTimer != null) {
-    window.clearTimeout(pendingWorkflowQuipTimer)
-    pendingWorkflowQuipTimer = null
-  }
-  pendingWorkflowQuipText = ''
-}
-
-function showWorkflowQuipSoon(content: string) {
-  const now = Date.now()
-  const elapsed = now - lastWorkflowQuipAt
-  if (elapsed >= WORKFLOW_QUIP_THROTTLE_MS) {
-    clearPendingWorkflowQuip()
-    setQuipText(content)
-    lastWorkflowQuipAt = now
-    return
-  }
-
-  pendingWorkflowQuipText = content
-  if (pendingWorkflowQuipTimer != null) return
-  pendingWorkflowQuipTimer = window.setTimeout(() => {
-    pendingWorkflowQuipTimer = null
-    if (!pendingWorkflowQuipText) return
-    setQuipText(pendingWorkflowQuipText)
-    pendingWorkflowQuipText = ''
-    lastWorkflowQuipAt = Date.now()
-  }, WORKFLOW_QUIP_THROTTLE_MS - elapsed)
-}
-
-function showAgentQuipMessage(message: AgentQuipMessage) {
-  const content = typeof message?.content === 'string' ? message.content.trim() : ''
-  if (!content) return
-
-  const isWorkflowNodeQuip = message.event_type === 'workflow.node_entered'
-  const isHighPriority = message.metadata?.priority === 'high'
-  if (isWorkflowNodeQuip && !isHighPriority) {
-    showWorkflowQuipSoon(content)
-    return
-  }
-
-  clearPendingWorkflowQuip()
-  setQuipText(content)
-  lastWorkflowQuipAt = Date.now()
-}
+const isMainLive2DMode = computed(() => !isCliMode.value && !isChatMode.value)
 
 // Hover fade + click-through passthrough:
 // - Hovering the window fades it and enables click-through to underlying apps.
@@ -691,9 +620,6 @@ function closeApp() {
   ipcRenderer?.send('close-app')
 }
 
-function minimizeSelf() {
-  ipcRenderer?.send('quip:minimize')
-}
 
 function openLive2DConsole() {
   ipcRenderer?.send('ui:toggleConsole')
@@ -715,12 +641,21 @@ function setWindowClickThrough(ignore: boolean) {
 }
 
 function syncPassthroughState() {
-  // When faded we want true click-through; otherwise interactive.
-  if (isManualResizing.value) {
-    setWindowClickThrough(false)
-    return
+   // When faded we want true click-through; otherwise interactive.
+   if (isManualResizing.value) {
+     setWindowClickThrough(false)
+     return
+   }
+   setWindowClickThrough(shouldFade.value)
+   syncCursorPollState()
+ }
+
+function syncCursorPollState() {
+  if (shouldFade.value) {
+    startCursorPoll()
+  } else {
+    stopCursorPoll()
   }
-  setWindowClickThrough(shouldFade.value)
 }
 
 type ManualResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
@@ -1129,7 +1064,6 @@ async function executeLive2DCommand(commandLine: string): Promise<{ ok: boolean;
         `- startup expr <a,b,c>    （设置启动默认表情，逗号分隔）\n` +
         `- startup clear           （清除启动默认表情）\n` +
         `- startup show            （查看启动默认表情）\n` +
-        `- quip <text>             （更新字幕窗口的打趣话语）\n` +
         `- stop                   （停止所有动作）\n` +
         `- focus <x> <y> [instant]（x/y: -1..1）\n` +
         `- tap <x> <y>            （x/y: 屏幕坐标，像素）\n`,
@@ -1196,12 +1130,6 @@ async function executeLive2DCommand(commandLine: string): Promise<{ ok: boolean;
     return { ok: false, output: '用法：list motions | list expressions' }
   }
 
-  if (head === 'quip' || head === 'say') {
-    const text = args.slice(1).join(' ').trim()
-    if (!text) return { ok: false, output: '用法：quip <text>' }
-    ipcRenderer?.send('quip:setText', text)
-    return { ok: true, output: 'quip updated' }
-  }
 
   if (!currentModel) return { ok: false, output: '模型尚未加载完成（currentModel is null）' }
 
@@ -1543,28 +1471,6 @@ onMounted(async () => {
     return
   }
 
-  if (isQuipMode.value) {
-    loadState.value = 'ready'
-    // Receive quip text updates.
-    if (ipcRenderer?.on) {
-      const handler = (_evt: any, text: any) => {
-        clearPendingWorkflowQuip()
-        setQuipText(typeof text === 'string' ? text : String(text ?? ''))
-      }
-      const agentQuipHandler = (_evt: any, message: AgentQuipMessage) => {
-        showAgentQuipMessage(message)
-      }
-      ipcRenderer.on('quip:text', handler)
-      ipcRenderer.on('agent:quip', agentQuipHandler)
-      onBeforeUnmount(() => {
-        clearPendingWorkflowQuip()
-        ipcRenderer.removeListener?.('quip:text', handler)
-        ipcRenderer.removeListener?.('agent:quip', agentQuipHandler)
-      })
-    }
-    return
-  }
-
   const canvas = canvasRef.value
   if (!canvas) return
 
@@ -1733,7 +1639,7 @@ onBeforeUnmount(() => {
 })
 
 // Main window command executor (called by Electron main via IPC)
-if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.value) {
+if (ipcRenderer?.on && !isCliMode.value && !isChatMode.value) {
   ipcRenderer.on('live2d:command', async (_evt: any, payload: any) => {
     const id = payload?.id
     const cmd = payload?.cmd
@@ -1866,19 +1772,6 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
 
     <AgentChat v-if="isChatMode" />
 
-    <template v-if="isQuipMode">
-      <div class="quip" :style="isInteractive ? '-webkit-app-region: drag' : '-webkit-app-region: no-drag'">
-        <button
-          v-if="ipcRenderer"
-          class="minimize-btn"
-          style="-webkit-app-region: no-drag"
-          @click="minimizeSelf"
-        >
-          -
-        </button>
-        <div class="quip-text">{{ quipText || '...' }}</div>
-      </div>
-    </template>
 
     <template v-else-if="!isChatMode">
       <div class="titlebar">
@@ -1904,6 +1797,8 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
         </div>
 
         <canvas ref="canvasRef" class="stage" />
+
+        <QuipOverlay />
 
         <!-- Drag only in the middle 75% area while interactive (Ctrl held). -->
         <div
@@ -2153,48 +2048,5 @@ if (ipcRenderer?.on && !isCliMode.value && !isQuipMode.value && !isChatMode.valu
   background-color: rgba(0, 0, 0, 0.55);
 }
 
-.quip {
-  position: absolute;
-  inset: 0;
-  padding: 14px 18px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 
-.quip-text {
-  color: rgba(255, 255, 255, 0.96);
-  font-size: 20px;
-  line-height: 1.25;
-  text-align: center;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
-  user-select: none;
-  pointer-events: none;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  max-width: 100%;
-  max-height: 100%;
-  overflow: hidden;
-}
-
-.minimize-btn {
-  position: absolute;
-  top: 8px;
-  right: 10px;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  border: none;
-  background-color: rgba(160, 160, 160, 0.35);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 18px;
-  line-height: 18px;
-  cursor: pointer;
-}
-
-.minimize-btn:hover {
-  background-color: rgba(160, 160, 160, 0.5);
-}
 </style>

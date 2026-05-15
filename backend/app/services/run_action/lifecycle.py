@@ -1,7 +1,7 @@
 import logging
 
 from ...core.config import settings
-from ...agent_workflow.output.roleplay import emit_roleplay_message
+from ...agent_workflow.output.roleplay_agent import emit_roleplay_message
 from ...agent_workflow.repair.retry_guidance import (
     build_terminal_retry_guidance,
     resolve_retry_guidance_from_repair_result,

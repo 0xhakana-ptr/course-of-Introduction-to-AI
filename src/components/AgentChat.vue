@@ -17,6 +17,9 @@ import MarkdownIt from 'markdown-it'
 import markdownItKatex from 'markdown-it-katex'
 import 'katex/dist/katex.min.css'
 import { getIpcRenderer } from '../platform/electronIpc'
+import BackendIndicator from './BackendIndicator.vue'
+import ChatHistoryPanel from './ChatHistoryPanel.vue'
+import WorkspaceSelector from './WorkspaceSelector.vue'
 
 type FileActionCard = {
   title: string
@@ -334,6 +337,64 @@ const DESKTOP_EXPORT_TARGET_PATTERN = /(桌面|desktop)/i
 const TEXT_WRITE_ACTION_PATTERN = /(创建|新建|写入|保存|导出|create|new|write|save|export)/i
 const TEXT_FILE_PATTERN = /(\.txt|txt|文本文件|text file)/i
 
+// 新功能：工作区、聊天历史、后端状态
+const currentSessionId = ref<string>('')
+const isBackendRunning = ref(false)
+const heartbeatDot = ref(false)
+
+async function switchSession(sessionId: string) {
+  currentSessionId.value = sessionId
+  lines.value = []
+  _lastAssistantContent = ''
+
+  // Load historical messages from backend
+  if (ipcRenderer?.invoke) {
+    try {
+      const res = await ipcRenderer.invoke('chat:loadSession', { sessionId }) as any
+      if (res?.ok && Array.isArray(res.messages)) {
+        for (const msg of res.messages) {
+          if (msg.role === 'user') {
+            push('user', `> ${msg.content}`)
+          } else if (msg.role === 'assistant') {
+            push('assistant', msg.content)
+          }
+        }
+        push('system', `已切换到对话: ${sessionId.slice(0, 8)}... (${res.messages.length} 条消息)`)
+        return
+      }
+    } catch { /* fallback */ }
+  }
+  push('system', `已切换到对话: ${sessionId.slice(0, 8)}...`)
+}
+
+function createNewSession() {
+  currentSessionId.value = ''
+  lines.value = []
+  _lastAssistantContent = ''
+  push('system', '已创建新对话。')
+  if (ipcRenderer?.send) {
+    ipcRenderer.send('chat:newSession')
+  }
+}
+
+function updateWorkspace(path: string) {
+  if (ipcRenderer?.send) {
+    ipcRenderer.send('chat:setWorkspace', { path })
+  }
+}
+
+// Backend heartbeat: listen for any backend event
+function onBackendActivity() {
+  isBackendRunning.value = true
+  heartbeatDot.value = true
+  setTimeout(() => { heartbeatDot.value = false }, 300)
+  // Auto-reset after 10s of no activity
+  clearTimeout((window as any).__backendIdleTimer)
+  ;(window as any).__backendIdleTimer = setTimeout(() => {
+    isBackendRunning.value = false
+  }, 10000)
+}
+
 const outputRef = ref<HTMLDivElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
@@ -374,9 +435,16 @@ function focusInputSoon() {
   })
 }
 
+// Track last assistant message content for dedup (prevents double-reply from IPC + HTTP)
+let _lastAssistantContent = ''
+
 // 处理 Chat 消息
 function handleChat(_event: any, data: ChatMessage) {
+  onBackendActivity()
   const { content, metadata } = data
+
+  // Dedup: skip if identical to what we already pushed from HTTP response
+  if (content && content === _lastAssistantContent) return
   
   if (metadata?.is_partial && typeof metadata.sequence_id === 'number' && typeof metadata.total_parts === 'number') {
     // 处理流式输出
@@ -390,6 +458,7 @@ function handleChat(_event: any, data: ChatMessage) {
       for (let i = 0; i < total_parts; i++) {
         fullContent += partialMessages.get(i) || ''
       }
+      _lastAssistantContent = fullContent
       push('assistant', fullContent, {
         contentType: data.content_type || metadata.content_type || 'markdown',
         renderMode: data.render_mode || metadata.render_mode || 'rich_text',
@@ -398,6 +467,7 @@ function handleChat(_event: any, data: ChatMessage) {
     }
   } else {
     // 完整消息，直接显示
+    _lastAssistantContent = content
     push('assistant', content, {
       contentType: data.content_type || metadata?.content_type || 'markdown',
       renderMode: data.render_mode || metadata?.render_mode || 'rich_text',
@@ -407,6 +477,7 @@ function handleChat(_event: any, data: ChatMessage) {
 
 // 处理错误消息
 function handleError(_event: any, data: ErrorMessage) {
+  onBackendActivity()
   push('err', `[${data.code}] ${data.message}`)
   if (data.details) {
     push('err', JSON.stringify(data.details, null, 2))
@@ -538,6 +609,7 @@ function handleQuip(_event: any, data: QuipMessage) {
 
 // 处理状态更新
 function handleStatus(_event: any, data: StatusUpdate) {
+  onBackendActivity()
   currentStatus.value = data.status
   currentProgress.value = data.progress ?? (data.status === 'done' ? 100 : 0)
   currentNode.value = data.node_name || ''
@@ -646,7 +718,7 @@ async function sendPrompt(prompt: string) {
 
   try {
     const context = buildContext()
-    const res = (await ipcRenderer.invoke('agent:chat', { prompt: trimmed, context })) as AgentChatResponse
+    const res = (await ipcRenderer.invoke('agent:chat', { prompt: trimmed, context, sessionId: currentSessionId.value || undefined })) as AgentChatResponse
     if (res?.ok) {
       push('assistant', res.output || '(ok)', {
         contentType: res.content_type || 'markdown',
@@ -743,8 +815,19 @@ onUnmounted(() => {
 <template>
   <div class="chat-root">
     <div class="header">
-      <div class="title">AI Chat</div>
+      <div class="header-left">
+        <ChatHistoryPanel
+          :currentSessionId="currentSessionId"
+          @selectSession="switchSession"
+          @newSession="createNewSession"
+        />
+        <div class="title">AI Chat</div>
+      </div>
+      <div class="header-center">
+        <WorkspaceSelector @updateWorkspace="updateWorkspace" />
+      </div>
       <div class="right">
+        <BackendIndicator />
         <!-- 显示当前状态 -->
         <div class="status-info" v-if="currentStatus !== 'idle'">
           <span class="status-badge" :class="currentStatus">{{ currentStatus }}</span>
@@ -1178,5 +1261,18 @@ onUnmounted(() => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 16px;
+}
+
+
+/* === New: header layout === */
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
 }
 </style>

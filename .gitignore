@@ -34,3 +34,9 @@ venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Runtime-generated data (do not commit)
+workspace/
+_patch_*.py
+.vite/
+*.tsbuildinfo

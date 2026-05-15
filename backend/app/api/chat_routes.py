@@ -71,3 +71,8 @@ async def get_chat_session_metadata(session_id: str):
 async def get_chat_session_context(session_id: str):
     snapshot = conversation_store.get_context_snapshot(session_id)
     return build_session_context_response(session_id, snapshot)
+@router.get("/sessions/{session_id}/messages")
+async def get_chat_session_messages(session_id: str):
+    """Return full message list for a session (for frontend history loading)."""
+    messages = conversation_store.get_messages(session_id)
+    return {"ok": True, "session_id": session_id, "messages": messages}

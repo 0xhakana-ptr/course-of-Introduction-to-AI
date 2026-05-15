@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import PurePosixPath
 
+import re
 from langgraph.graph import END, StateGraph
 
 from ..actions import default_action_registry
