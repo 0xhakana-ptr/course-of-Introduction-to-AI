@@ -16,6 +16,7 @@ ConversationSessionListItem = dict[str, str | int | bool | None]
 ConversationContextSnapshot = dict[str, object]
 CONTEXT_SUMMARY_PREVIEW_LIMIT = 120
 SESSION_SUMMARY_PREVIEW_LIMIT = 240
+SESSION_TITLE_PREVIEW_LIMIT = 40
 CONTEXT_STRATEGY_VERSION = 1
 CONTEXT_TRUNCATED_MARKER = "\n... (context truncated)"
 
@@ -158,12 +159,29 @@ class ConversationStore:
     ) -> ConversationSessionMetadata:
         older_messages, recent_messages = self._split_messages_for_context(messages)
         compressed_summary = self._build_history_summary(older_messages)
-        summary_preview = compressed_summary
-        if summary_preview:
+
+        summary_preview: str | None = None
+        if compressed_summary:
             summary_preview = build_preview(
-                summary_preview,
+                compressed_summary,
                 limit=SESSION_SUMMARY_PREVIEW_LIMIT,
             )
+        else:
+            # For short sessions (no compressed history), use the first user prompt
+            # as a stable session title in the chat history panel.
+            first_user_message = next(
+                (
+                    str(m.get("content") or "").strip()
+                    for m in messages
+                    if str(m.get("role") or "").strip() == "user"
+                ),
+                "",
+            )
+            if first_user_message:
+                summary_preview = build_preview(
+                    first_user_message,
+                    limit=SESSION_TITLE_PREVIEW_LIMIT,
+                )
 
         return {
             "message_count": len(messages),
@@ -256,6 +274,12 @@ class ConversationStore:
         self._sessions[session_id] = messages
         resolved_metadata = metadata
         if not self._is_metadata_compatible(messages, resolved_metadata):
+            resolved_metadata = self._build_session_metadata(
+                messages,
+                updated_at=updated_at,
+            )
+        elif messages and not (resolved_metadata or {}).get("summary_preview"):
+            # Backfill preview/title for older persisted sessions.
             resolved_metadata = self._build_session_metadata(
                 messages,
                 updated_at=updated_at,

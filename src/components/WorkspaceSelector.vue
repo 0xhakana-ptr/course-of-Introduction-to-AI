@@ -8,7 +8,7 @@ const workspacePath = ref('')
 const isEditing = ref(false)
 const editValue = ref('')
 
-defineEmits<{
+const emit = defineEmits<{
   updateWorkspace: [path: string]
 }>()
 
@@ -27,6 +27,25 @@ async function loadWorkspace() {
   }
 }
 
+async function pickWorkspace() {
+  if (!ipcRenderer?.invoke) {
+    startEdit()
+    return
+  }
+  try {
+    const result = await ipcRenderer.invoke('chat:pickWorkspace') as any
+    if (result?.ok && result.path) {
+      workspacePath.value = result.path
+      emit('updateWorkspace', result.path)
+      if (ipcRenderer?.send) {
+        ipcRenderer.send('chat:setWorkspace', { path: result.path })
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
 function startEdit() {
   editValue.value = workspacePath.value
   isEditing.value = true
@@ -36,6 +55,7 @@ function confirmEdit() {
   const p = editValue.value.trim()
   if (p) {
     workspacePath.value = p
+    emit('updateWorkspace', p)
     if (ipcRenderer?.send) {
       ipcRenderer.send('chat:setWorkspace', { path: p })
     }
@@ -60,6 +80,13 @@ onMounted(() => loadWorkspace())
       <span class="ws-path" @dblclick="startEdit" :title="workspacePath">
         {{ workspacePath.split('\\').pop() || workspacePath }}
       </span>
+      <button class="ws-pick-btn" @click="pickWorkspace" title="选择工作区">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          <path d="M12 10v8"/>
+          <path d="M8 14h8"/>
+        </svg>
+      </button>
       <button class="ws-edit-btn" @click="startEdit" title="更改工作区">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
@@ -120,6 +147,19 @@ onMounted(() => loadWorkspace())
   align-items: center;
 }
 .ws-edit-btn:hover {
+  color: rgba(255,255,255,0.7);
+}
+
+.ws-pick-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.3);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+.ws-pick-btn:hover {
   color: rgba(255,255,255,0.7);
 }
 

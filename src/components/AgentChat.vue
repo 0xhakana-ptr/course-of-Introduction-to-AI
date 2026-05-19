@@ -435,7 +435,11 @@ function focusInputSoon() {
   })
 }
 
-// Track last assistant message content for dedup (prevents double-reply from IPC + HTTP)
+function normalizeAssistantContent(text: string): string {
+  return String(text ?? '').replace(/\r\n/g, '\n')
+}
+
+// Track last assistant message content for dedup (prevents double-reply from IPC + invoke)
 let _lastAssistantContent = ''
 
 // 处理 Chat 消息
@@ -443,8 +447,10 @@ function handleChat(_event: any, data: ChatMessage) {
   onBackendActivity()
   const { content, metadata } = data
 
+  const normalizedIncoming = normalizeAssistantContent(content)
+
   // Dedup: skip if identical to what we already pushed from HTTP response
-  if (content && content === _lastAssistantContent) return
+  if (normalizedIncoming && normalizedIncoming === _lastAssistantContent) return
   
   if (metadata?.is_partial && typeof metadata.sequence_id === 'number' && typeof metadata.total_parts === 'number') {
     // 处理流式输出
@@ -458,7 +464,7 @@ function handleChat(_event: any, data: ChatMessage) {
       for (let i = 0; i < total_parts; i++) {
         fullContent += partialMessages.get(i) || ''
       }
-      _lastAssistantContent = fullContent
+      _lastAssistantContent = normalizeAssistantContent(fullContent)
       push('assistant', fullContent, {
         contentType: data.content_type || metadata.content_type || 'markdown',
         renderMode: data.render_mode || metadata.render_mode || 'rich_text',
@@ -467,7 +473,7 @@ function handleChat(_event: any, data: ChatMessage) {
     }
   } else {
     // 完整消息，直接显示
-    _lastAssistantContent = content
+    _lastAssistantContent = normalizedIncoming
     push('assistant', content, {
       contentType: data.content_type || metadata?.content_type || 'markdown',
       renderMode: data.render_mode || metadata?.render_mode || 'rich_text',
@@ -720,10 +726,16 @@ async function sendPrompt(prompt: string) {
     const context = buildContext()
     const res = (await ipcRenderer.invoke('agent:chat', { prompt: trimmed, context, sessionId: currentSessionId.value || undefined })) as AgentChatResponse
     if (res?.ok) {
-      push('assistant', res.output || '(ok)', {
-        contentType: res.content_type || 'markdown',
-        renderMode: res.render_mode || 'rich_text',
-      })
+      const outputText = res.output || '(ok)'
+      const normalized = normalizeAssistantContent(outputText)
+      // If IPC already delivered the same assistant message, avoid double push.
+      if (normalized !== _lastAssistantContent) {
+        _lastAssistantContent = normalized
+        push('assistant', outputText, {
+          contentType: res.content_type || 'markdown',
+          renderMode: res.render_mode || 'rich_text',
+        })
+      }
     }
     else push('err', res?.output || '(error)')
   } catch (e) {

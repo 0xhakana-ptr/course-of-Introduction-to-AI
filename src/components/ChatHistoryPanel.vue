@@ -74,6 +74,22 @@ async function exportSession(sessionId: string) {
   }
 }
 
+async function deleteSession(sessionId: string) {
+  if (!ipcRenderer?.invoke) return
+  const confirmed = window.confirm('确定删除这条聊天记录吗？（不可恢复）')
+  if (!confirmed) return
+  try {
+    const result = await ipcRenderer.invoke('chat:deleteSession', { sessionId }) as any
+    if (result?.ok) {
+      sessions.value = sessions.value.filter(s => s.session_id !== sessionId)
+      return
+    }
+  } catch {
+    // Ignore
+  }
+  await loadSessions()
+}
+
 onMounted(() => loadSessions())
 </script>
 
@@ -109,6 +125,15 @@ onMounted(() => loadSessions())
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="7 10 12 15 17 10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+          <button class="delete-btn" @click.stop="deleteSession(s.session_id)" title="删除聊天记录">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <line x1="10" y1="11" x2="10" y2="17"/>
+              <line x1="14" y1="11" x2="14" y2="17"/>
             </svg>
           </button>
         </div>
@@ -234,6 +259,21 @@ onMounted(() => loadSessions())
   margin-left: 8px;
 }
 .export-btn:hover {
+  color: rgba(255,255,255,0.7);
+  background: rgba(255,255,255,0.06);
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.2);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+.delete-btn:hover {
   color: rgba(255,255,255,0.7);
   background: rgba(255,255,255,0.06);
 }

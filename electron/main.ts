@@ -1,5 +1,5 @@
 // electron/main.ts
-import { app, BrowserWindow, ipcMain, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, dialog } from 'electron'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
@@ -541,6 +541,34 @@ ipcMain.handle('agent:chat', async (_event, payload: unknown): Promise<AgentChat
     return await runBackendAgent({ prompt: String(p?.prompt ?? ''), context: typeof p?.context === 'string' ? p.context : '', sessionId: typeof p?.sessionId === 'string' ? p.sessionId : undefined })
 })
 
+// Workspace selection (chat window)
+ipcMain.handle('chat:getWorkspace', async (): Promise<any> => {
+    const p = loadWorkspacePath()
+    return { ok: Boolean(p), path: p || '' }
+})
+
+ipcMain.on('chat:setWorkspace', (_event, payload: any) => {
+    const p = String(payload?.path ?? '').trim()
+    if (!p) return
+    saveWorkspacePath(p)
+})
+
+ipcMain.handle('chat:pickWorkspace', async (): Promise<any> => {
+    try {
+        const res = await dialog.showOpenDialog({
+            title: '选择工作区目录',
+            properties: ['openDirectory'],
+        })
+        if (res.canceled || !res.filePaths?.length) return { ok: false }
+        const p = String(res.filePaths[0] ?? '').trim()
+        if (!p) return { ok: false }
+        saveWorkspacePath(p)
+        return { ok: true, path: p }
+    } catch (e) {
+        return { ok: false, error: String(e) }
+    }
+})
+
 ipcMain.handle('window:isCursorOver', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed()) return false
@@ -590,10 +618,16 @@ ipcMain.handle('chat:deleteSession', async (_event, payload: unknown): Promise<a
     const sessionId = (payload as any)?.sessionId
     if (!baseUrl || !sessionId) return { ok: false }
     try {
-        const res = await fetch(`${baseUrl}/chat/sessions/${sessionId}/messages`, {
+        const res = await fetch(`${baseUrl}/chat/sessions/${sessionId}`, {
             method: 'DELETE',
+            headers: { accept: 'application/json' },
         })
-        return { ok: res.ok }
+        if (!res.ok) {
+            const text = await res.text().catch(() => '')
+            return { ok: false, error: text || `HTTP ${res.status}` }
+        }
+        const json = await res.json().catch(() => null)
+        return { ok: true, ...((json && typeof json === 'object') ? json : {}) }
     } catch (e) {
         return { ok: false, error: String(e) }
     }
@@ -776,6 +810,38 @@ let backendBridgeInFlight = false
 let backendBridgeSinceId: string | null = null
 let backendBridgeLastError: string | null = null
 let backendBridgeEndpoint: string | null = null
+
+// --- Workspace selection persistence (chat window) ---
+type WorkspaceState = { path: string }
+
+function resolveWorkspaceStatePath(): string {
+    return path.join(app.getPath('userData'), 'workspace.json')
+}
+
+function loadWorkspacePath(): string | null {
+    try {
+        const fp = resolveWorkspaceStatePath()
+        if (!fs.existsSync(fp)) return null
+        const raw = fs.readFileSync(fp, 'utf-8')
+        const parsed = JSON.parse(raw) as Partial<WorkspaceState>
+        const p = String(parsed?.path ?? '').trim()
+        return p || null
+    } catch {
+        return null
+    }
+}
+
+function saveWorkspacePath(p: string): void {
+    const normalized = String(p ?? '').trim()
+    if (!normalized) return
+    try {
+        const fp = resolveWorkspaceStatePath()
+        fs.mkdirSync(path.dirname(fp), { recursive: true })
+        fs.writeFileSync(fp, JSON.stringify({ path: normalized } satisfies WorkspaceState, null, 2), 'utf-8')
+    } catch {
+        // ignore
+    }
+}
 
 async function pollBackendMessagesOnce() {
     if (!backendBridgeEndpoint || backendBridgeInFlight) return

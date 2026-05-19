@@ -116,7 +116,7 @@ class WorkAgent:
                 "running", progress=15,
                 node_name="work_engine",
                 metadata={"phase": "execution", "ui_status": "agent_working"},
-                event_type="workflow.started",
+                event_type="status.updated",
                 event_source="workflow",
                 event_stage="coding",
             )

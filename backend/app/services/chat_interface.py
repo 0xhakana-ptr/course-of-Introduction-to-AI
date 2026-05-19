@@ -143,6 +143,9 @@ async def generate_chat_response(
             decision,
             session_id=active_session_id,
             memory_context=memory_context,
+            # /chat returns the full assistant output via HTTP; avoid also
+            # enqueueing the same content as an agent:chat runtime event.
+            emit_chat_message=False,
         )
     )
 

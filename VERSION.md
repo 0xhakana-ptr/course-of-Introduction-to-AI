@@ -822,11 +822,11 @@ Live2DConsole（`src/components/Live2DConsole.vue`）：
 
 **Electron 主进程（`electron/main.ts`）新增四个 IPC handler**：
 
-| Handler | 后端 API | 用途 |
-|---|---|---|
-| `chat:listSessions` | `GET /chat/sessions?limit=N` | 返回会话列表 |
-| `chat:loadSession` | `GET /chat/sessions/{id}/messages` | 返回会话全部消息 |
-| `chat:deleteSession` | `DELETE /chat/sessions/{id}` | 删除会话 |
+| Handler              | 后端 API                           | 用途             |
+| -------------------- | ---------------------------------- | ---------------- |
+| `chat:listSessions`  | `GET /chat/sessions?limit=N`       | 返回会话列表     |
+| `chat:loadSession`   | `GET /chat/sessions/{id}/messages` | 返回会话全部消息 |
+| `chat:deleteSession` | `DELETE /chat/sessions/{id}`       | 删除会话         |
 | `chat:exportSession` | `GET /chat/sessions/{id}/messages` | 导出为格式化文本 |
 
 **后端新增路由**：
@@ -917,6 +917,114 @@ POST /chat → chat_interface.generate_chat_response() [async, thread pool]
 
 **后端（Python）**：
 - `backend/app/api/chat_routes.py`（新增 `/sessions/{id}/messages` 路由）
+
+---
+
+## V0.7.9（2026-05-19）
+
+本版本聚焦于：聊天输出去重进一步收敛、会话列表自动命名、会话删除、工作区选择体验（系统目录选择器），以及工作流事件上报导致的崩溃修复。
+
+---
+
+### 1) 修复：聊天回复偶发重复（HTTP 返回 vs 消息队列推送）
+
+**现象**：问一次问题，聊天窗口里会出现两条一模一样的 assistant 回复。
+
+**根因**：同一条 assistant 内容同时从两条通路到达前端：
+
+- A：渲染进程 `invoke('agent:chat')` 的 HTTP 同步返回值
+- B：后端写入消息队列后，被 Electron 轮询 `/messages` 再通过 IPC `agent:chat` 推送
+
+**修复策略**：明确“/chat 的最终正文只走一条通路”，并保留前端兜底去重。
+
+- 后端：`/chat` 场景调用 Roleplay 输出时关闭 chat_message 入队（仅返回 HTTP response，不再向消息队列重复广播同一条 chat_line）。
+- 前端：继续在 `AgentChat` 保留内容去重兜底（对 CRLF/LF 做 normalize 后比较），避免未来链路变动再次出现双写。
+
+**涉及文件**：
+- `backend/app/services/chat_interface.py`（`emit_chat_message=False`）
+- `backend/app/agent_workflow/layers/roleplay_output.py`（新增 `emit_chat_message` 开关并透传）
+- `src/components/AgentChat.vue`（加强去重：normalize + `_lastAssistantContent`）
+
+---
+
+### 2) 优化：会话列表自动命名（不再显示“(空对话)”）
+
+**问题**：历史会话列表里大量显示“(空对话)”或标题为空，难以辨认。
+
+**修复**：当会话没有压缩摘要（`compressed_summary`）时，自动用“首条 user 消息的前 N 个字”生成 `summary_preview`；并对旧会话缺失该字段的情况做回填。
+
+**涉及文件**：
+- `backend/app/storage/conversation_store.py`（`summary_preview` 生成 + 旧数据回填）
+
+---
+
+### 3) 新增：聊天记录删除（历史列表一键删除）
+
+**新增能力**：在历史会话列表中对单条会话提供删除按钮，确认后删除并刷新列表。
+
+**修复点**：Electron 主进程删除链路曾错误指向非会话删除接口，已修正为 `DELETE /chat/sessions/{sessionId}`。
+
+**涉及文件**：
+- `src/components/ChatHistoryPanel.vue`（删除按钮 + 删除逻辑 + 刷新）
+- `electron/main.ts`（`chat:deleteSession` 调用后端删除会话路由）
+
+---
+
+### 4) 优化：工作区选择支持系统目录选择器（Windows 资源管理器）
+
+**问题**：工作区路径只能手动输入，易错且体验差。
+
+**修复**：改为使用系统原生“选择文件夹”对话框选择目录，并持久化到用户数据目录。
+
+- Electron：新增 `chat:pickWorkspace`（打开目录选择器），并提供 `chat:getWorkspace`/`chat:setWorkspace` 读写持久化配置（保存到 `userData/workspace.json`）。
+- 前端：`WorkspaceSelector` 新增“选择目录”按钮，选择后自动填充并触发更新。
+
+**涉及文件**：
+- `electron/main.ts`（目录选择器 + workspace.json 持久化 + IPC handler）
+- `src/components/WorkspaceSelector.vue`（选择目录按钮 + 更新逻辑）
+
+---
+
+### 5) 修复：工作流事件上报校验导致的崩溃（event_type / step_count）
+
+**现象**：运行中偶发报错提示 `event_type` 不在允许列表中（Pydantic Literal 校验失败），随后流程异常退出；修复后又暴露 `step_count=None` 导致 `int(None)` 崩溃。
+
+**修复**：
+
+- 将非法 `event_type='workflow.started'` 改为协议允许的 `event_type='status.updated'`，避免消息规范化阶段直接抛错中断。
+- `RoleplayAgentContext.from_routing_and_result()` 对 `metadata` 做 dict 归一化，并对 `step_count` 做安全转换（`None`/异常 → 0），避免二次崩溃。
+
+**涉及文件**：
+- `backend/app/agent_workflow/layers/work_engine.py`（修复非法 `event_type`）
+- `backend/app/agent_workflow/layers/roleplay_output.py`（`step_count` 安全转换）
+
+---
+
+### 如何验证
+
+1. 聊天窗口发送同一条问题：应只出现一条 assistant 回复（不再重复）。
+2. 打开历史会话列表：新会话应显示由首条 user 消息生成的标题预览。
+3. 在历史会话列表点击删除：会话应被删除且列表刷新。
+4. 在工作区选择处点击“选择目录”：应弹出系统文件夹选择器，选择后路径持久化。
+5. 触发一次 coding/workflow：不应再出现 `event_type` Literal 校验报错或 `step_count` TypeError。
+
+---
+
+### 涉及文件汇总
+
+**前端（Vue/TypeScript）**：
+- `src/components/AgentChat.vue`
+- `src/components/ChatHistoryPanel.vue`
+- `src/components/WorkspaceSelector.vue`
+
+**Electron 主进程**：
+- `electron/main.ts`
+
+**后端（Python）**：
+- `backend/app/services/chat_interface.py`
+- `backend/app/agent_workflow/layers/roleplay_output.py`
+- `backend/app/agent_workflow/layers/work_engine.py`
+- `backend/app/storage/conversation_store.py`
 
 ---
 

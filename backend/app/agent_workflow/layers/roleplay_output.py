@@ -71,6 +71,15 @@ class RoleplayAgentContext:
         if work_result is None:
             return cls(intent=decision.intent, action_name=decision.action_name)
 
+        metadata = work_result.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+        raw_step_count = metadata.get("step_count")
+        try:
+            step_count = int(raw_step_count or 0)
+        except (TypeError, ValueError):
+            step_count = 0
+
         return cls(
             intent=str(work_result.get("intent", decision.intent)),
             action_name=str(work_result.get("action_name", decision.action_name)),
@@ -78,8 +87,8 @@ class RoleplayAgentContext:
             output_summary=str(work_result.get("summary", ""))[:400],
             error_summary=(str(work_result.get("error", ""))[:200]
                           if not work_result.get("ok") else ""),
-            step_count=int(work_result.get("metadata", {}).get("step_count", 0)),
-            terminal_status=str(work_result.get("metadata", {}).get("stop_reason", "")),
+            step_count=step_count,
+            terminal_status=str(metadata.get("stop_reason", "")),
         )
 
     def scenario(self) -> str:
@@ -116,10 +125,15 @@ class RoleplayAgent:
             self._work_agent = work_agent
         return self._work_agent
 
-    def process(self, decision: RoutingDecision, *,
-                session_id: str | None = None,
-                turn_id: str | None = None,
-                memory_context: str | None = None) -> RoleplayResponse:
+    def process(
+        self,
+        decision: RoutingDecision,
+        *,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+        memory_context: str | None = None,
+        emit_chat_message: bool = True,
+    ) -> RoleplayResponse:
         """Process a routed request through Layer 2 + Layer 3.
 
         Args:
@@ -136,7 +150,7 @@ class RoleplayAgent:
         mood.idle_streak = 0
 
         if decision.intent == INTENT_CHAT:
-            return self._handle_chat(decision)
+            return self._handle_chat(decision, emit_chat_message=emit_chat_message)
 
         # For coding/work intents, first emit a thinking quip
         self._emit_thinking_start(decision)
@@ -162,11 +176,16 @@ class RoleplayAgent:
             mood.record_neutral()
 
         # Emit to frontend
-        self._emit_to_frontend(response, decision, work_result)
+        self._emit_to_frontend(
+            response,
+            decision,
+            work_result,
+            emit_chat_message=emit_chat_message,
+        )
 
         return response
 
-    def _handle_chat(self, decision: RoutingDecision) -> RoleplayResponse:
+    def _handle_chat(self, decision: RoutingDecision, *, emit_chat_message: bool = True) -> RoleplayResponse:
         """Handle chat-only intent - calls LLM with chat persona."""
         prompt = str(decision.action_input.get("prompt", ""))
         context = decision.action_input.get("context")
@@ -203,7 +222,7 @@ class RoleplayAgent:
             scenario="chat",
             llm_used=result.ok,
         )
-        self._emit_chat_to_frontend(response)
+        self._emit_chat_to_frontend(response, emit_chat_message=emit_chat_message)
         return response
 
     def _emit_thinking_start(self, decision: RoutingDecision):
@@ -306,10 +325,16 @@ class RoleplayAgent:
         }
         return random.choice(pools.get(ctx.scenario(), _CHAT_QUIPS))
 
-    def _emit_to_frontend(self, response: RoleplayResponse,
-                          decision: RoutingDecision, work_result: dict[str, Any]):
+    def _emit_to_frontend(
+        self,
+        response: RoleplayResponse,
+        decision: RoutingDecision,
+        work_result: dict[str, Any],
+        *,
+        emit_chat_message: bool = True,
+    ):
         """Send persona-wrapped response to frontend."""
-        if response.chat_line:
+        if response.chat_line and emit_chat_message:
             message_sender.send_chat_message(
                 content=response.chat_line,
                 is_partial=False,
@@ -339,9 +364,9 @@ class RoleplayAgent:
                 node_name="roleplay_layer",
             )
 
-    def _emit_chat_to_frontend(self, response: RoleplayResponse):
+    def _emit_chat_to_frontend(self, response: RoleplayResponse, *, emit_chat_message: bool = True):
         """Emit chat-only response (simpler)."""
-        if response.chat_line:
+        if response.chat_line and emit_chat_message:
             message_sender.send_chat_message(
                 content=response.chat_line,
                 is_partial=False,
