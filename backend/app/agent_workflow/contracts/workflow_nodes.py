@@ -18,7 +18,7 @@ TASK_RETRY_FAILED_NODE = "task_retry_failed"
 TASK_RETRY_REPAIRING_NODE = "task_retry_repairing"
 
 WORKFLOW_NODE_METADATA: dict[str, dict[str, str]] = {
-    "perceive_node": {"label": "理解请求", "phase": "routing"},
+    
     "plan_node": {"label": "规划动作", "phase": "routing"},
     "act_node": {"label": "执行动作", "phase": "tools"},
     "observe_node": {"label": "观察结果", "phase": "tools"},

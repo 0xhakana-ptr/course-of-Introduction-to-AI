@@ -142,6 +142,8 @@ class WorkAgent:
                 intent=decision.intent,
                 emit_chat_message=False,
                 emit_node_events=True,
+                action_name=decision.action_name,
+                action_input=dict(decision.action_input),
             )
 
             # Extract structured data from the workflow result
@@ -151,6 +153,16 @@ class WorkAgent:
                 ok = bool(ar.get("ok", True))
             else:
                 ok = True
+
+            # Heartbeat: agent loop completed, handing off to roleplay layer
+            message_sender.send_status(
+                "running", progress=40,
+                node_name="work_engine",
+                metadata={"phase": "execution_done", "ui_status": "agent_done"},
+                event_type="status.updated",
+                event_source="workflow",
+                event_stage="coding",
+            )
 
             return {
                 "ok": ok,

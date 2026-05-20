@@ -544,13 +544,23 @@ ipcMain.handle('agent:chat', async (_event, payload: unknown): Promise<AgentChat
 // Workspace selection (chat window)
 ipcMain.handle('chat:getWorkspace', async (): Promise<any> => {
     const p = loadWorkspacePath()
-    return { ok: Boolean(p), path: p || '' }
+    if (p) {
+        void syncBackendWorkspace(p)
+        return { ok: true, path: p }
+    }
+    const backendWorkspace = await fetchBackendWorkspace()
+    if (backendWorkspace) {
+        saveWorkspacePath(backendWorkspace)
+        return { ok: true, path: backendWorkspace }
+    }
+    return { ok: false, path: '' }
 })
 
 ipcMain.on('chat:setWorkspace', (_event, payload: any) => {
     const p = String(payload?.path ?? '').trim()
     if (!p) return
     saveWorkspacePath(p)
+    void syncBackendWorkspace(p)
 })
 
 ipcMain.handle('chat:pickWorkspace', async (): Promise<any> => {
@@ -563,6 +573,7 @@ ipcMain.handle('chat:pickWorkspace', async (): Promise<any> => {
         const p = String(res.filePaths[0] ?? '').trim()
         if (!p) return { ok: false }
         saveWorkspacePath(p)
+        await syncBackendWorkspace(p)
         return { ok: true, path: p }
     } catch (e) {
         return { ok: false, error: String(e) }
@@ -737,6 +748,46 @@ function resolveAgentMessagesEndpoint(): string | null {
     const baseUrl = resolveAgentBaseUrl()
     if (!baseUrl) return null
     return `${baseUrl}/messages`
+}
+
+async function fetchBackendWorkspace(): Promise<string | null> {
+    const baseUrl = resolveAgentBaseUrl()
+    if (!baseUrl) return null
+    try {
+        const response = await fetch(`${baseUrl}/workspace`, {
+            method: 'GET',
+            headers: { accept: 'application/json' },
+        })
+        if (!response.ok) return null
+        const payload = await response.json() as { path?: unknown }
+        const workspacePath = String(payload?.path ?? '').trim()
+        return workspacePath || null
+    } catch {
+        return null
+    }
+}
+
+async function syncBackendWorkspace(workspacePath: string): Promise<void> {
+    const baseUrl = resolveAgentBaseUrl()
+    if (!baseUrl) return
+    const normalizedPath = String(workspacePath ?? '').trim()
+    if (!normalizedPath) return
+    try {
+        const response = await fetch(`${baseUrl}/workspace`, {
+            method: 'PUT',
+            headers: {
+                accept: 'application/json',
+                'content-type': 'application/json',
+            },
+            body: JSON.stringify({ path: normalizedPath }),
+        })
+        if (!response.ok) {
+            const text = await response.text()
+            console.warn(`[workspace] backend sync failed: HTTP ${response.status}: ${text}`)
+        }
+    } catch (error) {
+        console.warn(`[workspace] backend sync failed: ${String(error)}`)
+    }
 }
 
 function parsePositiveIntegerEnv(name: string, fallback: number): number {

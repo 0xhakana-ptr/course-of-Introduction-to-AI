@@ -7,6 +7,7 @@ import re
 from langgraph.graph import END, StateGraph
 
 from ..actions import default_action_registry
+from ..utils.shared import coerce_bool, coerce_int, compact_text, normalize_text, safe_mapping
 from ..contracts.workflow_results import invoke_graph_with_result
 from ..output.node_events import emit_workflow_node_entered
 from ..runtime.graph_nodes import register_agent_graph_nodes
@@ -34,15 +35,10 @@ QA_NODE = "qa_node"
 DEBUGGER_NODE = "debugger_node"
 CODING_FINISH_NODE = "coding_finish_node"
 CODING_FAILURE_NODE = "coding_failure_node"
-SIMPLE_WORKSPACE_ACTIONS = frozenset(
-    {
-        "workspace.write",
-        "workspace.read",
-        "workspace.list",
-    }
-)
+# Simple workspace actions (write/read/list) now bypass the coding workflow.
+# They go directly through the action registry in agent_loop_graph.
 RUN_ACTIONS_FOR_CODING_WORKFLOW = frozenset({"run.create"})
-EXECUTOR_ACTIONS_FOR_CODING_WORKFLOW = SIMPLE_WORKSPACE_ACTIONS | RUN_ACTIONS_FOR_CODING_WORKFLOW
+EXECUTOR_ACTIONS_FOR_CODING_WORKFLOW = RUN_ACTIONS_FOR_CODING_WORKFLOW
 DEBUGGER_FALLBACK_LIST_KEYWORDS = (
     "列出",
     "目录",
@@ -64,19 +60,11 @@ DEBUGGER_MISSING_PATH_KEYWORDS = (
 )
 
 
-def _normalize_text(value: object, *, default: str = "") -> str:
-    text = str(value or "").strip()
-    return text or default
+def _merge_state(state, **updates):
+    return {**state, **updates}
 
 
-def _merge_state(
-    state: Mapping[str, object],
-    **updates: object,
-) -> dict[str, object]:
-    return {
-        **state,
-        **updates,
-    }
+
 
 
 def _append_coding_trace(
@@ -113,7 +101,7 @@ def _partition_state(state: Mapping[str, object]) -> dict[str, object]:
     return CodingWorkflowState.from_mapping(state).as_dict()
 
 
-def _compact_text(value: object, *, limit: int = 500) -> str:
+def compact_text(value: object, *, limit: int = 500) -> str:
     text = str(value or "").strip()
     if len(text) <= limit:
         return text
@@ -147,13 +135,13 @@ def _build_error_summary(raw_artifact: Mapping[str, object] | None) -> str:
     if raw_artifact is None:
         return "执行失败，但没有可读取的错误详情。"
 
-    action_name = _normalize_text(raw_artifact.get("action_name"), default="coding action")
-    summary = _compact_text(raw_artifact.get("summary"), limit=700)
-    error = _compact_text(raw_artifact.get("error"), limit=700)
+    action_name = normalize_text(raw_artifact.get("action_name"), default="coding action")
+    summary = compact_text(raw_artifact.get("summary"), limit=700)
+    error = compact_text(raw_artifact.get("error"), limit=700)
     metadata = raw_artifact.get("metadata")
     error_code = ""
     if isinstance(metadata, Mapping):
-        error_code = _normalize_text(metadata.get("tool_error_code") or metadata.get("error_code"))
+        error_code = normalize_text(metadata.get("tool_error_code") or metadata.get("error_code"))
 
     detail = summary or error or "没有返回具体错误文本。"
     if error_code:
@@ -172,7 +160,7 @@ def _append_artifact_ref(value: object, artifact_ref: str | None) -> list[str]:
     return refs
 
 
-def _coerce_non_negative_int(value: object, *, default: int = 0) -> int:
+def coerce_int(value: object, *, default: int = 0) -> int:
     try:
         parsed = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
@@ -224,12 +212,12 @@ def build_coding_workflow_node_failure_state(
 
 def coding_start_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, CODING_START_NODE)
-    prompt = _normalize_text(state.get("user_input"))
+    prompt = normalize_text(state.get("user_input"))
     if not prompt:
         raise ValueError("coding workflow requires non-empty user_input")
     next_state = _merge_state(
         state,
-        intent=_normalize_text(state.get("intent"), default="coding"),
+        intent=normalize_text(state.get("intent"), default="coding"),
         error=None,
         output="",
         ui_status="coding_started",
@@ -239,7 +227,7 @@ def coding_start_node(state: CodingGraphState) -> CodingGraphState:
         raw_error_ref=None,
         error_summary=None,
         repair_count=0,
-        max_debug_steps=_coerce_non_negative_int(state.get("max_debug_steps"), default=1),
+        max_debug_steps=coerce_int(state.get("max_debug_steps"), default=1),
         artifact_refs=[],
     )
     return _append_coding_trace(
@@ -254,7 +242,7 @@ def coding_start_node(state: CodingGraphState) -> CodingGraphState:
 def pm_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, PM_NODE)
     worker_payload = build_pm_worker_payload(state, target_node=PM_NODE)
-    prompt = _normalize_text(worker_payload.payload.get("user_requirement"))
+    prompt = normalize_text(worker_payload.payload.get("user_requirement"))
     tasks_list = _build_initial_tasks(prompt)
     current_task = tasks_list[0] if tasks_list else None
     next_state = _merge_state(
@@ -279,7 +267,7 @@ def pm_node(state: CodingGraphState) -> CodingGraphState:
 def _build_coder_action_plan(
     worker_payload: Mapping[str, object],
 ) -> tuple[str, dict[str, object]] | None:
-    workspace_action_name = _normalize_text(worker_payload.get("workspace_action_name"))
+    workspace_action_name = normalize_text(worker_payload.get("workspace_action_name"))
     if workspace_action_name:
         workspace_action_input = worker_payload.get("workspace_action_input")
         return (
@@ -287,7 +275,7 @@ def _build_coder_action_plan(
             dict(workspace_action_input) if isinstance(workspace_action_input, Mapping) else {},
         )
 
-    run_action_name = _normalize_text(worker_payload.get("run_action_name"))
+    run_action_name = normalize_text(worker_payload.get("run_action_name"))
     if run_action_name:
         run_action_input = worker_payload.get("run_action_input")
         return (
@@ -312,7 +300,7 @@ def _build_llm_coder_plan(
     return plan_coding_task_with_llm(
         user_input=current_task,
         current_task=current_task,
-        context=_normalize_text(worker_payload.get("project_context_preview")) or None,
+        context=normalize_text(worker_payload.get("project_context_preview")) or None,
     )
 
 
@@ -320,7 +308,7 @@ def _state_updates_from_llm_plan(
     state: Mapping[str, object],
     plan: CodingTaskPlan,
 ) -> dict[str, object]:
-    tasks_list = list(plan.tasks_list) or _build_initial_tasks(_normalize_text(state.get("user_input")))
+    tasks_list = list(plan.tasks_list) or _build_initial_tasks(normalize_text(state.get("user_input")))
     current_task = tasks_list[0] if tasks_list else None
     coder_plan = plan.as_dict()
     return {
@@ -337,8 +325,10 @@ def _state_updates_from_llm_plan(
 def coder_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, CODER_NODE)
     worker_payload = build_coder_worker_payload(state, target_node=CODER_NODE)
-    action_plan = _build_coder_action_plan(worker_payload.payload)
-    current_task = _normalize_text(state.get("current_task"), default="准备 coding 执行动作")
+    # Read action plan from state directly so that text values (e.g. file content)
+    # are not silently truncated to MAX_WORKER_TEXT_CHARS by _safe_mapping.
+    action_plan = _build_coder_action_plan_from_state(state)
+    current_task = normalize_text(state.get("current_task"), default="准备 coding 执行动作")
     if action_plan is None:
         llm_result = _build_llm_coder_plan(worker_payload.payload, current_task=current_task)
         if llm_result.ok and llm_result.plan and llm_result.plan.executor_action_name:
@@ -423,11 +413,11 @@ def coder_node(state: CodingGraphState) -> CodingGraphState:
 def executor_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, EXECUTOR_NODE)
     worker_payload = build_executor_worker_payload(state, target_node=EXECUTOR_NODE)
-    action_name = _normalize_text(worker_payload.payload.get("executor_action_name"))
+    action_name = normalize_text(state.get("executor_action_name"))
     if action_name not in EXECUTOR_ACTIONS_FOR_CODING_WORKFLOW:
         raise ValueError(f"unsupported coding executor action: {action_name}")
 
-    executor_action_input = worker_payload.payload.get("executor_action_input")
+    executor_action_input = state.get("executor_action_input")
     action_input = dict(executor_action_input) if isinstance(executor_action_input, Mapping) else {}
     result = default_action_registry.execute(action_name, action_input)
     action_result = result.as_dict()
@@ -440,7 +430,7 @@ def executor_node(state: CodingGraphState) -> CodingGraphState:
             "effective_action_input": action_input,
             "coder_plan": dict(worker_payload.payload.get("coder_plan")) if isinstance(worker_payload.payload.get("coder_plan"), Mapping) else {},
             "debugger_plan": dict(worker_payload.payload.get("debugger_plan")) if isinstance(worker_payload.payload.get("debugger_plan"), Mapping) else {},
-            "repair_count": _coerce_non_negative_int(state.get("repair_count")),
+            "repair_count": coerce_int(state.get("repair_count")),
             "worker_payload": worker_payload.as_dict(),
         }
     )
@@ -450,7 +440,7 @@ def executor_node(state: CodingGraphState) -> CodingGraphState:
         raw_error_ref = store_coding_artifact("raw-error", action_result)
         action_result = _sanitize_action_result_for_state(
             action_result,
-            error_summary=_compact_text(result.summary or result.error, limit=900),
+            error_summary=compact_text(result.summary or result.error, limit=900),
             raw_error_ref=raw_error_ref,
         )
     next_state = _merge_state(
@@ -468,7 +458,7 @@ def executor_node(state: CodingGraphState) -> CodingGraphState:
         next_state,
         node=EXECUTOR_NODE,
         event="coding_executor_done" if result.ok else "coding_executor_failed",
-        ui_status=_normalize_text(next_state.get("ui_status")),
+        ui_status=normalize_text(next_state.get("ui_status")),
         details={
             "action_name": action_name,
             "ok": result.ok,
@@ -482,7 +472,7 @@ def executor_node(state: CodingGraphState) -> CodingGraphState:
 def qa_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, QA_NODE)
     worker_payload = build_qa_worker_payload(state, target_node=QA_NODE)
-    raw_error_ref = _normalize_text(worker_payload.payload.get("raw_error_ref"))
+    raw_error_ref = normalize_text(worker_payload.payload.get("raw_error_ref"))
     raw_artifact = read_coding_artifact(raw_error_ref) if raw_error_ref else None
     error_summary = _build_error_summary(raw_artifact)
     action_result = state.get("action_result")
@@ -519,10 +509,10 @@ def qa_node(state: CodingGraphState) -> CodingGraphState:
 
 
 def _build_debugger_plan(state: Mapping[str, object]) -> dict[str, object]:
-    error_summary = _normalize_text(state.get("error_summary") or state.get("error"))
+    error_summary = normalize_text(state.get("error_summary") or state.get("error"))
     coder_plan = state.get("coder_plan")
     coder_plan_map = dict(coder_plan) if isinstance(coder_plan, Mapping) else {}
-    action_name = _normalize_text(
+    action_name = normalize_text(
         coder_plan_map.get("executor_action_name") or state.get("executor_action_name")
     )
     action_input = (
@@ -532,7 +522,7 @@ def _build_debugger_plan(state: Mapping[str, object]) -> dict[str, object]:
         if isinstance(state.get("executor_action_input"), Mapping)
         else {}
     )
-    current_task = _normalize_text(state.get("current_task"))
+    current_task = normalize_text(state.get("current_task"))
     prompt = current_task
 
     if (
@@ -540,7 +530,7 @@ def _build_debugger_plan(state: Mapping[str, object]) -> dict[str, object]:
         and _prompt_allows_missing_path_probe(prompt)
         and "没有找到 workspace 路径" in error_summary
     ):
-        rel_path = _normalize_text(action_input.get("rel_path"))
+        rel_path = normalize_text(action_input.get("rel_path"))
         if rel_path:
             parent_path = _parent_rel_path(rel_path)
             return {
@@ -568,8 +558,8 @@ def debugger_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, DEBUGGER_NODE)
     worker_payload = build_debugger_worker_payload(state, target_node=DEBUGGER_NODE)
     worker_state = worker_payload.payload
-    repair_count = _coerce_non_negative_int(worker_state.get("repair_count"))
-    max_debug_steps = _coerce_non_negative_int(worker_state.get("max_debug_steps"), default=1)
+    repair_count = coerce_int(worker_state.get("repair_count"))
+    max_debug_steps = coerce_int(worker_state.get("max_debug_steps"), default=1)
     if repair_count >= max_debug_steps:
         next_state = _merge_state(
             state,
@@ -615,7 +605,7 @@ def debugger_node(state: CodingGraphState) -> CodingGraphState:
             },
         )
 
-    revised_action_name = _normalize_text(debugger_plan.get("revised_action_name"))
+    revised_action_name = normalize_text(debugger_plan.get("revised_action_name"))
     revised_action_input = (
         dict(debugger_plan.get("revised_action_input"))
         if isinstance(debugger_plan.get("revised_action_input"), Mapping)
@@ -650,7 +640,7 @@ def debugger_node(state: CodingGraphState) -> CodingGraphState:
 
 def coding_finish_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, CODING_FINISH_NODE)
-    output = _normalize_text(
+    output = normalize_text(
         state.get("output"),
         default="Coding workflow skeleton completed. No tools were executed.",
     )
@@ -683,12 +673,12 @@ def coding_failure_node(state: CodingGraphState) -> CodingGraphState:
     emit_workflow_node_entered(state, CODING_FAILURE_NODE)
     next_state = _merge_state(
         state,
-        output=_normalize_text(
+        output=normalize_text(
             state.get("output"),
             default="Coding workflow skeleton failed.",
         ),
         ui_status="coding_workflow_failed",
-        stop_reason=_normalize_text(state.get("stop_reason"), default="failed"),
+        stop_reason=normalize_text(state.get("stop_reason"), default="failed"),
     )
     next_state = _append_coding_trace(
         next_state,
@@ -716,7 +706,7 @@ def route_after_executor(state: Mapping[str, object]) -> str:
 def route_after_debugger(state: Mapping[str, object]) -> str:
     if state.get("error"):
         return CODING_FAILURE_NODE
-    executor_action_name = _normalize_text(state.get("executor_action_name"))
+    executor_action_name = normalize_text(state.get("executor_action_name"))
     if executor_action_name:
         return EXECUTOR_NODE
     return CODING_FAILURE_NODE
@@ -731,7 +721,7 @@ def route_after_pm(state: Mapping[str, object]) -> str:
 def route_after_coder(state: Mapping[str, object]) -> str:
     if state.get("error"):
         return CODING_FAILURE_NODE
-    executor_action_name = _normalize_text(state.get("executor_action_name"))
+    executor_action_name = normalize_text(state.get("executor_action_name"))
     if executor_action_name:
         return EXECUTOR_NODE
     return CODING_FINISH_NODE
@@ -839,3 +829,30 @@ def run_coding_workflow(
         on_success=CodingWorkflowResult.from_state,
         on_error=CodingWorkflowResult.from_error,
     )
+
+
+# ---------------------------------------------------------------------------
+# Coder action-plan helpers (reads from state directly, not from
+# worker_payload, so that file content and other long text values are not
+# truncated by _safe_mapping in build_coder_worker_payload).
+# ---------------------------------------------------------------------------
+
+def _build_coder_action_plan_from_state(
+    state: Mapping[str, object],
+) -> tuple[str, dict[str, object]] | None:
+    workspace_action_name = normalize_text(state.get("workspace_action_name"))
+    if workspace_action_name:
+        action_input = state.get("workspace_action_input")
+        return (
+            workspace_action_name,
+            dict(action_input) if isinstance(action_input, Mapping) else {},
+        )
+
+    run_action_name = normalize_text(state.get("run_action_name"))
+    if run_action_name:
+        action_input = state.get("run_action_input")
+        return (
+            run_action_name,
+            dict(action_input) if isinstance(action_input, Mapping) else {},
+        )
+    return None

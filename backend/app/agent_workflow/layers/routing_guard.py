@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Layer 1: Routing Guard.
 
 Independent layer that detects user intent and determines routing.
 Does NOT execute work - only classifies and routes.
+No LLM calls, no tool planning, no code generation.
 """
 
 from __future__ import annotations
@@ -18,35 +19,47 @@ INTENT_CODING = "coding"
 INTENT_UNKNOWN = "unknown"
 
 # ---------------------------------------------------------------------------
-# Layer 1 System Prompt: Intent Router
-# Pure classification - no roleplay, no work execution.
+# Lightweight keyword-based coding action classifier (no LLM)
 # ---------------------------------------------------------------------------
 
-ROUTING_SYSTEM_PROMPT = """???????Layer 1??
-????????????????????????????
-
-## ??????
-
-### chat????
-- ????????????????????
-- ???????????????????
-
-### coding???/???
-- ????????????????????
-- ??????????????????????
-
-## ????
-?????JSON???
-{"intent": "chat"|"coding", "action_name": "...", "reason": "..."}
-
-???
-- intent: ??? chat ? coding
-- action_name: coding????????chat?? chat.reply
-- reason: ????????????
-- ??????????????JSON
-"""
+_WRITE_KEYWORDS = ("写", "生成", "创建", "write", "create", "generate", "新建", "实现", "implement")
+_READ_KEYWORDS = ("读", "打开", "查看", "read", "open", "view", "cat")
+_LIST_KEYWORDS = ("列出", "目录", "list", "ls", "tree", "结构", "文件列表")
+_SEARCH_KEYWORDS = ("搜索", "查找", "search", "find", "grep", "包含")
+_DELETE_KEYWORDS = ("删除", "delete", "remove", "rm")
+_TEST_KEYWORDS = ("测试", "运行测试", "test", "pytest")
+_COPY_KEYWORDS = ("复制", "copy", "拷贝")
+_MOVE_KEYWORDS = ("移动", "move", "重命名", "rename")
 
 
+def _classify_coding_action(prompt: str, context: str | None) -> "tuple[str, dict[str, Any], str]":
+    """Classify coding prompt into workspace action via simple keyword matching."""
+    text = str(prompt or "").lower()
+    action_input: dict[str, Any] = {"prompt": prompt, "context": context}
+
+    if any(kw.lower() in text for kw in _WRITE_KEYWORDS):
+        return "workspace.write", action_input, "Write intent detected via keywords."
+    if any(kw.lower() in text for kw in _DELETE_KEYWORDS):
+        return "workspace.delete", action_input, "Delete intent detected via keywords."
+    if any(kw.lower() in text for kw in _SEARCH_KEYWORDS):
+        return "workspace.search", action_input, "Search intent detected via keywords."
+    if any(kw.lower() in text for kw in _TEST_KEYWORDS):
+        return "workspace.test", action_input, "Test intent detected via keywords."
+    if any(kw.lower() in text for kw in _COPY_KEYWORDS):
+        return "workspace.copy", action_input, "Copy intent detected via keywords."
+    if any(kw.lower() in text for kw in _MOVE_KEYWORDS):
+        return "workspace.move", action_input, "Move/rename intent detected via keywords."
+    if any(kw.lower() in text for kw in _LIST_KEYWORDS):
+        return "workspace.list", action_input, "List intent detected via keywords."
+    if any(kw.lower() in text for kw in _READ_KEYWORDS):
+        return "workspace.read", action_input, "Read intent detected via keywords."
+
+    return "run.create", action_input, "Defaulting to run.create for coding intent."
+
+
+# ---------------------------------------------------------------------------
+# Routing Decision (immutable)
+# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
 class RoutingDecision:
@@ -89,49 +102,29 @@ class RoutingDecision:
         )
 
 
+# ---------------------------------------------------------------------------
+# Layer 1 Router
+# ---------------------------------------------------------------------------
+
 class RoutingGuard:
     """Layer 1: Intent detection and routing.
 
     Pure classification layer. Takes user input, detects intent,
-    and returns a RoutingDecision. No side effects.
+    and returns a RoutingDecision. No side effects, no LLM, no tool planning.
     """
 
     def route(self, prompt: str, context: str | None = None,
               file_context: dict[str, Any] | None = None) -> RoutingDecision:
-        """Analyze user prompt and decide routing.
-
-        Args:
-            prompt: Raw user input text.
-            context: Optional conversation context.
-            file_context: Optional recent file context.
-
-        Returns:
-            RoutingDecision with intent and action instructions.
-        """
         intent = detect_intent(prompt)
-
         if intent == INTENT_CHAT:
             return RoutingDecision.for_chat(prompt, context)
-
         if intent == INTENT_CODING:
-            return self._route_coding(prompt, context, file_context)
-
+            return self._route_coding(prompt, context)
         return RoutingDecision.for_unknown(prompt)
 
-    def _route_coding(self, prompt: str, context: str | None,
-                      file_context: dict[str, Any] | None) -> RoutingDecision:
-        """Route coding-related requests.
-
-        Imported lazily to avoid circular imports with workspace tools.
-        """
-        from ...tools.workspace_tools import normalize_workspace_tool_plan, plan_workspace_tool
-        from ...tools.workspace_tools import (
-            WORKSPACE_TOOL_NAME_OVERVIEW,
-            WORKSPACE_TOOL_NAME_WRITE,
-        )
-
+    def _route_coding(self, prompt: str, context: str | None) -> RoutingDecision:
+        """Route coding requests using keyword heuristics (no LLM)."""
         run_action = detect_run_action(prompt)
-
         # Run control actions (inspect, retry, rerun, cancel)
         if run_action and run_action != "create":
             target_run_id = extract_run_reference(prompt)
@@ -149,41 +142,14 @@ class RoutingGuard:
                 metadata={"run_action": run_action, "target_run_id": target_run_id},
             )
 
-        # Workspace tool selection via LLM planning
-        plan_model = normalize_workspace_tool_plan(plan_workspace_tool(prompt))
-        if plan_model is None:
-            return RoutingDecision.for_coding(
-                prompt=prompt,
-                action_name="run.create",
-                action_input={"prompt": prompt, "context": context},
-                reason="No specific tool matched, defaulting to run.create.",
-            )
-
-        tool_name = str(plan_model.tool_name or WORKSPACE_TOOL_NAME_OVERVIEW).strip()
-        tool_input = dict(plan_model.tool_input)
-
-        workspace_action_map = {
-            "workspace.overview": "workspace.overview",
-            "workspace.read": "workspace.read",
-            "workspace.write": "workspace.write",
-            "workspace.list": "workspace.list",
-            "workspace.test": "workspace.test",
-            "workspace.move": "workspace.move",
-            "workspace.copy": "workspace.copy",
-            "workspace.delete": "workspace.delete",
-            "workspace.search": "workspace.search",
-        }
-
-        action_name = workspace_action_map.get(tool_name, "run.create")
+        # New coding request: classify via simple keywords
+        action_name, action_input, reason = _classify_coding_action(prompt, context)
         return RoutingDecision.for_coding(
             prompt=prompt,
             action_name=action_name,
-            action_input=tool_input,
-            reason=f"Workspace tool: {tool_name}",
-            metadata={
-                "tool_name": tool_name,
-                "workspace_plan": plan_model.as_dict() if plan_model else None,
-            },
+            action_input=action_input,
+            reason=reason,
+            metadata={"coding_action": action_name},
         )
 
 

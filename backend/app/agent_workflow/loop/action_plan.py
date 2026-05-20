@@ -23,6 +23,23 @@ def _copy_action_queue(value: Sequence[Mapping[str, object]] | None) -> list[dic
     ]
 
 
+
+def make_action_plan(
+    action_name: str,
+    action_input: Mapping[str, object] | None = None,
+    *,
+    reason: str = "",
+    details: Mapping[str, object] | None = None,
+) -> ActionPlan:
+    """Factory for creating ActionPlan instances."""
+    return ActionPlan(
+        action_name=str(action_name or "").strip(),
+        action_input=_copy_action_input(action_input),
+        reason=reason,
+        details=dict(details or {}),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ActionPlan:
     action_name: str

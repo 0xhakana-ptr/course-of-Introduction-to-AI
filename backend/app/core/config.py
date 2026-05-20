@@ -48,6 +48,8 @@ class Settings:
         self.log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO"
         self.project_root = project_root
         self.backend_root = backend_root
+        self.default_workspace_dir = backend_root / "workspace"
+        self.workspace_root_dir = project_root
         self.workspace_dir = backend_root / "workspace"
         self.runs_dir = self.workspace_dir / "runs"
         self.conversation_dir_name = (

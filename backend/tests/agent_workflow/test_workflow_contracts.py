@@ -20,7 +20,7 @@ def test_agent_loop_node_metadata_excludes_removed_route_graph_nodes():
 
 def test_agent_loop_node_metadata_keeps_current_runtime_nodes():
     current_loop_nodes = {
-        "perceive_node",
+        "plan_node",
         "plan_node",
         "act_node",
         "observe_node",

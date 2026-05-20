@@ -12,7 +12,7 @@ from ...schemas import (
 from ..actions import default_action_registry
 from ..actions.workspace import WORKSPACE_ACTION_TOOL_MAP
 from ..state.state_support import build_agent_initial_state
-from ..loop.agent_loop_graph import perceive_node, plan_node, run_agent_loop
+from ..loop.agent_loop_graph import plan_node, run_agent_loop
 from .support import (
     WorkspaceToolSnapshot,
     build_workspace_tool_response_kwargs,
@@ -144,14 +144,12 @@ def _preview_loop_state(
     intent: INTENT_TYPE | None,
 ) -> dict[str, object]:
     state = _loop_initial_state(prompt=prompt, context=context, intent=intent)
-    perceived_state = perceive_node(state)
-    return plan_node(perceived_state)
+    return plan_node(state)
 
 
 def _loop_planned_nodes(action_name: str | None) -> list[str]:
     terminal_node = "failure_node" if not action_name else "finalize_node"
     return [
-        "perceive_node",
         "plan_node",
         "act_node",
         "observe_node",

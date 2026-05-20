@@ -71,7 +71,7 @@ def test_agent_diagnostics_smoke_contract_without_llm(client):
     assert preview_payload["selected_route"] == "agent_loop"
     assert preview_payload["action_name"] == "chat.reply"
     assert preview_payload["runtime_event_summary"]["event_count"] >= 2
-    assert preview_payload["workflow_trace"][0]["node"] == "perceive_node"
+    assert preview_payload["workflow_trace"][0]["node"] == "plan_node"
 
     run_response = client.post(
         "/agent/diagnostics/run",
@@ -89,7 +89,7 @@ def test_agent_diagnostics_smoke_contract_without_llm(client):
     assert run_payload["executable"] is True
     assert run_payload["executed"] is True
     assert [item["node"] for item in run_payload["workflow_trace"]] == [
-        "perceive_node",
+        "plan_node",
         "plan_node",
         "act_node",
         "observe_node",

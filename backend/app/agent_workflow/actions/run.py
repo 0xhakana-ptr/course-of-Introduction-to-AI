@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from .models import AgentActionDefinition, AgentActionDescriptor, AgentActionResult
+from ..utils.shared import normalize_text
 
 
 def _model_dump(value: object) -> dict[str, object]:
@@ -10,10 +11,6 @@ def _model_dump(value: object) -> dict[str, object]:
         return value.model_dump(mode="python")  # type: ignore[no-any-return]
     return dict(value) if isinstance(value, Mapping) else {}
 
-
-def _normalize_text(value: object, *, default: str = "") -> str:
-    text = str(value or "").strip()
-    return text or default
 
 
 def _status_summary(status: str) -> str:
@@ -36,9 +33,9 @@ def _run_result(action_name: str, response: object | None, *, missing_summary: s
         )
 
     data = _model_dump(response)
-    run_id = _normalize_text(data.get("run_id"))
-    status = _normalize_text(data.get("status"), default="unknown")
-    output = _normalize_text(data.get("output"))
+    run_id = normalize_text(data.get("run_id"))
+    status = normalize_text(data.get("status"), default="unknown")
+    output = normalize_text(data.get("output"))
     summary = output or _status_summary(status)
     return AgentActionResult(
         action_name=action_name,
@@ -55,7 +52,7 @@ def _run_result(action_name: str, response: object | None, *, missing_summary: s
 def _create_run(action_input: Mapping[str, object]) -> AgentActionResult:
     from ...services.run_interface import create_run
 
-    prompt = _normalize_text(action_input.get("prompt"))
+    prompt = normalize_text(action_input.get("prompt"))
     context = action_input.get("context")
     response = create_run(prompt, str(context) if context is not None else None)
     return _run_result("run.create", response, missing_summary="Run was not created.")
@@ -64,7 +61,7 @@ def _create_run(action_input: Mapping[str, object]) -> AgentActionResult:
 def _inspect_run(action_input: Mapping[str, object]) -> AgentActionResult:
     from ...services.run_interface import get_run_snapshot
 
-    run_id = _normalize_text(action_input.get("run_id"))
+    run_id = normalize_text(action_input.get("run_id"))
     snapshot = get_run_snapshot(run_id)
     if snapshot is None:
         return AgentActionResult(
@@ -78,7 +75,7 @@ def _inspect_run(action_input: Mapping[str, object]) -> AgentActionResult:
     return AgentActionResult(
         action_name="run.inspect",
         ok=True,
-        summary=_normalize_text(data.get("summary"), default=f"Run `{run_id}` snapshot was read."),
+        summary=normalize_text(data.get("summary"), default=f"Run `{run_id}` snapshot was read."),
         data=data,
         metadata={
             "run_id": run_id,
@@ -91,7 +88,7 @@ def _inspect_run(action_input: Mapping[str, object]) -> AgentActionResult:
 def _retry_run(action_input: Mapping[str, object]) -> AgentActionResult:
     from ...services.run_interface import retry_run
 
-    run_id = _normalize_text(action_input.get("run_id"))
+    run_id = normalize_text(action_input.get("run_id"))
     return _run_result(
         "run.retry",
         retry_run(run_id),
@@ -102,7 +99,7 @@ def _retry_run(action_input: Mapping[str, object]) -> AgentActionResult:
 def _rerun_run(action_input: Mapping[str, object]) -> AgentActionResult:
     from ...services.run_interface import rerun_run
 
-    run_id = _normalize_text(action_input.get("run_id"))
+    run_id = normalize_text(action_input.get("run_id"))
     return _run_result(
         "run.rerun",
         rerun_run(run_id),
@@ -113,7 +110,7 @@ def _rerun_run(action_input: Mapping[str, object]) -> AgentActionResult:
 def _cancel_run(action_input: Mapping[str, object]) -> AgentActionResult:
     from ...services.run_interface import cancel_run
 
-    run_id = _normalize_text(action_input.get("run_id"))
+    run_id = normalize_text(action_input.get("run_id"))
     return _run_result(
         "run.cancel",
         cancel_run(run_id),

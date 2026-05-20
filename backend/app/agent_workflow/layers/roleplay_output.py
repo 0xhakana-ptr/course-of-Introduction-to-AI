@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Layer 2: Roleplay Agent.
 
 The persona layer that users interact with directly.
@@ -52,6 +52,13 @@ class RoleplayResponse:
     mood_label: str = "neutral"
     scenario: str = "chat"
     llm_used: bool = False
+
+
+@dataclass
+class ProcessResult:
+    """Layer 2 output: persona response + work-engine metadata for scheduling."""
+    response: RoleplayResponse
+    work_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +140,7 @@ class RoleplayAgent:
         turn_id: str | None = None,
         memory_context: str | None = None,
         emit_chat_message: bool = True,
-    ) -> RoleplayResponse:
+    ) -> ProcessResult:
         """Process a routed request through Layer 2 + Layer 3.
 
         Args:
@@ -143,7 +150,7 @@ class RoleplayAgent:
             memory_context: Hermes memory context string.
 
         Returns:
-            RoleplayResponse ready for frontend emission.
+            ProcessResult with persona response and work-engine metadata.
         """
         # Update idle streak - user is interacting
         mood = get_session_mood()
@@ -183,22 +190,13 @@ class RoleplayAgent:
             emit_chat_message=emit_chat_message,
         )
 
-        return response
+        work_metadata = work_result.get("metadata", {}) if isinstance(work_result, dict) else {}
+        return ProcessResult(response=response, work_metadata=work_metadata)
 
-    def _handle_chat(self, decision: RoutingDecision, *, emit_chat_message: bool = True) -> RoleplayResponse:
+    def _handle_chat(self, decision: RoutingDecision, *, emit_chat_message: bool = True) -> ProcessResult:
         """Handle chat-only intent - calls LLM with chat persona."""
         prompt = str(decision.action_input.get("prompt", ""))
         context = decision.action_input.get("context")
-
-        # Heartbeat
-        message_sender.send_status(
-            "running", progress=30,
-            node_name="roleplay_layer_chat",
-            metadata={"phase": "chat_llm", "ui_status": "chat_thinking"},
-            event_type="status.updated",
-            event_source="roleplay",
-            event_stage="chat",
-        )
 
         result = call_llm_sync(
             prompt, context,
@@ -223,7 +221,7 @@ class RoleplayAgent:
             llm_used=result.ok,
         )
         self._emit_chat_to_frontend(response, emit_chat_message=emit_chat_message)
-        return response
+        return ProcessResult(response=response)
 
     def _emit_thinking_start(self, decision: RoutingDecision):
         """Emit initial thinking state to frontend."""
@@ -247,16 +245,6 @@ class RoleplayAgent:
 
         if llm_is_configured():
             try:
-                # Heartbeat: keep frontend indicator alive during LLM generation
-                message_sender.send_status(
-                    "running", progress=60,
-                    node_name="roleplay_layer",
-                    metadata={"phase": "llm_generation", "ui_status": "roleplay_thinking"},
-                    event_type="status.updated",
-                    event_source="roleplay",
-                    event_stage="roleplay",
-                )
-
                 state_context = self._build_context_text(ctx)
                 system_prompt = ROLEPLAY_SYSTEM_PROMPT.format(
                     state_context=state_context,
@@ -289,6 +277,10 @@ class RoleplayAgent:
 
         # Fallback
         fallback = _scenario_fallback(ctx)
+        if ctx.output_summary and scenario in {"success", "coding"}:
+            fallback["chat_line"] = ctx.output_summary[:400]
+        elif ctx.error_summary and scenario == "failure":
+            fallback["chat_line"] = ctx.error_summary[:400]
         return RoleplayResponse(
             chat_line=fallback["chat_line"],
             expression=fallback.get("expression", "neutral"),

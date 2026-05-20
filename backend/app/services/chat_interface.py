@@ -1,4 +1,4 @@
-import anyio
+﻿import anyio
 from collections.abc import Callable
 
 from .chat_action.types import ChatServiceResult
@@ -137,7 +137,7 @@ async def generate_chat_response(
     # === Layer 2 + 3: Roleplay Agent calls Work Agent internally ===
     # Run Layer 2+3 in thread pool to avoid blocking event loop
     from functools import partial
-    roleplay_response = await anyio.to_thread.run_sync(
+    process_result = await anyio.to_thread.run_sync(
         partial(
             roleplay_agent.process,
             decision,
@@ -155,15 +155,20 @@ async def generate_chat_response(
         user_input=prompt,
         intent=decision.intent,
         action_name=decision.action_name,
-        result_summary=roleplay_response.chat_line[:200],
+        result_summary=process_result.response.chat_line[:200],
         ok=True,
     )
 
-    # Build result
+    # Build result — extract run metadata from ProcessResult (work-engine layer)
+    run_id = process_result.work_metadata.get("run_id") if isinstance(process_result.work_metadata, dict) else None
+    run_action = process_result.work_metadata.get("run_action") if isinstance(process_result.work_metadata, dict) else None
+    
     result = ChatServiceResult(
+        run_id=str(run_id) if run_id else None,
+        run_action=str(run_action) if run_action else None,
         intent=decision.intent,
         ok=True,
-        output=roleplay_response.chat_line,
+        output=process_result.response.chat_line,
         session_id=active_session_id,
     )
 

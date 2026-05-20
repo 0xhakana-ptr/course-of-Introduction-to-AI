@@ -1,4 +1,4 @@
-import re
+﻿import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -7,6 +7,8 @@ from ..schemas import (
     WORKSPACE_TOOL_CATEGORY,
     WORKSPACE_TOOL_OUTPUT_KIND,
 )
+from ..llm.client import call_llm_sync, llm_is_configured
+
 from .safe_fs import resolve_workspace_path
 from .workspace.constants import (
     CODE_CONTENT_SUFFIXES,
@@ -190,15 +192,99 @@ def _default_test_paths() -> list[str]:
     return paths
 
 
+# Mapping of code language keywords to file extensions for write detection
+_CODE_LANGUAGE_SUFFIX_MAP: dict[str, str] = {
+    "cpp": ".cpp", "c++": ".cpp", "c": ".c",
+    "python": ".py", "py": ".py",
+    "java": ".java",
+    "javascript": ".js", "js": ".js",
+    "typescript": ".ts", "ts": ".ts",
+    "go": ".go", "golang": ".go",
+    "rust": ".rs", "rs": ".rs",
+    "html": ".html",
+    "css": ".css",
+    "vue": ".vue",
+    "sql": ".sql",
+    "bash": ".sh", "shell": ".sh",
+    "powershell": ".ps1",
+    "ruby": ".rb",
+    "php": ".php",
+    "kotlin": ".kt",
+    "swift": ".swift",
+}
+
+_CODE_LANGUAGE_PATTERN = re.compile(
+    r"(?:\u5199|\u521b\u5efa|\u65b0\u5efa|\u751f\u6210|write|create|generate)\s*(?:\u4e00\u4e2a|\u4e2a|a|an)?\s*"
+    r"([A-Za-z+#]+|\w+)\s*(?:\u4ee3\u7801|\u6587\u4ef6|\u811a\u672c|code|file|script)",
+    re.IGNORECASE,
+)
+
+def _detect_code_language(prompt: str) -> str | None:
+    """Detect programming language from a code-write request prompt.
+    Returns file extension (e.g. '.cpp') or None.
+    """
+    text = prompt.lower()
+    # Direct language name match
+    for lang, ext in _CODE_LANGUAGE_SUFFIX_MAP.items():
+        if lang in text:
+            return ext
+    # Pattern: "\u5199\u4e00\u4e2aXX\u4ee3\u7801" -> extract XX
+    m = _CODE_LANGUAGE_PATTERN.search(prompt)
+    if m:
+        lang_hint = m.group(1).strip().lower()
+        if lang_hint in _CODE_LANGUAGE_SUFFIX_MAP:
+            return _CODE_LANGUAGE_SUFFIX_MAP[lang_hint]
+    return None
+
+def _infer_code_file_path(prompt: str) -> str:
+    """Infer a reasonable file path from a code-write request."""
+    ext = _detect_code_language(prompt) or ".txt"
+    # Try to extract a topic/name from the prompt
+    topic = ""
+    # Pattern: "\u4e00\u4e2aXXX\u7684" -> XXX is the topic
+    topic_m = re.search(r"(?:\u4e00\u4e2a|\u4e2a)(.+?)(?:\u7684|\u4ee3\u7801|\u6587\u4ef6|\u811a\u672c)", prompt)
+    if topic_m:
+        topic = topic_m.group(1).strip()
+        # Sanitize topic to be a valid filename component
+        topic = re.sub(r"[^\w\u4e00-\u9fff-]", "_", topic)[:30]
+    if not topic:
+        topic = "code"
+    return f"{topic}{ext}"
+
+def _generate_code_via_llm(prompt: str, language_hint: str) -> str:
+    """Generate code content via LLM for a write request."""
+    if not llm_is_configured():
+        return ""
+    system_prompt = f"You are a code generator. Write ONLY the code, no explanations. Language: {language_hint}. Output raw code only, no markdown fences."
+    result = call_llm_sync(
+        prompt=prompt,
+        context=None,
+        system_prompt=system_prompt,
+        temperature=0.3,
+        max_tokens=3000,
+    )
+    if result.ok and result.output:
+        code = result.output.strip()
+        # Strip markdown fences if present
+        code = re.sub(r"^```[\w]*\n", "", code)
+        code = re.sub(r"\n```$", "", code)
+        return code.strip()
+    return ""
+
 def _looks_like_text_file_write_request(prompt: str) -> bool:
     if not _contains_keyword(prompt, WORKSPACE_TOOL_WRITE_KEYWORDS):
         return False
     if _contains_keyword(prompt, WORKSPACE_TOOL_TEXT_FILE_KEYWORDS):
         return True
-    return any(
+    if any(
         Path(candidate).suffix
         for candidate in _iter_prompt_path_candidates(prompt)
-    )
+    ):
+        return True
+    # Also match code-language write requests like "\u5199\u4e00\u4e2aCPP\u4ee3\u7801"
+    if _detect_code_language(prompt) is not None:
+        return True
+    return False
 
 
 def _looks_like_codegen_task(prompt: str) -> bool:
@@ -399,7 +485,7 @@ def _target_prefers_raw_code(rel_path: str | None) -> bool:
 def _find_content_marker(prompt: str) -> re.Match[str] | None:
     pattern = re.compile(
         r"(?:内容是|内容为|内容如下|内容：|内容:|代码是|代码为|代码如下|"
-        r"with content|content is)\s*[:：]?\s*",
+        r"with content|content is|content:)\s*[:：]?\s*",
         flags=re.IGNORECASE,
     )
     return pattern.search(prompt)
@@ -432,14 +518,45 @@ def _strip_outer_fenced_code_block_if_needed(content: str, rel_path: str | None)
     return matched.group("body").strip("\n")
 
 
+def _last_path_index_in_prompt(prompt: str, rel_path: str) -> int:
+    """Return the start index of the last occurrence of *rel_path* in *prompt*."""
+    normalized = rel_path.replace("\\", "/").rstrip("/")
+    idx = prompt.rfind(normalized)
+    if idx >= 0:
+        return idx
+    basename = normalized.rsplit("/", 1)[-1]
+    return prompt.rfind(basename)
+
+
+def _strip_leading_clutter(text: str) -> str:
+    """Strip leading punctuation, spaces, and connector phrases."""
+    text = re.sub(
+        r"^[\s\uFF0C,\u3002\uFF1B;\uFF1A:\u3001\uFF01!\uFF1F?]*(?:\u7684?\s*(?:\u6587\u4EF6|\u6587\u6863|\u6587\u672C|\u4EE3\u7801))?\s*[,\uFF0C]?\s*",
+        "",
+        text,
+    )
+    return text.strip()
+
+
 def _extract_requested_text_content(prompt: str, *, rel_path: str | None = None) -> str:
     matched = _find_content_marker(prompt)
-    if matched is None:
-        return ""
+    if matched is not None:
+        content = prompt[matched.end() :].strip()
+        trimmed = _trim_followup_from_text_content(content)
+        return _strip_outer_fenced_code_block_if_needed(trimmed, rel_path)
 
-    content = prompt[matched.end() :].strip()
-    trimmed = _trim_followup_from_text_content(content)
-    return _strip_outer_fenced_code_block_if_needed(trimmed, rel_path)
+    # Fallback: no explicit content marker (e.g. "\u5185\u5BB9\u662F") was found.
+    # For write-intent prompts we try to extract content after the last
+    # occurrence of the file path, then trim any follow-up instructions.
+    if rel_path:
+        path_idx = _last_path_index_in_prompt(prompt, rel_path)
+        if path_idx >= 0:
+            raw = _strip_leading_clutter(prompt[path_idx + len(rel_path):])
+            if raw:
+                trimmed = _trim_followup_from_text_content(raw)
+                return _strip_outer_fenced_code_block_if_needed(trimmed, rel_path)
+
+    return ""
 
 
 def _trim_followup_from_text_content(content: str) -> str:
@@ -842,7 +959,7 @@ def build_workspace_overview(
     return "\n\n".join(section for section in sections if section).strip()
 
 
-def plan_workspace_tool(prompt: str) -> dict[str, object]:
+def plan_workspace_tool(prompt: str) -> dict[str, object] | None:
     normalized_prompt = str(prompt or "").strip()
     path_candidates = _iter_prompt_path_candidates(normalized_prompt)
     matched_paths = _iter_existing_workspace_paths(normalized_prompt)
@@ -899,13 +1016,29 @@ def plan_workspace_tool(prompt: str) -> dict[str, object]:
             )
 
     if _looks_like_text_file_write_request(normalized_prompt):
-        rel_path = _first_text_file_candidate(normalized_prompt) or DEFAULT_WRITE_TEXT_REL_PATH
+        rel_path = _first_text_file_candidate(normalized_prompt)
+        content = _extract_requested_text_content(normalized_prompt, rel_path=rel_path)
+        # If no explicit file path and no content, try to infer from code language context
+        if not rel_path:
+            inferred_path = _infer_code_file_path(normalized_prompt)
+            if inferred_path != "code.txt":
+                rel_path = inferred_path
+            else:
+                rel_path = DEFAULT_WRITE_TEXT_REL_PATH
+        if not content:
+            lang = _detect_code_language(normalized_prompt)
+            if lang:
+                lang_hint = lang.lstrip(".")
+                content = _generate_code_via_llm(normalized_prompt, lang_hint)
+        reason = "Prompt asks to create or write a file."
+        if not content:
+            reason = "Prompt asks to create or write a file (no content detected; LLM generation attempted)."
         return _build_workspace_tool_plan(
             WORKSPACE_TOOL_NAME_WRITE,
-            reason="Prompt asks to create or write a text file.",
+            reason=reason,
             terminal=True,
             rel_path=rel_path,
-            content=_extract_requested_text_content(normalized_prompt, rel_path=rel_path),
+            content=content,
             overwrite=False,
             target_location=_target_location_from_prompt(normalized_prompt),
         )
@@ -952,6 +1085,10 @@ def plan_workspace_tool(prompt: str) -> dict[str, object]:
             recursive=False,
             max_entries=DEFAULT_WORKSPACE_OVERVIEW_ENTRY_LIMIT,
         )
+
+    # Codegen fallback: if it looks like a coding task, let routing use run.create
+    if _looks_like_codegen_task(normalized_prompt):
+        return None
 
     return _build_workspace_tool_plan(
         WORKSPACE_TOOL_NAME_OVERVIEW,

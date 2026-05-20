@@ -156,7 +156,7 @@ _IDLE_QUIPS = [
 
 # ---- Node -> Pool mapping ----
 _NODE_QUIP_POOL: dict[str, list[str]] = {
-    "perceive_node": _PERCEIVE_QUIPS,
+
     "plan_node": _PLAN_QUIPS,
     "act_node": _ACT_QUIPS,
     "observe_node": _OBSERVE_QUIPS,
@@ -186,7 +186,7 @@ WORKFLOW_NODE_EVENTS: dict[str, WorkflowNodeEvent] = {
         status="error" if name in ("failure_node", "coding_failure_node", "agent_loop_failure") else "running",
     )
     for name, prog in [
-        ("perceive_node", 8),
+
         ("plan_node", 20),
         ("act_node", 45),
         ("observe_node", 70),

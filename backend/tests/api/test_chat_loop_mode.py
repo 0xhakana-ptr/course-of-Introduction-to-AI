@@ -47,7 +47,7 @@ def test_chat_route_uses_loop_runtime_for_chat(monkeypatch, client):
     ]
     node_names = [message["node_name"] for message in messages]
 
-    assert "perceive_node" in node_names
+    assert "plan_node" in node_names
     assert "plan_node" in node_names
     assert "finalize_node" in node_names
     assert [message["event_type"] for message in action_messages] == [
@@ -81,7 +81,7 @@ def test_chat_route_uses_loop_runtime_for_workspace_write(client):
     ]
     node_names = [message["node_name"] for message in messages]
 
-    assert "perceive_node" in node_names
+    assert "plan_node" in node_names
     assert "act_node" in node_names
     assert "finalize_node" in node_names
     assert [message["event_type"] for message in action_messages] == [

@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from pydantic import ValidationError
 
 from backend.app.core.config import settings
@@ -511,8 +511,16 @@ def test_workspace_tool_can_export_text_to_configured_desktop_dir(monkeypatch, t
     assert str(exported_file) in result["summary"]
 
 
-def test_workspace_tool_planning_falls_back_to_workspace_overview():
+def test_workspace_tool_planning_falls_back_to_run_create_for_codegen():
+    """包含"写"的代码任务应返回 None，交由 routing 层用 run.create 处理。"""
     plan = plan_workspace_tool("帮我写一个新的 python 脚本")
+
+    assert plan is None
+
+
+def test_workspace_tool_planning_unrelated_query_still_goes_to_overview():
+    """不含写/创建等关键词的普通查询仍回落至 overview。"""
+    plan = plan_workspace_tool("帮我看看这个项目里有什么文件")
 
     assert plan["tool_name"] == WORKSPACE_TOOL_NAME_OVERVIEW
     assert plan["tool_input"] == {"rel_path": "."}

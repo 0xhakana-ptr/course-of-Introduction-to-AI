@@ -11,6 +11,7 @@ from ..trace.runtime import build_workflow_trace_entry, coerce_workflow_trace_it
 from .context import file_state_from_action_result, merge_file_context
 from .result import FileWorkflowResult
 from .state import FileGraphState
+from ..utils.shared import normalize_text
 
 
 FILE_START_NODE = "file_start_node"
@@ -31,10 +32,6 @@ SUPPORTED_FILE_ACTIONS = frozenset(
     }
 )
 
-
-def _normalize_text(value: object, *, default: str = "") -> str:
-    text = str(value or "").strip()
-    return text or default
 
 
 def _merge_state(
@@ -73,7 +70,7 @@ def _coerce_action_result(value: object) -> dict[str, object]:
 
 
 def file_start_node(state: FileGraphState) -> FileGraphState:
-    action_name = _normalize_text(state.get("file_action_name"))
+    action_name = normalize_text(state.get("file_action_name"))
     if action_name not in SUPPORTED_FILE_ACTIONS:
         return _append_file_trace(
             _merge_state(
@@ -102,7 +99,7 @@ def file_start_node(state: FileGraphState) -> FileGraphState:
 
 
 def file_executor_node(state: FileGraphState) -> FileGraphState:
-    action_name = _normalize_text(state.get("file_action_name"))
+    action_name = normalize_text(state.get("file_action_name"))
     action_input = dict(state.get("file_action_input") or {})
     result = default_action_registry.execute(action_name, action_input)
     result_payload = result.as_dict()
@@ -126,7 +123,7 @@ def file_executor_node(state: FileGraphState) -> FileGraphState:
 
 
 def file_observer_node(state: FileGraphState) -> FileGraphState:
-    action_name = _normalize_text(state.get("file_action_name"))
+    action_name = normalize_text(state.get("file_action_name"))
     action_input = dict(state.get("file_action_input") or {})
     action_result = _coerce_action_result(state.get("action_result"))
     file_state = merge_file_context(
@@ -178,13 +175,13 @@ def file_failure_node(state: FileGraphState) -> FileGraphState:
 
 
 def _route_after_start(state: FileGraphState) -> str:
-    if _normalize_text(state.get("error")):
+    if normalize_text(state.get("error")):
         return FILE_FAILURE_NODE
     return FILE_EXECUTOR_NODE
 
 
 def _route_after_executor(state: FileGraphState) -> str:
-    if _normalize_text(state.get("error")):
+    if normalize_text(state.get("error")):
         return FILE_FAILURE_NODE
     return FILE_OBSERVER_NODE
 

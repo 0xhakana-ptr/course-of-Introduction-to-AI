@@ -4,15 +4,12 @@ from collections.abc import Mapping
 
 from ...messaging.message_sender import message_sender
 from .models import AgentActionDefinition, AgentActionDescriptor, AgentActionResult
+from ..utils.shared import normalize_text
 
-
-def _normalize_text(value: object, *, default: str = "") -> str:
-    text = str(value or "").strip()
-    return text or default
 
 
 def _chat_reply(action_input: Mapping[str, object]) -> AgentActionResult:
-    content = _normalize_text(action_input.get("content"))
+    content = normalize_text(action_input.get("content"))
     return AgentActionResult(
         action_name="chat.reply",
         ok=True,
@@ -22,7 +19,7 @@ def _chat_reply(action_input: Mapping[str, object]) -> AgentActionResult:
 
 
 def _final_answer(action_input: Mapping[str, object]) -> AgentActionResult:
-    content = _normalize_text(action_input.get("content"))
+    content = normalize_text(action_input.get("content"))
     return AgentActionResult(
         action_name="final.answer",
         ok=True,
@@ -32,8 +29,8 @@ def _final_answer(action_input: Mapping[str, object]) -> AgentActionResult:
 
 
 def _ask_user_confirmation(action_input: Mapping[str, object]) -> AgentActionResult:
-    prompt = _normalize_text(action_input.get("prompt"), default="请确认是否继续。")
-    blocked_action_name = _normalize_text(action_input.get("blocked_action_name")) or None
+    prompt = normalize_text(action_input.get("prompt"), default="请确认是否继续。")
+    blocked_action_name = normalize_text(action_input.get("blocked_action_name")) or None
     blocked_action_input = (
         dict(action_input.get("blocked_action_input"))
         if isinstance(action_input.get("blocked_action_input"), Mapping)
@@ -57,8 +54,8 @@ def _ask_user_confirmation(action_input: Mapping[str, object]) -> AgentActionRes
 
 
 def _character_quip(action_input: Mapping[str, object]) -> AgentActionResult:
-    content = _normalize_text(action_input.get("content"))
-    node_name = _normalize_text(action_input.get("node_name"), default="agent_action")
+    content = normalize_text(action_input.get("content"))
+    node_name = normalize_text(action_input.get("node_name"), default="agent_action")
     ok = message_sender.send_quip(content, node_name=node_name)
     return AgentActionResult(
         action_name="character.quip",
@@ -70,8 +67,8 @@ def _character_quip(action_input: Mapping[str, object]) -> AgentActionResult:
 
 
 def _character_motion(action_input: Mapping[str, object]) -> AgentActionResult:
-    motion = _normalize_text(action_input.get("motion"))
-    node_name = _normalize_text(action_input.get("node_name"), default="agent_action")
+    motion = normalize_text(action_input.get("motion"))
+    node_name = normalize_text(action_input.get("node_name"), default="agent_action")
     ok = message_sender.send_motion(motion, node_name=node_name)
     return AgentActionResult(
         action_name="character.motion",
@@ -83,8 +80,8 @@ def _character_motion(action_input: Mapping[str, object]) -> AgentActionResult:
 
 
 def _character_expression(action_input: Mapping[str, object]) -> AgentActionResult:
-    expression = _normalize_text(action_input.get("expression"))
-    node_name = _normalize_text(action_input.get("node_name"), default="agent_action")
+    expression = normalize_text(action_input.get("expression"))
+    node_name = normalize_text(action_input.get("node_name"), default="agent_action")
     ok = message_sender.send_expression(expression, node_name=node_name)
     return AgentActionResult(
         action_name="character.expression",

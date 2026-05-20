@@ -821,6 +821,36 @@
 }
 ```
 
+### 3.16.1 `GET /workspace`
+
+Purpose:
+
+- Returns the effective workspace root currently used by safe file tools.
+- If `PROJECT_ROOT` is configured, the effective root is that project root until `/workspace` is explicitly updated.
+
+Response fields:
+
+- `path`: absolute effective workspace path
+- `exists`: whether the directory exists
+- `is_default`: whether the effective path is the backend default workspace
+
+### 3.16.2 `PUT /workspace`
+
+Request body:
+
+```json
+{
+  "path": "D:\\workspace"
+}
+```
+
+Purpose:
+
+- Updates the runtime workspace root used by workspace file tools.
+- The path must already exist and be a directory.
+- The update also refreshes `runs_dir` under the selected workspace.
+- The update clears the runtime `PROJECT_ROOT` override so frontend workspace selection and backend file tools stay aligned.
+
 ### 3.17 `POST /runs/{run_id}/retry`
 
 用途：

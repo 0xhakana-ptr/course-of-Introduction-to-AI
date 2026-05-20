@@ -26,8 +26,8 @@ def test_agent_diagnostics_preview_defaults_to_loop_plan(client):
     assert payload["requires_confirmation"] is False
     assert payload["workspace_tool_name"] == "write_workspace_text"
     assert payload["workspace_tool_plan"]["tool_input"]["rel_path"] == "notes/diag-loop.txt"
-    assert payload["planned_nodes"][:2] == ["perceive_node", "plan_node"]
-    assert payload["debug_summary"]["first_node"] == "perceive_node"
+    assert payload["planned_nodes"][:2] == ["plan_node", "plan_node"]
+    assert payload["debug_summary"]["first_node"] == "plan_node"
     assert payload["debug_summary"]["last_node"] == "plan_node"
     assert payload["runtime_event_summary"]["event_count"] == 2
     assert any("Agent Loop 主路径" in note for note in payload["notes"])
@@ -65,7 +65,7 @@ def test_agent_diagnostics_run_defaults_to_loop_and_executes_chat(monkeypatch, c
     assert payload["executed"] is True
     assert payload["output"] == "loop diagnostics reply to hello loop diagnostics"
     assert [item["node"] for item in payload["workflow_trace"]] == [
-        "perceive_node",
+        "plan_node",
         "plan_node",
         "act_node",
         "observe_node",

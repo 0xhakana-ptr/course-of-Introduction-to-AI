@@ -1,4 +1,4 @@
-import re
+﻿import re
 
 from ...schemas import (
     WORKSPACE_TOOL_CATEGORY,
@@ -128,6 +128,7 @@ WORKSPACE_TOOL_WRITE_KEYWORDS = (
     "新建",
     "写入",
     "保存",
+    "写",
     "create",
     "new",
     "write",
@@ -200,14 +201,9 @@ WORKSPACE_TOOL_CODEGEN_TASK_KEYWORDS = (
     "改",
     "优化",
     "实现",
-    "编写",
-    "开发",
-    "生成代码",
-    "写代码",
     "重构",
     "补充",
     "完善",
-    "新增功能",
     "分析",
     "诊断",
     "问题",
@@ -220,12 +216,7 @@ WORKSPACE_TOOL_CODEGEN_TASK_KEYWORDS = (
     "change",
     "optimize",
     "implement",
-    "build",
-    "develop",
-    "generate code",
-    "write code",
     "refactor",
-    "add feature",
     "analyze",
     "diagnose",
     "problem",

@@ -31,6 +31,8 @@ def isolate_backend_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(settings, "conversation_recent_message_max_chars", 800)
     monkeypatch.setattr(settings, "desktop_export_enabled", False)
     monkeypatch.setattr(settings, "desktop_export_dir", None)
+    monkeypatch.setattr(settings, "accessible_project_root", None)
+    monkeypatch.setattr(settings, "project_write_enabled", False)
     monkeypatch.setattr(settings, "conversation_cleanup_interval_seconds", 0)
     monkeypatch.setattr(settings, "conversation_session_ttl_seconds", 3600)
     monkeypatch.setattr(settings, "conversation_max_persisted_sessions", 200)
@@ -39,6 +41,8 @@ def isolate_backend_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     runs_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(settings, "workspace_dir", workspace_dir)
     monkeypatch.setattr(settings, "runs_dir", runs_dir)
+    monkeypatch.setattr(settings, "default_workspace_dir", workspace_dir)
+    monkeypatch.setattr(settings, "workspace_root_dir", tmp_path)
     message_queue.clear()
     conversation_store.clear_all()
     yield
