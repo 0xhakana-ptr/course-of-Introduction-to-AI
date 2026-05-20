@@ -193,8 +193,9 @@ def observe_node(state: AgentLoopState) -> AgentLoopState:
     step_count = coerce_int(state.get("step_count")) + 1
     max_steps = coerce_int(state.get("max_steps"), default=15)
     action_ok = bool(ar.get("ok"))
-    done = not action_ok or step_count >= max_steps
-    stop_reason = "completed" if (action_ok and done) else ("failed" if not action_ok else "max_steps")
+    # Simplified loop: one action per turn, always stop after execution
+    done = True
+    stop_reason = "completed" if action_ok else "failed"
 
     observation = {
         "action_name": ar.get("action_name"),
