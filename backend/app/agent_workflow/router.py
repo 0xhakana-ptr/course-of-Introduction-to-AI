@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Layer 1: Routing Guard.
 
 Independent layer that detects user intent and determines routing.

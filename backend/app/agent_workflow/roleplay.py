@@ -17,9 +17,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .router import RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN
+from .runtime_tracker import runtime_tracker
 from ..messaging.message_sender import message_sender
 from ..llm.client import call_llm_sync, llm_is_configured
-
 logger = logging.getLogger(__name__)
 
 # ===== Inlined from output/roleplay_agent.py =====
@@ -82,7 +82,6 @@ JSON 格式如下：
 
 请根据以上设定和当前状态，生成一个符合角色性格的回复。记住：只输出 JSON！
 """
-
 
 # Simplified chat-only persona prompt (no state/mood placeholders)
 CHAT_SYSTEM_PROMPT = """
@@ -154,7 +153,6 @@ MOOD_LONELY_MODIFIER = (
     "例子：'进行一个鱼的摸？你再不理我，我就要开始自己写代码自己跑了哦...'"
 )
 
-
 # ---------------------------------------------------------------------------
 # Mood tracking
 # ---------------------------------------------------------------------------
@@ -204,89 +202,14 @@ class RoleplayMood:
         self.idle_streak += 1
         self.total_turns += 1
 
-
 _session_mood = RoleplayMood()
-
 
 def get_session_mood():
     return _session_mood
 
-
 def reset_session_mood():
     global _session_mood
     _session_mood = RoleplayMood()
-
-
-# ---------------------------------------------------------------------------
-# Fallback quips (when LLM unavailable) — Chinese, in-character
-# ---------------------------------------------------------------------------
-
-_THINKING_QUIPS = [
-    "正在抓取灵能者~",
-    "量子波动速读中...",
-    "让我康康——",
-    "本机正在深度思考，请稍候...",
-    "呜~ JoJo，这个好难想啊！",
-    "正在受奸奇祝福……啊不是，正在推理中！",
-]
-
-_CODING_QUIPS = [
-    "高雅人士正在处理……",
-    "正在注入魔法……",
-    "神明大人保佑别报错！",
-    "玄学编程，懂不懂嘛？",
-    "敲敲敲……键盘冒烟了！",
-    "小任务而已，马上搞定~",
-    "这你自己搞不定吧(¬_¬)？放着我来！",
-    "？！码码！？代码在跳舞！",
-]
-
-_FAILURE_QUIPS = [
-    "机魂不悦……",
-    "呜，失败了QAQ",
-    "出小问题了，不是故意的QWQ",
-    "你什么都没看到对吧？对吧对吧？",
-    "呜...任务失败了，再来一次嘛，本机保证这次不一样！",
-    "可恶，谁在背后诅咒本机……",
-]
-
-_SUCCESS_QUIPS = [
-    "机魂大悦！",
-    "yeah~ 大成功！(^▽^)",
-    "YA⭐DA⭐ZE",
-    "本机的实力，看到了吗~",
-    "完美！不愧是我！",
-    "任务完成~ 夸我夸我！",
-]
-
-_IDLE_QUIPS = [
-    "进行一个鱼的摸？",
-    "不理我要没电了……",
-    "Waiting 4 love~🎵",
-    "好无聊好无聊好无聊……你的代码呢？",
-    "你再不理我，我就要自己写代码自己跑了哦...（盯——）",
-    "本机的存在感正在降低……",
-]
-
-_CHAT_QUIPS = [
-    "诶嘿~",
-    "是这样吗~",
-    "嗯嗯，本机在听呢",
-    "有道理诶！",
-    "对的对的~",
-    "然后呢然后呢？",
-    "哼~ 算你识相",
-]
-
-_EXPRESSIONS_BY_SCENARIO = {
-    "thinking": ["thinking", "focused", "neutral"],
-    "coding": ["focused", "thinking", "neutral"],
-    "failure": ["worried", "sad"],
-    "success": ["happy", "proud"],
-    "idle": ["neutral", "surprised", "sad"],
-    "chat": ["neutral", "happy", "blush"],
-}
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -295,11 +218,9 @@ _EXPRESSIONS_BY_SCENARIO = {
 def _pick(choices):
     return random.choice(choices) if choices else ""
 
-
 def _norm(value, *, default=""):
     text = str(value or "").strip()
     return text or default
-
 
 def _int(value, default=0):
     try:
@@ -307,37 +228,18 @@ def _int(value, default=0):
     except (TypeError, ValueError):
         return default
 
-
-def _merge_fallback_and_llm_quip(ctx, llm_parsed):
-    """If LLM produced a serviceable quip, use it. Otherwise pick from fallback pool."""
-    llm_quip = str(llm_parsed.get("quip", "")).strip()
-    if llm_quip and len(llm_quip) >= 2:
-        return llm_quip[:80]
-    scenario = ctx.scenario()
-    pool = {
-        "thinking": _THINKING_QUIPS,
-        "coding": _CODING_QUIPS,
-        "failure": _FAILURE_QUIPS,
-        "success": _SUCCESS_QUIPS,
-        "idle": _IDLE_QUIPS,
-        "chat": _CHAT_QUIPS,
-    }.get(scenario, _CHAT_QUIPS)
-    return _pick(pool)
-
-
 def _scenario_fallback(ctx):
     scenario = ctx.scenario()
-    quip_pool = {
-        "thinking": _THINKING_QUIPS,
-        "coding": _CODING_QUIPS,
-        "failure": _FAILURE_QUIPS,
-        "success": _SUCCESS_QUIPS,
-        "idle": _IDLE_QUIPS,
-        "chat": _CHAT_QUIPS,
-    }.get(scenario, _CHAT_QUIPS)
-    expr_pool = _EXPRESSIONS_BY_SCENARIO.get(scenario, ["neutral"])
-    quip = _pick(quip_pool)
-    expression = _pick(expr_pool)
+    fallback_quips = {
+        "thinking": ["正在思考..."],
+        "coding": ["正在编写..."],
+        "failure": ["出错了..."],
+        "success": ["成功啦~"],
+        "idle": ["(偷偷看你)"],
+        "chat": ["嗯嗯~"],
+    }
+    quip = _pick(fallback_quips.get(scenario, ["嗯嗯~"]))
+    expression = "neutral"
     if scenario == "chat" and ctx.output_summary:
         chat_line = ctx.output_summary[:400]
     elif scenario == "coding" and ctx.output_summary:
@@ -345,7 +247,6 @@ def _scenario_fallback(ctx):
     else:
         chat_line = quip
     return {"chat_line": chat_line, "expression": expression, "quip": quip, "motion": ""}
-
 
 # ---------------------------------------------------------------------------
 # State context builder
@@ -425,7 +326,6 @@ class RoleplayAgentContext:
             terminal_status=str(md.get("stop_reason", "")),
         )
 
-
 def _build_state_context(ctx):
     lines_list = []
     lines_list.append("意图: " + ctx.intent)
@@ -442,7 +342,6 @@ def _build_state_context(ctx):
     if ctx.step_count > 0:
         lines_list.append("已执行步数: " + str(ctx.step_count))
     return "\n".join(lines_list)
-
 
 # ---------------------------------------------------------------------------
 # JSON parsing (robust)
@@ -481,9 +380,6 @@ def _parse_llm_json(raw):
         "motion": str(data.get("motion", "")).strip(),
     }
 
-
-
-
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
@@ -499,13 +395,11 @@ class RoleplayResponse:
     scenario: str = "chat"
     llm_used: bool = False
 
-
 @dataclass
 class ProcessResult:
     """Layer 2 output: persona response + work-engine metadata for scheduling."""
     response: RoleplayResponse
     work_metadata: dict[str, Any] = field(default_factory=dict)
-
 
 # ---------------------------------------------------------------------------
 # Legacy generate_roleplay_response (used by agent loop graph)
@@ -541,7 +435,7 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
                 parsed = _parse_llm_json(result.output)
                 if parsed.get("chat_line"):
                     if not parsed.get("quip") or len(parsed.get("quip", "")) < 2:
-                        parsed["quip"] = _merge_fallback_and_llm_quip(ctx, parsed)
+                        pass  # quip handled by runtime_tracker
                     logger.debug("Roleplay Agent [LLM]: scenario=%s mood=%s", scenario, mood.label)
                     return RoleplayResponse(
                         chat_line=parsed["chat_line"],
@@ -567,13 +461,11 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
         llm_used=False,
     )
 
-
 # ---------------------------------------------------------------------------
 # Emit to frontend (legacy)
 # ---------------------------------------------------------------------------
 
 from collections.abc import Mapping
-
 
 def emit_roleplay_to_frontend(response, *, node_name="agent_loop_roleplay", emit_chat_message=True):
     if response.chat_line and emit_chat_message:
@@ -606,7 +498,6 @@ def emit_roleplay_to_frontend(response, *, node_name="agent_loop_roleplay", emit
             node_name=node_name,
         )
 
-
 def emit_roleplay_chat(
     content: str,
     *,
@@ -621,7 +512,6 @@ def emit_roleplay_chat(
         is_partial=False,
         node_name=node_name,
     )
-
 
 def emit_roleplay_message(
     message: object,
@@ -642,7 +532,6 @@ def emit_roleplay_message(
         emit_chat_message=emit_chat_message,
     )
 
-
 def emit_roleplay_state(
     state: Mapping[str, object],
     *,
@@ -654,7 +543,6 @@ def emit_roleplay_state(
         emit_chat_message=bool(state.get("emit_chat_message", True)),
     )
     return dict(state)
-
 
 # ---------------------------------------------------------------------------
 # RoleplayAgent (Layer 2 facade) - merged from layers/roleplay_output.py
@@ -704,13 +592,15 @@ class RoleplayAgent:
         mood = get_session_mood()
         mood.idle_streak = 0
 
+        # Signal start of processing for ALL intents (including chat)
+        runtime_tracker.phase_enter("L1_routing")
+
         if decision.intent == INTENT_CHAT:
-            return self._handle_chat(decision, emit_chat_message=emit_chat_message)
+            result = self._handle_chat(decision, emit_chat_message=emit_chat_message)
+            runtime_tracker.task_done(ok=True)
+            return result
 
-        # For coding/work intents, first emit a thinking quip
-        self._emit_thinking_start(decision)
-
-        # Call Layer 3 for actual work
+        # Call Layer 3 for actual work (coding/file/etc.)
         work_result = self.work_agent.execute(
             decision,
             session_id=session_id,
@@ -771,19 +661,6 @@ class RoleplayAgent:
         self._emit_chat_to_frontend(response, emit_chat_message=emit_chat_message)
         return ProcessResult(response=response)
 
-    def _emit_thinking_start(self, decision):
-        """Emit initial thinking state to frontend."""
-        thinking_quips = [
-            "让我想想...",
-            "正在思考~",
-            "康康情况...",
-            "嗯...",
-        ]
-        quip = random.choice(thinking_quips)
-        message_sender.send_quip(quip, node_name="roleplay_layer", priority="high", duration=4000)
-        message_sender.send_expression("thinking", node_name="roleplay_layer",
-                                       intensity=0.7, duration=5000, transition="smooth", mode="set")
-
     def _generate_persona_response(self, decision, work_result):
         """Generate persona-wrapped response from work result."""
         ctx = RoleplayAgentContext.from_routing_and_result(decision, work_result)
@@ -809,7 +686,7 @@ class RoleplayAgent:
                     if parsed.get("chat_line"):
                         quip = parsed.get("quip", "")
                         if not quip or len(quip) < 2:
-                            quip = self._fallback_quip(ctx)
+                            quip = ""
                         return RoleplayResponse(
                             chat_line=parsed["chat_line"],
                             expression=parsed.get("expression", "neutral"),
@@ -853,16 +730,6 @@ class RoleplayAgent:
         if ctx.step_count > 0:
             parts.append(f"步数: {ctx.step_count}")
         return "\n".join(parts)
-
-    def _fallback_quip(self, ctx):
-        pools = {
-            "thinking": _THINKING_QUIPS,
-            "coding": _CODING_QUIPS,
-            "failure": _FAILURE_QUIPS,
-            "success": _SUCCESS_QUIPS,
-            "chat": _CHAT_QUIPS,
-        }
-        return random.choice(pools.get(ctx.scenario(), _CHAT_QUIPS))
 
     def _emit_to_frontend(
         self,
@@ -924,6 +791,8 @@ class RoleplayAgent:
 
     def emit_idle_quip_if_due(self):
         """Send idle quip if enough time has passed. Called by frontend polling."""
+        if runtime_tracker.task_running:
+            return False
         import time
         if not hasattr(self, '_last_idle_quip_ts'):
             self._last_idle_quip_ts = 0.0
@@ -937,7 +806,7 @@ class RoleplayAgent:
             mood.idle_streak += 1
             return False
 
-        quip = random.choice(_IDLE_QUIPS)
+        quip = random.choice(["你不要不理本机嘛...", "鱼呢？摸了~", "再不说话本机要休眠了哦...", "进行一个鱼的摸？", "本机的存在感正在降低……"])
         message_sender.send_quip(
             quip, node_name="idle",
             priority="low", duration=3500,
@@ -946,7 +815,6 @@ class RoleplayAgent:
         self._last_idle_quip_ts = now
         mood.record_neutral()
         return True
-
 
 # Singleton instance
 roleplay_agent = RoleplayAgent()

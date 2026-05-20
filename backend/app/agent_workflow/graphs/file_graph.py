@@ -13,6 +13,7 @@ from .file_result import FileWorkflowResult
 from .file_state import FileGraphState
 from ..state.utils_shared import normalize_text
 
+from ..runtime_tracker import runtime_tracker
 
 FILE_START_NODE = "file_start_node"
 FILE_EXECUTOR_NODE = "file_executor_node"
@@ -99,6 +100,7 @@ def file_start_node(state: FileGraphState) -> FileGraphState:
 
 
 def file_executor_node(state: FileGraphState) -> FileGraphState:
+    runtime_tracker.phase_enter("file_executor_node")
     action_name = normalize_text(state.get("file_action_name"))
     action_input = dict(state.get("file_action_input") or {})
     result = default_action_registry.execute(action_name, action_input)

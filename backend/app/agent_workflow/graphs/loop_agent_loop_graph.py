@@ -1,4 +1,4 @@
-﻿"""Layer 3 work engine: streamlined LangGraph agent loop.
+"""Layer 3 work engine: streamlined LangGraph agent loop.
 
 This module keeps the original file name but is now drastically simplified:
 - perceive_node removed (Layer 1 handles intent detection)
@@ -32,6 +32,7 @@ from ..state.runtime_graph_nodes import register_agent_graph_nodes
 from ..state.utils_shared import coerce_bool, coerce_int, normalize_text
 from .loop_action_plan import make_action_plan
 
+from ..runtime_tracker import runtime_tracker
 
 class AgentLoopState(TypedDict, total=False):
     turn_id: str
@@ -70,7 +71,7 @@ _CODING_WORKFLOW_ACTIONS: frozenset[str] = RUN_ACTIONS_FOR_CODING_WORKFLOW
 
 
 # ---------------------------------------------------------------------------
-# Plan node — pass through Layer 1 routing
+# Plan node 鈥?pass through Layer 1 routing
 # ---------------------------------------------------------------------------
 
 def _build_action_plan_from_routing(state: AgentLoopState) -> "tuple[str, dict[str, object], dict[str, object]]":
@@ -89,6 +90,7 @@ def _build_action_plan_from_routing(state: AgentLoopState) -> "tuple[str, dict[s
 
 
 def plan_node(state: AgentLoopState) -> AgentLoopState:
+    runtime_tracker.phase_enter("plan_node")
     emit_workflow_node_entered(state, "plan_node")
     action_name, action_input, plan_details = _build_action_plan_from_routing(state)
 
@@ -121,7 +123,7 @@ def plan_node(state: AgentLoopState) -> AgentLoopState:
 
 
 # ---------------------------------------------------------------------------
-# Act node — dispatch to action registry or coding subgraph
+# Act node 鈥?dispatch to action registry or coding subgraph
 # ---------------------------------------------------------------------------
 
 def _execute_selected_action(state: AgentLoopState) -> AgentActionResult:
@@ -247,6 +249,7 @@ def route_after_decision(state: AgentLoopState) -> str:
 
 
 def finalize_node(state: AgentLoopState) -> AgentLoopState:
+    runtime_tracker.phase_enter("finalize_node")
     emit_workflow_node_entered(state, "finalize_node")
     next_state = merge_agent_state(state, error=None, ui_status="work_engine_finalized")
     next_state = append_workflow_trace(next_state, node="finalize_node", event="work_engine_finalized", ui_status="work_engine_finalized", details={"stop_reason": state.get("stop_reason") or "completed"})
@@ -279,7 +282,7 @@ def create_agent_loop_graph():
         },
         failure_builder=build_workflow_node_failure_state,
     )
-    # perceive_node removed — Layer 1 handles intent. Entry is plan_node which
+    # perceive_node removed 鈥?Layer 1 handles intent. Entry is plan_node which
     # passes through Layer 1 routing directly.
     workflow.set_entry_point("plan_node")
     workflow.add_edge("plan_node", "act_node")

@@ -24,6 +24,8 @@ from .coding_worker_payloads import (
     build_pm_worker_payload,
     build_qa_worker_payload,
 )
+from ..runtime_tracker import runtime_tracker
+
 
 
 CODING_START_NODE = "coding_start_node"
@@ -323,6 +325,7 @@ def _state_updates_from_llm_plan(
 
 
 def coder_node(state: CodingGraphState) -> CodingGraphState:
+    runtime_tracker.phase_enter("coder_node")
     emit_workflow_node_entered(state, CODER_NODE)
     worker_payload = build_coder_worker_payload(state, target_node=CODER_NODE)
     # Read action plan from state directly so that text values (e.g. file content)
@@ -555,6 +558,7 @@ def _build_debugger_plan(state: Mapping[str, object]) -> dict[str, object]:
 
 
 def debugger_node(state: CodingGraphState) -> CodingGraphState:
+    runtime_tracker.phase_enter("debugger_node")
     emit_workflow_node_entered(state, DEBUGGER_NODE)
     worker_payload = build_debugger_worker_payload(state, target_node=DEBUGGER_NODE)
     worker_state = worker_payload.payload

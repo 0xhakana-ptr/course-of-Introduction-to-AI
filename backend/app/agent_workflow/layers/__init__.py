@@ -1,4 +1,4 @@
-﻿"""Compatibility re-exports for layers package."""
+"""Compatibility re-exports for layers package."""
 from ..router import routing_guard, RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN  # noqa: F401
 
 def _get_roleplay_agent():

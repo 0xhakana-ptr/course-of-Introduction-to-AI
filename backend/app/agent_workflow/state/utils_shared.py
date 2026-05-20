@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Unified utility helpers for agent workflow modules.
 
 Every agent-workflow module previously copy-pasted _normalize_text,

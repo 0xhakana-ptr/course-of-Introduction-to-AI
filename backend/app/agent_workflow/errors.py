@@ -1,4 +1,4 @@
-﻿"""Agent-level error hierarchy for diagnostics and API error handling.
+"""Agent-level error hierarchy for diagnostics and API error handling.
 
 New code should raise these instead of raw ValueError / RuntimeError
 so the API layer can produce consistent error shapes.
