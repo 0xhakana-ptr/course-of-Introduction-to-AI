@@ -5,7 +5,7 @@ import json
 import threading
 from pathlib import Path
 
-from ..agent_workflow.file.context import coerce_file_context, merge_file_context
+from ..agent_workflow.graphs.file_context import coerce_file_context, merge_file_context
 from ..core.config import settings
 
 

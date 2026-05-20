@@ -1,5 +1,5 @@
-from backend.app.agent_workflow.summary.run_summary_graph import summarize_run_record
-from backend.app.agent_workflow.summary.support import (
+from backend.app.agent_workflow.graphs.summary_run_summary_graph import summarize_run_record
+from backend.app.agent_workflow.graphs.summary_support import (
     build_summary_resolution_node,
     build_summary_roleplay_node,
 )
@@ -38,11 +38,11 @@ def test_summarize_run_record_uses_llm_summary_when_available(monkeypatch):
     assert record is not None
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.run_summary_graph.llm_is_configured",
+        "backend.app.agent_workflow.graphs.summary_run_summary_graph.llm_is_configured",
         lambda: True,
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.run_summary_graph.call_llm_sync",
+        "backend.app.agent_workflow.graphs.summary_run_summary_graph.call_llm_sync",
         lambda *args, **kwargs: type(
             "FakeLLMResult",
             (),
@@ -67,11 +67,11 @@ def test_run_completion_message_uses_run_summary_graph_when_llm_summary_availabl
     client,
 ):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.run_summary_graph.llm_is_configured",
+        "backend.app.agent_workflow.graphs.summary_run_summary_graph.llm_is_configured",
         lambda: True,
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.run_summary_graph.call_llm_sync",
+        "backend.app.agent_workflow.graphs.summary_run_summary_graph.call_llm_sync",
         lambda *args, **kwargs: type(
             "FakeLLMResult",
             (),
@@ -116,7 +116,7 @@ def test_summarize_run_record_returns_failed_result_when_graph_invoke_fails(monk
         },
     )()
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.run_summary_graph.run_summary_graph",
+        "backend.app.agent_workflow.graphs.summary_run_summary_graph.run_summary_graph",
         fake_graph,
     )
 
@@ -160,7 +160,7 @@ def test_emit_final_run_chat_message_falls_back_when_summary_graph_returns_faile
     message_queue.clear()
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.run_summary_graph.summarize_run_record",
+        "backend.app.agent_workflow.graphs.summary_run_summary_graph.summarize_run_record",
         lambda *args, **kwargs: WorkflowSummaryResult(ok=False, output="summary graph failed"),
     )
 
@@ -188,7 +188,7 @@ def test_emit_final_run_chat_message_falls_back_when_summary_graph_raises(monkey
         raise RuntimeError("summary workflow import path boom")
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.run_summary_graph.summarize_run_record",
+        "backend.app.agent_workflow.graphs.summary_run_summary_graph.summarize_run_record",
         broken_summary,
     )
 

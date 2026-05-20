@@ -1,12 +1,12 @@
 import logging
 
 from ...core.config import settings
-from ...agent_workflow.output.roleplay_agent import emit_roleplay_message
-from ...agent_workflow.repair.retry_guidance import (
+from ...agent_workflow.roleplay import emit_roleplay_message
+from ...agent_workflow.graphs.repair_retry_guidance import (
     build_terminal_retry_guidance,
     resolve_retry_guidance_from_repair_result,
 )
-from ...agent_workflow.summary.support import emit_summary_workflow_with_fallback
+from ...agent_workflow.graphs.summary_support import emit_summary_workflow_with_fallback
 from ...agent_workflow.contracts.workflow_nodes import (
     TASK_REPAIRING_NODE,
     get_run_terminal_node_name,
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 def emit_final_run_chat_message(record: RunRecord, *, node_name: str) -> None:
     def invoke_workflow() -> object:
-        from ...agent_workflow.summary.run_summary_graph import summarize_run_record
+        from ...agent_workflow.graphs.summary_run_summary_graph import summarize_run_record
 
         return summarize_run_record(
             record,
@@ -262,7 +262,7 @@ def emit_retry_outcome_message(
     node_name: str,
 ) -> None:
     def invoke_workflow() -> object:
-        from ...agent_workflow.summary.attempt_summary_graph import summarize_retry_outcome
+        from ...agent_workflow.graphs.summary_attempt_summary_graph import summarize_retry_outcome
 
         return summarize_retry_outcome(
             run_id=run_id,

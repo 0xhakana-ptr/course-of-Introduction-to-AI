@@ -72,7 +72,7 @@ def _assert_action_event(
     ],
 )
 def test_acceptance_chat_prompts_return_workflow_terminal(monkeypatch, client, prompt, reply):
-    loop_module = importlib.import_module("backend.app.agent_workflow.loop.agent_loop_graph")
+    loop_module = importlib.import_module("backend.app.agent_workflow.graphs.loop_agent_loop_graph")
     monkeypatch.setattr(
         loop_module,
         "call_llm_sync",
@@ -473,7 +473,7 @@ def test_acceptance_run_rerun_returns_terminal(client):
 
 
 def test_acceptance_chat_failure_returns_failed_terminal(monkeypatch, client):
-    loop_module = importlib.import_module("backend.app.agent_workflow.loop.agent_loop_graph")
+    loop_module = importlib.import_module("backend.app.agent_workflow.graphs.loop_agent_loop_graph")
     monkeypatch.setattr(
         loop_module,
         "call_llm_sync",

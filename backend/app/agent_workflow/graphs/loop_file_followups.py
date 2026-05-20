@@ -6,7 +6,7 @@ from ...tools.workspace_tools import (
     WORKSPACE_TOOL_NAME_COPY,
     WORKSPACE_TOOL_SEARCH_KEYWORDS,
 )
-from ..file import (
+from .file_context import (
     build_copy_target_path,
     prompt_requests_contextual_copy_without_target,
     resolve_prompt_file_references,

@@ -3,7 +3,7 @@ from collections.abc import Mapping
 from uuid import uuid4
 
 from ...schemas import INTENT_TYPE
-from ..trace.runtime import build_workflow_trace_entry, coerce_workflow_trace_items
+from .trace_runtime import build_workflow_trace_entry, coerce_workflow_trace_items
 
 
 logger = logging.getLogger(__name__)

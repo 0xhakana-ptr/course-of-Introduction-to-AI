@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from .models import AgentActionDefinition, AgentActionDescriptor, AgentActionResult
-from ..utils.shared import normalize_text
+from ..state.utils_shared import normalize_text
+from .ports import get_run_port
 
 
 def _model_dump(value: object) -> dict[str, object]:
@@ -50,19 +51,19 @@ def _run_result(action_name: str, response: object | None, *, missing_summary: s
 
 
 def _create_run(action_input: Mapping[str, object]) -> AgentActionResult:
-    from ...services.run_interface import create_run
+    port = get_run_port()
 
     prompt = normalize_text(action_input.get("prompt"))
     context = action_input.get("context")
-    response = create_run(prompt, str(context) if context is not None else None)
+    response = port.create(prompt, str(context) if context is not None else None)
     return _run_result("run.create", response, missing_summary="Run was not created.")
 
 
 def _inspect_run(action_input: Mapping[str, object]) -> AgentActionResult:
-    from ...services.run_interface import get_run_snapshot
+    port = get_run_port()
 
     run_id = normalize_text(action_input.get("run_id"))
-    snapshot = get_run_snapshot(run_id)
+    snapshot = port.inspect(run_id)
     if snapshot is None:
         return AgentActionResult(
             action_name="run.inspect",
@@ -86,34 +87,34 @@ def _inspect_run(action_input: Mapping[str, object]) -> AgentActionResult:
 
 
 def _retry_run(action_input: Mapping[str, object]) -> AgentActionResult:
-    from ...services.run_interface import retry_run
+    port = get_run_port()
 
     run_id = normalize_text(action_input.get("run_id"))
     return _run_result(
         "run.retry",
-        retry_run(run_id),
+        port.retry(run_id),
         missing_summary=f"Run `{run_id}` could not be retried.",
     )
 
 
 def _rerun_run(action_input: Mapping[str, object]) -> AgentActionResult:
-    from ...services.run_interface import rerun_run
+    port = get_run_port()
 
     run_id = normalize_text(action_input.get("run_id"))
     return _run_result(
         "run.rerun",
-        rerun_run(run_id),
+        port.rerun(run_id),
         missing_summary=f"Run `{run_id}` could not be rerun.",
     )
 
 
 def _cancel_run(action_input: Mapping[str, object]) -> AgentActionResult:
-    from ...services.run_interface import cancel_run
+    port = get_run_port()
 
     run_id = normalize_text(action_input.get("run_id"))
     return _run_result(
         "run.cancel",
-        cancel_run(run_id),
+        port.cancel(run_id),
         missing_summary=f"Run `{run_id}` could not be cancelled.",
     )
 

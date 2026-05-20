@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from langgraph.graph import END, StateGraph
 
 from ...llm.client import call_llm_sync, llm_is_configured
-from ..output.roleplay_agent import emit_roleplay_message, emit_roleplay_state
+from ..roleplay import emit_roleplay_message, emit_roleplay_state
 from ..contracts.workflow_results import WorkflowSummaryResult, invoke_graph_with_result
 
 

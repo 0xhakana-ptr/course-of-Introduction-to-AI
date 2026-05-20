@@ -1,6 +1,6 @@
 """User-facing workflow output helpers."""
 
-from .roleplay_agent import (
+from ..roleplay import (
     RoleplayMood,
     RoleplayResponse,
     emit_roleplay_to_frontend,

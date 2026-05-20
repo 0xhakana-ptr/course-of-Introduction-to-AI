@@ -7,11 +7,11 @@ from langgraph.graph import END, StateGraph
 from ..actions import default_action_registry
 from ..actions.models import AgentActionResult
 from ..contracts.workflow_results import invoke_graph_with_result
-from ..trace.runtime import build_workflow_trace_entry, coerce_workflow_trace_items
-from .context import file_state_from_action_result, merge_file_context
-from .result import FileWorkflowResult
-from .state import FileGraphState
-from ..utils.shared import normalize_text
+from ..state.trace_runtime import build_workflow_trace_entry, coerce_workflow_trace_items
+from .file_context import file_state_from_action_result, merge_file_context
+from .file_result import FileWorkflowResult
+from .file_state import FileGraphState
+from ..state.utils_shared import normalize_text
 
 
 FILE_START_NODE = "file_start_node"

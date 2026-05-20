@@ -1,4 +1,4 @@
-from backend.app.agent_workflow.loop.agent_loop_graph import _build_action_plan_from_routing
+from backend.app.agent_workflow.graphs.loop_agent_loop_graph import _build_action_plan_from_routing
 
 
 def test_action_plan_pass_through_chat():

@@ -7,17 +7,17 @@ import re
 from langgraph.graph import END, StateGraph
 
 from ..actions import default_action_registry
-from ..utils.shared import coerce_bool, coerce_int, compact_text, normalize_text, safe_mapping
+from ..state.utils_shared import coerce_bool, coerce_int, compact_text, normalize_text, safe_mapping
 from ..contracts.workflow_results import invoke_graph_with_result
 from ..output.node_events import emit_workflow_node_entered
-from ..runtime.graph_nodes import register_agent_graph_nodes
+from ..state.runtime_graph_nodes import register_agent_graph_nodes
 from ..state import CodingWorkflowState
-from ..trace.runtime import build_workflow_trace_entry, coerce_workflow_trace_items
-from .artifacts import read_coding_artifact, store_coding_artifact
-from .planner import CodingPlannerResult, CodingTaskPlan, plan_coding_task_with_llm
-from .result import CodingWorkflowResult
-from .state import CodingGraphState
-from .worker_payloads import (
+from ..state.trace_runtime import build_workflow_trace_entry, coerce_workflow_trace_items
+from .coding_artifacts import read_coding_artifact, store_coding_artifact
+from .coding_planner import CodingPlannerResult, CodingTaskPlan, plan_coding_task_with_llm
+from .coding_result import CodingWorkflowResult
+from .coding_state import CodingGraphState
+from .coding_worker_payloads import (
     build_coder_worker_payload,
     build_debugger_worker_payload,
     build_executor_worker_payload,

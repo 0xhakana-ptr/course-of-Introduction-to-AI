@@ -15,7 +15,7 @@ from backend.app.agent_workflow.coding import (
     run_coding_workflow,
 )
 from backend.app.services.run_interface import get_run
-from backend.app.agent_workflow.coding.coding_graph import build_coding_workflow_node_failure_state
+from backend.app.agent_workflow.graphs.coding_graph import build_coding_workflow_node_failure_state
 from backend.app.message_queue import message_queue
 from backend.app.tools.safe_fs import resolve_workspace_path, safe_write_file
 from backend.app.tools.workspace_tools import read_workspace_text
@@ -123,7 +123,7 @@ def test_coding_workflow_emits_bridge_status_for_internal_nodes():
 
 def test_coding_workflow_uses_llm_planner_only_as_safe_plan_source(monkeypatch):
     planner_module = __import__(
-        "backend.app.agent_workflow.coding.planner",
+        "backend.app.agent_workflow.graphs.coding_planner",
         fromlist=["call_llm_sync", "llm_is_configured"],
     )
     monkeypatch.setattr(planner_module, "llm_is_configured", lambda: True)
@@ -158,7 +158,7 @@ def test_coding_workflow_uses_llm_planner_only_as_safe_plan_source(monkeypatch):
 
 def test_coding_workflow_handles_invalid_llm_planner_json_without_crashing(monkeypatch):
     planner_module = __import__(
-        "backend.app.agent_workflow.coding.planner",
+        "backend.app.agent_workflow.graphs.coding_planner",
         fromlist=["call_llm_sync", "llm_is_configured"],
     )
     monkeypatch.setattr(planner_module, "llm_is_configured", lambda: True)

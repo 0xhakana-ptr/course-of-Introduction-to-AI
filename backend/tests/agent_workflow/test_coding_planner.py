@@ -1,4 +1,4 @@
-from backend.app.agent_workflow.coding.planner import parse_llm_coding_plan_json
+from backend.app.agent_workflow.graphs.coding_planner import parse_llm_coding_plan_json
 
 
 def test_parse_llm_coding_plan_json_accepts_safe_workspace_write():

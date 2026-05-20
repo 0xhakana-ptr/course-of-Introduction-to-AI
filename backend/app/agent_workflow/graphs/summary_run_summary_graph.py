@@ -9,7 +9,7 @@ from ...services.run_action.formatters import (
     preview_single_line,
 )
 from ...services.run_action.types import RunRecord
-from .support import (
+from .summary_support import (
     SummaryResolution,
     build_prompt_text,
     build_summary_resolution_node,

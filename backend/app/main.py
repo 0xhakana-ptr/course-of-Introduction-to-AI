@@ -9,6 +9,8 @@ from .api.error_handlers import register_exception_handlers
 from .core.config import settings
 from .core.logging_config import configure_logging
 from .services.run_interface import recover_interrupted_runs
+from .services.run import RunServiceImpl
+from .agent_workflow.actions.ports import bind_run_port
 from .storage.conversation_store import conversation_store
 
 
@@ -48,6 +50,10 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="AI Chat Backend", version=settings.app_version, lifespan=lifespan)
     register_exception_handlers(app)
+
+    # Bind agent ports to service implementations
+    bind_run_port(RunServiceImpl())
+
     app.include_router(health_router)
     app.include_router(llm_router)
     app.include_router(agent_router)
@@ -61,7 +67,7 @@ def create_app() -> FastAPI:
 
 async def _idle_quip_loop():
     """Periodically check and emit idle quips when the agent is inactive."""
-    from .agent_workflow.layers.roleplay_output import roleplay_agent
+    from .agent_workflow.roleplay import roleplay_agent
     while True:
         await asyncio.sleep(6)
         try:

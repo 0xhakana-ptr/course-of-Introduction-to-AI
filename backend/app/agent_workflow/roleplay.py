@@ -1,9 +1,9 @@
-"""Layer 2: Independent Roleplay Agent (V2 Architecture).
+# -*- coding: utf-8 -*-
+"""Layer 2: Roleplay Agent.
 
-Receives sanitized FrontendState summaries and generates
-in-character responses for Live2D model and chat window.
-Personality sourced from persona.md — cute, witty, chuunibyou, with a hint of yandere.
-All prompts and fallback quips in Chinese.
+The persona layer that users interact with directly.
+Receives routing from Layer 1, calls Layer 3 for work,
+wraps results in character persona, emits to frontend.
 """
 
 from __future__ import annotations
@@ -13,15 +13,16 @@ import json
 import logging
 import random
 import re
-from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
-from ...llm.client import call_llm_sync, llm_is_configured
-from ...messaging.message_sender import message_sender
+from .layers.routing_guard import RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN
+from ..messaging.message_sender import message_sender
+from ..llm.client import call_llm_sync, llm_is_configured
 
 logger = logging.getLogger(__name__)
 
+# ===== Inlined from output/roleplay_agent.py =====
 
 # ---------------------------------------------------------------------------
 # Personality Definition (from persona.md, extended)
@@ -379,17 +380,22 @@ class RoleplayAgentContext:
         )
 
     def scenario(self):
-        # Chat intent always returns chat, regardless of terminal status
-        if self.intent == "chat" or self.action_name in ("chat.reply", "final.answer"):
-            return "chat"
+        # Terminal status takes priority: completed/failed overrides intent
         if self.terminal_status in ("completed",) and self.action_ok:
             return "success"
         if self.terminal_status in ("failed", "max_debug_steps", "debugger_not_repairable", "loop_max_steps"):
             return "failure"
         if not self.action_ok:
             return "failure"
+        # Chat intent: returned only when no terminal status indicates otherwise
+        if self.intent == "chat" or self.action_name == "chat.reply":
+            return "chat"
         if self.ui_status and any(
             kw in self.ui_status for kw in ("planning", "planned", "coding", "coder", "executor", "acting")
+        ):
+            return "coding"
+        if self.action_name and any(
+            kw in self.action_name for kw in ("workspace", "run", "code", "write", "read")
         ):
             return "coding"
         if self.ui_status and any(
@@ -397,6 +403,27 @@ class RoleplayAgentContext:
         ):
             return "thinking"
         return "idle"
+
+    @classmethod
+    def from_routing_and_result(cls, decision, work_result=None):
+        if work_result is None:
+            return cls(intent=decision.intent, action_name=decision.action_name)
+        w = work_result if isinstance(work_result, dict) else {}
+        m = w.get("metadata")
+        md = m if isinstance(m, dict) else {}
+        try:
+            sc = int(md.get("step_count", 0) or 0)
+        except (TypeError, ValueError):
+            sc = 0
+        return cls(
+            intent=str(w.get("intent", decision.intent)),
+            action_name=str(w.get("action_name", decision.action_name)),
+            action_ok=bool(w.get("ok", True)),
+            output_summary=str(w.get("summary", ""))[:400],
+            error_summary=(str(w.get("error", ""))[:200] if not w.get("ok") else ""),
+            step_count=sc,
+            terminal_status=str(md.get("stop_reason", "")),
+        )
 
 
 def _build_state_context(ctx):
@@ -455,23 +482,33 @@ def _parse_llm_json(raw):
     }
 
 
+
+
 # ---------------------------------------------------------------------------
-# Response model
+# Response models
 # ---------------------------------------------------------------------------
 
 @dataclass
 class RoleplayResponse:
+    """Output of Layer 2: persona-wrapped response ready for frontend."""
     chat_line: str
-    expression: str
-    quip: str
-    motion: str
-    mood_label: str
-    scenario: str
-    llm_used: bool
+    expression: str = "neutral"
+    quip: str = ""
+    motion: str = ""
+    mood_label: str = "neutral"
+    scenario: str = "chat"
+    llm_used: bool = False
+
+
+@dataclass
+class ProcessResult:
+    """Layer 2 output: persona response + work-engine metadata for scheduling."""
+    response: RoleplayResponse
+    work_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
-# Main generation entry point
+# Legacy generate_roleplay_response (used by agent loop graph)
 # ---------------------------------------------------------------------------
 
 def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
@@ -494,7 +531,7 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
                 mood_modifier=mood.modifier_text,
             )
             result = call_llm_sync(
-                prompt="请根据系统提示词中的角色设定和当前状态，生成一个符合性格的回复。只输出JSON。",
+                prompt="?????????" + scenario + "????????????????????????JSON?",
                 context=None,
                 system_prompt=system_prompt,
                 temperature=0.78,
@@ -503,7 +540,6 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
             if result.ok:
                 parsed = _parse_llm_json(result.output)
                 if parsed.get("chat_line"):
-                    # If LLM quip is empty or too short, supplement from fallback
                     if not parsed.get("quip") or len(parsed.get("quip", "")) < 2:
                         parsed["quip"] = _merge_fallback_and_llm_quip(ctx, parsed)
                     logger.debug("Roleplay Agent [LLM]: scenario=%s mood=%s", scenario, mood.label)
@@ -530,6 +566,13 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
         scenario=scenario,
         llm_used=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# Emit to frontend (legacy)
+# ---------------------------------------------------------------------------
+
+from collections.abc import Mapping
 
 
 def emit_roleplay_to_frontend(response, *, node_name="agent_loop_roleplay", emit_chat_message=True):
@@ -563,12 +606,6 @@ def emit_roleplay_to_frontend(response, *, node_name="agent_loop_roleplay", emit
             node_name=node_name,
         )
 
-# ---------------------------------------------------------------------------
-# Legacy emit helpers (merged from output/roleplay.py)
-# Used by summary/support.py and run_action/lifecycle.py
-# ---------------------------------------------------------------------------
-
-from collections.abc import Mapping
 
 def emit_roleplay_chat(
     content: str,
@@ -617,3 +654,299 @@ def emit_roleplay_state(
         emit_chat_message=bool(state.get("emit_chat_message", True)),
     )
     return dict(state)
+
+
+# ---------------------------------------------------------------------------
+# RoleplayAgent (Layer 2 facade) - merged from layers/roleplay_output.py
+# ---------------------------------------------------------------------------
+
+class RoleplayAgent:
+    """Layer 2: Persona-wrapped interaction layer.
+
+    This is the user-facing personality layer. It:
+    1. Receives routing from Layer 1
+    2. Calls Layer 3 (WorkAgent) for actual work execution
+    3. Wraps results in character persona
+    4. Emits to frontend (chat, expression, quip, motion)
+    """
+
+    def __init__(self):
+        self._work_agent = None  # Lazy init for Layer 3
+
+    @property
+    def work_agent(self):
+        if self._work_agent is None:
+            from .layers.work_engine import work_agent
+            self._work_agent = work_agent
+        return self._work_agent
+
+    def process(
+        self,
+        decision,
+        *,
+        session_id=None,
+        turn_id=None,
+        memory_context=None,
+        emit_chat_message=True,
+    ):
+        """Process a routed request through Layer 2 + Layer 3.
+
+        Args:
+            decision: Routing decision from Layer 1.
+            session_id: Active session ID.
+            turn_id: Current turn ID.
+            memory_context: Hermes memory context string.
+
+        Returns:
+            ProcessResult with persona response and work-engine metadata.
+        """
+        # Update idle streak - user is interacting
+        mood = get_session_mood()
+        mood.idle_streak = 0
+
+        if decision.intent == INTENT_CHAT:
+            return self._handle_chat(decision, emit_chat_message=emit_chat_message)
+
+        # For coding/work intents, first emit a thinking quip
+        self._emit_thinking_start(decision)
+
+        # Call Layer 3 for actual work
+        work_result = self.work_agent.execute(
+            decision,
+            session_id=session_id,
+            turn_id=turn_id,
+            memory_context=memory_context,
+        )
+
+        # Wrap work result in persona
+        response = self._generate_persona_response(decision, work_result)
+
+        # Track mood
+        ctx = RoleplayAgentContext.from_routing_and_result(decision, work_result)
+        if ctx.scenario() == "success":
+            mood.record_success()
+        elif ctx.scenario() == "failure":
+            mood.record_failure()
+        else:
+            mood.record_neutral()
+
+        # Emit to frontend
+        self._emit_to_frontend(
+            response,
+            decision,
+            work_result,
+            emit_chat_message=emit_chat_message,
+        )
+
+        work_metadata = work_result.get("metadata", {}) if isinstance(work_result, dict) else {}
+        return ProcessResult(response=response, work_metadata=work_metadata)
+
+    def _handle_chat(self, decision, *, emit_chat_message=True):
+        """Handle chat-only intent - calls LLM with chat persona."""
+        prompt = str(decision.action_input.get("prompt", ""))
+        context = decision.action_input.get("context")
+
+        result = call_llm_sync(
+            prompt, context,
+            system_prompt=CHAT_SYSTEM_PROMPT,
+            temperature=0.78,
+            max_tokens=600,
+        )
+
+        mood = get_session_mood()
+        if result.ok and result.output:
+            mood.record_neutral()
+            chat_line = result.output[:600]
+        else:
+            mood.record_neutral()
+            chat_line = "?...?????????????????~ ????????"
+
+        response = RoleplayResponse(
+            chat_line=chat_line,
+            expression="neutral",
+            quip="??~ ????",
+            scenario="chat",
+            llm_used=result.ok,
+        )
+        self._emit_chat_to_frontend(response, emit_chat_message=emit_chat_message)
+        return ProcessResult(response=response)
+
+    def _emit_thinking_start(self, decision):
+        """Emit initial thinking state to frontend."""
+        thinking_quips = [
+            "???????...",
+            "???????~",
+            "??????...",
+            "????...",
+        ]
+        quip = random.choice(thinking_quips)
+        message_sender.send_quip(quip, node_name="roleplay_layer", priority="high", duration=4000)
+        message_sender.send_expression("thinking", node_name="roleplay_layer",
+                                       intensity=0.7, duration=5000, transition="smooth", mode="set")
+
+    def _generate_persona_response(self, decision, work_result):
+        """Generate persona-wrapped response from work result."""
+        ctx = RoleplayAgentContext.from_routing_and_result(decision, work_result)
+        mood = get_session_mood()
+        scenario = ctx.scenario()
+
+        if llm_is_configured():
+            try:
+                state_context = self._build_context_text(ctx)
+                system_prompt = ROLEPLAY_SYSTEM_PROMPT.format(
+                    state_context=state_context,
+                    mood_modifier=mood.modifier_text,
+                )
+                result = call_llm_sync(
+                    prompt="?????????" + scenario + "????????????????????????JSON?",
+                    context=None,
+                    system_prompt=system_prompt,
+                    temperature=0.78,
+                    max_tokens=500,
+                )
+                if result.ok:
+                    parsed = _parse_llm_json(result.output)
+                    if parsed.get("chat_line"):
+                        quip = parsed.get("quip", "")
+                        if not quip or len(quip) < 2:
+                            quip = self._fallback_quip(ctx)
+                        return RoleplayResponse(
+                            chat_line=parsed["chat_line"],
+                            expression=parsed.get("expression", "neutral"),
+                            quip=quip,
+                            motion=parsed.get("motion", ""),
+                            mood_label=mood.label,
+                            scenario=scenario,
+                            llm_used=True,
+                        )
+            except Exception as exc:
+                logger.warning("Roleplay LLM failed, using fallback: %s", exc)
+
+        # Fallback
+        fallback = _scenario_fallback(ctx)
+        if ctx.output_summary and scenario in {"success", "coding"}:
+            fallback["chat_line"] = ctx.output_summary[:400]
+        elif ctx.error_summary and scenario == "failure":
+            fallback["chat_line"] = ctx.error_summary[:400]
+        return RoleplayResponse(
+            chat_line=fallback["chat_line"],
+            expression=fallback.get("expression", "neutral"),
+            quip=fallback.get("quip", ""),
+            motion=fallback.get("motion", ""),
+            mood_label=mood.label,
+            scenario=scenario,
+            llm_used=False,
+        )
+
+    def _build_context_text(self, ctx):
+        parts = []
+        parts.append(f"??: {ctx.intent}")
+        if ctx.action_name:
+            parts.append(f"????: {ctx.action_name}")
+            parts.append(f"????: {'??' if ctx.action_ok else '??'}")
+        if ctx.terminal_status:
+            parts.append(f"????: {ctx.terminal_status}")
+        if ctx.output_summary:
+            parts.append(f"????: {ctx.output_summary}")
+        if ctx.error_summary:
+            parts.append(f"????: {ctx.error_summary}")
+        if ctx.step_count > 0:
+            parts.append(f"?????: {ctx.step_count}")
+        return "\n".join(parts)
+
+    def _fallback_quip(self, ctx):
+        pools = {
+            "thinking": _THINKING_QUIPS,
+            "coding": _CODING_QUIPS,
+            "failure": _FAILURE_QUIPS,
+            "success": _SUCCESS_QUIPS,
+            "chat": _CHAT_QUIPS,
+        }
+        return random.choice(pools.get(ctx.scenario(), _CHAT_QUIPS))
+
+    def _emit_to_frontend(
+        self,
+        response,
+        decision,
+        work_result,
+        *,
+        emit_chat_message=True,
+    ):
+        """Send persona-wrapped response to frontend."""
+        if response.chat_line and emit_chat_message:
+            message_sender.send_chat_message(
+                content=response.chat_line,
+                is_partial=False,
+                node_name="roleplay_layer",
+                content_type="markdown",
+                render_mode="rich_text",
+            )
+        if response.expression:
+            message_sender.send_expression(
+                expression=response.expression,
+                node_name="roleplay_layer",
+                intensity=0.85,
+                duration=5000,
+                transition="smooth",
+                mode="set",
+            )
+        if response.quip:
+            message_sender.send_quip(
+                content=response.quip,
+                node_name="roleplay_layer",
+                priority="high",
+                duration=4000,
+            )
+        if response.motion:
+            message_sender.send_motion(
+                motion=response.motion,
+                node_name="roleplay_layer",
+            )
+
+    def _emit_chat_to_frontend(self, response, *, emit_chat_message=True):
+        """Emit chat-only response (simpler)."""
+        if response.chat_line and emit_chat_message:
+            message_sender.send_chat_message(
+                content=response.chat_line,
+                is_partial=False,
+                node_name="roleplay_layer_chat",
+                content_type="markdown",
+                render_mode="rich_text",
+            )
+        if response.expression:
+            message_sender.send_expression(
+                expression=response.expression,
+                node_name="roleplay_layer_chat",
+                duration=3000,
+                transition="smooth",
+                mode="set",
+            )
+
+    def emit_idle_quip_if_due(self):
+        """Send idle quip if enough time has passed. Called by frontend polling."""
+        import time
+        if not hasattr(self, '_last_idle_quip_ts'):
+            self._last_idle_quip_ts = 0.0
+
+        now = time.time()
+        if now - self._last_idle_quip_ts < 15.0:
+            return False
+
+        mood = get_session_mood()
+        if mood.idle_streak < 3:
+            mood.idle_streak += 1
+            return False
+
+        quip = random.choice(_IDLE_QUIPS)
+        message_sender.send_quip(
+            quip, node_name="idle",
+            priority="low", duration=3500,
+            metadata={"event_type": "idle.quip", "event_source": "idle"},
+        )
+        self._last_idle_quip_ts = now
+        mood.record_neutral()
+        return True
+
+
+# Singleton instance
+roleplay_agent = RoleplayAgent()

@@ -20,7 +20,7 @@ def get_message_queue():
     """获取消息队列实例"""
     global message_queue
     if message_queue is None:
-        from ..message_queue import message_queue as mq
+        from .queue import message_queue as mq
         message_queue = mq
     return message_queue
 

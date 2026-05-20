@@ -1,25 +1,19 @@
-# -*- coding: utf-8 -*-
-"""Three-layer agent architecture.
+﻿"""Agent workflow layers package.
 
-Layer 1: Routing Guard  - Intent detection + routing (routing_guard.py)
-Layer 2: Roleplay Agent  - Persona wrapper, user-facing (roleplay_output.py)
-Layer 3: Work Agent      - Actual work execution via LangGraph (work_engine.py)
-
-Flow: User -> L1(Routing) -> L2(Roleplay) -> L3(Work) -> L2 -> Frontend
+Layer 1 (routing_guard) lives here.
+Layer 2 (roleplay) has moved to agent_workflow/roleplay.py.
 """
+from .routing_guard import routing_guard, RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN
 
-from .routing_guard import RoutingDecision, RoutingGuard, routing_guard
-from .work_engine import WorkAgent, WorkAgentResult, work_agent
-from .roleplay_output import RoleplayAgent, RoleplayResponse, roleplay_agent
+def _get_roleplay_agent():
+    from ..roleplay import roleplay_agent
+    return roleplay_agent
 
 __all__ = [
-    "RoutingDecision",
-    "RoutingGuard",
     "routing_guard",
-    "RoleplayAgent",
-    "RoleplayResponse",
-    "roleplay_agent",
-    "WorkAgent",
-    "WorkAgentResult",
-    "work_agent",
+    "RoutingDecision",
+    "INTENT_CHAT",
+    "INTENT_CODING",
+    "INTENT_UNKNOWN",
+    "_get_roleplay_agent",
 ]

@@ -18,7 +18,7 @@ from ...schemas import INTENT_TYPE
 from ..actions import default_action_registry
 from ..actions.models import AgentActionResult
 from ..contracts.workflow_results import WorkflowAgentResult, invoke_graph_with_result
-from ..coding import RUN_ACTIONS_FOR_CODING_WORKFLOW, run_coding_workflow
+from .coding_graph import RUN_ACTIONS_FOR_CODING_WORKFLOW, run_coding_workflow
 from ..output.action_events import emit_workflow_action_event
 from ..output.completion_events import emit_workflow_terminal_status
 from ..output.node_events import emit_workflow_node_entered
@@ -28,9 +28,9 @@ from ..state.state_support import (
     build_workflow_node_failure_state,
     merge_agent_state,
 )
-from ..runtime.graph_nodes import register_agent_graph_nodes
-from ..utils.shared import coerce_bool, coerce_int, normalize_text
-from .action_plan import make_action_plan
+from ..state.runtime_graph_nodes import register_agent_graph_nodes
+from ..state.utils_shared import coerce_bool, coerce_int, normalize_text
+from .loop_action_plan import make_action_plan
 
 
 class AgentLoopState(TypedDict, total=False):

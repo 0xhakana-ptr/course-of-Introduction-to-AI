@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Layer 3: Work Agent.
 
 The actual work execution layer. Called by Layer 2 (RoleplayAgent).
@@ -91,7 +91,7 @@ class WorkAgent:
         return {
             "ok": False,
             "intent": decision.intent,
-            "summary": "无法处理该意图。",
+            "summary": "????????",
             "error": "Unknown intent",
         }
 
@@ -121,11 +121,11 @@ class WorkAgent:
                 event_stage="coding",
             )
 
-            from ..loop.agent_loop_graph import run_agent_loop
+            from ..graphs.loop_agent_loop_graph import run_agent_loop
 
             prompt = str(decision.action_input.get("prompt", ""))
             if not prompt:
-                prompt = f"执行操作: {decision.action_name}"
+                prompt = f"????: {decision.action_name}"
 
             # Incorporate memory context into the prompt context
             context = decision.action_input.get("context")
@@ -189,7 +189,7 @@ class WorkAgent:
                 "ok": False,
                 "intent": decision.intent,
                 "action_name": decision.action_name,
-                "summary": f"Agent 工作流执行失败",
+                "summary": f"Agent ???????",
                 "error": str(exc),
                 "metadata": {"error_type": type(exc).__name__},
             }

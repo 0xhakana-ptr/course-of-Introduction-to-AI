@@ -4,7 +4,8 @@ from collections.abc import Callable
 from .chat_action.types import ChatServiceResult
 from .character_interface import send_chat_done, send_chat_failed, send_chat_started
 from ..storage.conversation_store import conversation_store
-from ..agent_workflow.layers import routing_guard, roleplay_agent
+from ..agent_workflow.layers import routing_guard
+from ..agent_workflow.roleplay import roleplay_agent
 from ..agent_workflow.memory import hermes_memory
 
 RunScheduler = Callable[[str], None]

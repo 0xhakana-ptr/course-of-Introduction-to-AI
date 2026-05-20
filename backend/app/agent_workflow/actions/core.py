@@ -4,7 +4,7 @@ from collections.abc import Mapping
 
 from ...messaging.message_sender import message_sender
 from .models import AgentActionDefinition, AgentActionDescriptor, AgentActionResult
-from ..utils.shared import normalize_text
+from ..state.utils_shared import normalize_text
 
 
 

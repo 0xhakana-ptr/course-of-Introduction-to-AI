@@ -16,7 +16,7 @@ def _fake_llm_result(*, ok: bool = True, output: str = "loop chat reply", error:
 
 
 def test_chat_route_uses_loop_runtime_for_chat(monkeypatch, client):
-    loop_module = importlib.import_module("backend.app.agent_workflow.loop.agent_loop_graph")
+    loop_module = importlib.import_module("backend.app.agent_workflow.graphs.loop_agent_loop_graph")
     monkeypatch.setattr(
         loop_module,
         "call_llm_sync",
@@ -96,7 +96,7 @@ def test_chat_route_uses_loop_runtime_for_workspace_write(client):
 
 
 def test_chat_route_reports_loop_runtime_failure(monkeypatch, client):
-    loop_module = importlib.import_module("backend.app.agent_workflow.loop.agent_loop_graph")
+    loop_module = importlib.import_module("backend.app.agent_workflow.graphs.loop_agent_loop_graph")
     monkeypatch.setattr(
         loop_module,
         "call_llm_sync",

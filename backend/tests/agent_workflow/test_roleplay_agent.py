@@ -1,7 +1,7 @@
 ﻿"""Tests for the Layer 2 Roleplay Agent (roleplay_agent.py)."""
 
 import pytest
-from backend.app.agent_workflow.output.roleplay_agent import (
+from backend.app.agent_workflow.roleplay import (
     RoleplayAgentContext,
     RoleplayMood,
     RoleplayResponse,
@@ -254,7 +254,7 @@ class TestParseLLMJson:
         assert result == {}
 
     def test_truncates_long_chat_line(self):
-        long_line = "A" * 200
+        long_line = "A" * 500
         raw = f'{{"chat_line": "{long_line}", "expression": "neutral"}}'
         result = _parse_llm_json(raw)
-        assert len(result["chat_line"]) <= 120
+        assert len(result["chat_line"]) <= 400

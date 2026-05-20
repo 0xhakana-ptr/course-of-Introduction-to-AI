@@ -11,7 +11,7 @@ from ...services.run_action.types import (
     ScriptGenerationResult,
     WorkflowChatMessage,
 )
-from .support import (
+from .repair_support import (
     REPAIR_DECISION_ONLY_MODE,
     REPAIR_EXECUTION_MODE,
     build_failure_inspected_state,
@@ -23,7 +23,7 @@ from .support import (
     invoke_repair_graph,
     select_repair_graph_next_step,
 )
-from ..summary.support import build_prompt_text, build_text_resolution_node
+from .summary_support import build_prompt_text, build_text_resolution_node
 from ..contracts.workflow_results import WorkflowRepairResult
 
 

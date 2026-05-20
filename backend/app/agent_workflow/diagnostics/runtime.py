@@ -12,13 +12,13 @@ from ...schemas import (
 from ..actions import default_action_registry
 from ..actions.workspace import WORKSPACE_ACTION_TOOL_MAP
 from ..state.state_support import build_agent_initial_state
-from ..loop.agent_loop_graph import plan_node, run_agent_loop
+from ..graphs.loop_agent_loop_graph import plan_node, run_agent_loop
 from .support import (
     WorkspaceToolSnapshot,
     build_workspace_tool_response_kwargs,
 )
 from .failure import build_failure_descriptor
-from ..trace.runtime import (
+from ..state.trace_runtime import (
     build_runtime_event_summary,
     find_failure_trace,
     normalize_trace_items,

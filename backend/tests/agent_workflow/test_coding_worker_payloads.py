@@ -1,4 +1,4 @@
-from backend.app.agent_workflow.coding.worker_payloads import (
+from backend.app.agent_workflow.graphs.coding_worker_payloads import (
     SEND_API_AVAILABLE,
     build_coder_worker_payload,
     build_debugger_worker_payload,

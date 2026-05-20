@@ -34,7 +34,7 @@ def test_agent_diagnostics_preview_defaults_to_loop_plan(client):
 
 
 def test_agent_diagnostics_run_defaults_to_loop_and_executes_chat(monkeypatch, client):
-    loop_module = importlib.import_module("backend.app.agent_workflow.loop.agent_loop_graph")
+    loop_module = importlib.import_module("backend.app.agent_workflow.graphs.loop_agent_loop_graph")
     monkeypatch.setattr(
         loop_module,
         "call_llm_sync",

@@ -1,4 +1,4 @@
-from backend.app.agent_workflow.summary.attempt_summary_graph import summarize_retry_outcome
+from backend.app.agent_workflow.graphs.summary_attempt_summary_graph import summarize_retry_outcome
 from backend.app.agent_workflow.contracts.workflow_results import WorkflowSummaryResult
 from backend.app.message_queue import message_queue
 from backend.app.services.run_action.lifecycle import emit_retry_outcome_message
@@ -22,11 +22,11 @@ def test_attempt_summary_graph_uses_fallback_summary_without_llm():
 
 def test_attempt_summary_graph_uses_llm_summary_when_available(monkeypatch):
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.attempt_summary_graph.llm_is_configured",
+        "backend.app.agent_workflow.graphs.summary_attempt_summary_graph.llm_is_configured",
         lambda: True,
     )
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.attempt_summary_graph.call_llm_sync",
+        "backend.app.agent_workflow.graphs.summary_attempt_summary_graph.call_llm_sync",
         lambda *args, **kwargs: type(
             "FakeLLMResult",
             (),
@@ -61,7 +61,7 @@ def test_attempt_summary_graph_returns_failed_result_when_graph_invoke_fails(mon
         },
     )()
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.attempt_summary_graph.attempt_summary_graph",
+        "backend.app.agent_workflow.graphs.summary_attempt_summary_graph.attempt_summary_graph",
         fake_graph,
     )
 
@@ -81,7 +81,7 @@ def test_attempt_summary_graph_returns_failed_result_when_graph_invoke_fails(mon
 def test_emit_retry_outcome_message_falls_back_when_summary_graph_returns_failed_result(monkeypatch):
     message_queue.clear()
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.attempt_summary_graph.summarize_retry_outcome",
+        "backend.app.agent_workflow.graphs.summary_attempt_summary_graph.summarize_retry_outcome",
         lambda *args, **kwargs: WorkflowSummaryResult(ok=False, output="attempt summary graph failed"),
     )
 
@@ -107,7 +107,7 @@ def test_emit_retry_outcome_message_falls_back_when_summary_graph_raises(monkeyp
         raise RuntimeError("attempt workflow import path boom")
 
     monkeypatch.setattr(
-        "backend.app.agent_workflow.summary.attempt_summary_graph.summarize_retry_outcome",
+        "backend.app.agent_workflow.graphs.summary_attempt_summary_graph.summarize_retry_outcome",
         broken_summary,
     )
 

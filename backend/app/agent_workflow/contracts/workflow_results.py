@@ -2,7 +2,7 @@ from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
-from ..runtime.models import build_runtime_turn_from_state, coerce_runtime_steps
+from ..state.runtime_models import build_runtime_turn_from_state, coerce_runtime_steps
 
 
 GraphResultT = TypeVar("GraphResultT", bound="WorkflowGraphResult")

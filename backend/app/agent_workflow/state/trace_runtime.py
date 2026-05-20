@@ -9,7 +9,7 @@ from ...messaging.event_types import (
 )
 from ...messaging.runtime_events import build_runtime_event_fields
 from ...schemas import AgentWorkflowRuntimeEventSummary
-from .messages import (
+from .trace_messages import (
     build_trace_event_label,
     build_trace_message,
     build_trace_status_level,

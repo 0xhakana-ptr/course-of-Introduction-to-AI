@@ -8,7 +8,7 @@ from ...tools.workspace_tools import (
     WORKSPACE_TOOL_ERROR_TARGET_UNSUPPORTED,
 )
 from ..actions import default_action_registry
-from .action_plan import ActionPlan
+from .loop_action_plan import ActionPlan
 
 
 RUN_ACTIONS_REQUIRING_ID = {

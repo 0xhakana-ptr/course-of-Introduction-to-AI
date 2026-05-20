@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..utils.shared import compact_text, normalize_text, safe_mapping, FORBIDDEN_WORKER_PAYLOAD_KEYS, MAX_WORKER_TEXT_CHARS
+from ..state.utils_shared import compact_text, normalize_text, safe_mapping, FORBIDDEN_WORKER_PAYLOAD_KEYS, MAX_WORKER_TEXT_CHARS
 
 
 try:
