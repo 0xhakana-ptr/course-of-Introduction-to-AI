@@ -4,8 +4,8 @@ from langgraph.graph import END, StateGraph
 
 from ...core.text_utils import build_preview
 from ...llm.client import call_llm_sync, llm_is_configured
-from ...services.run_action.codegen import generate_repaired_script_with_llm
-from ...services.run_action.types import (
+from ..codegen import generate_repaired_script_with_llm
+from ..types.run_types import (
     CommandResult,
     RetryGuidance,
     ScriptGenerationResult,

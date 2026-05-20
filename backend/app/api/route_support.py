@@ -16,8 +16,8 @@ from ..schemas import (
     LLMDiagnosticsResponse,
     MessagesResponse,
 )
-from ..services.chat_action.types import ChatServiceResult
-from ..services.run_interface import execute_run
+from ..services.chat import ChatServiceResult
+from ..services.run import execute_run
 
 
 SessionResponseT = ConversationSessionMetadataResponse | ConversationSessionContextResponse

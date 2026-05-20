@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .layers.routing_guard import RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN
+from .router import RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN
 from ..messaging.message_sender import message_sender
 from ..llm.client import call_llm_sync, llm_is_configured
 
@@ -531,7 +531,7 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
                 mood_modifier=mood.modifier_text,
             )
             result = call_llm_sync(
-                prompt="?????????" + scenario + "????????????????????????JSON?",
+                prompt="请基于以下场景生成角色回复: " + scenario + "；记住：只输出合法 JSON，不要输出其他文字。",
                 context=None,
                 system_prompt=system_prompt,
                 temperature=0.78,
@@ -676,7 +676,7 @@ class RoleplayAgent:
     @property
     def work_agent(self):
         if self._work_agent is None:
-            from .layers.work_engine import work_agent
+            from .engine import work_agent
             self._work_agent = work_agent
         return self._work_agent
 
@@ -759,12 +759,12 @@ class RoleplayAgent:
             chat_line = result.output[:600]
         else:
             mood.record_neutral()
-            chat_line = "?...?????????????????~ ????????"
+            chat_line = "嗯...让我想想...~ 好像出了点问题，稍等一下哦~"
 
         response = RoleplayResponse(
             chat_line=chat_line,
             expression="neutral",
-            quip="??~ ????",
+            quip="思考中~ 稍等一下",
             scenario="chat",
             llm_used=result.ok,
         )
@@ -774,10 +774,10 @@ class RoleplayAgent:
     def _emit_thinking_start(self, decision):
         """Emit initial thinking state to frontend."""
         thinking_quips = [
-            "???????...",
-            "???????~",
-            "??????...",
-            "????...",
+            "让我想想...",
+            "正在思考~",
+            "康康情况...",
+            "嗯...",
         ]
         quip = random.choice(thinking_quips)
         message_sender.send_quip(quip, node_name="roleplay_layer", priority="high", duration=4000)
@@ -798,7 +798,7 @@ class RoleplayAgent:
                     mood_modifier=mood.modifier_text,
                 )
                 result = call_llm_sync(
-                    prompt="?????????" + scenario + "????????????????????????JSON?",
+                    prompt="请基于以下场景生成角色回复: " + scenario + "；记住：只输出合法 JSON，不要输出其他文字。",
                     context=None,
                     system_prompt=system_prompt,
                     temperature=0.78,
@@ -840,18 +840,18 @@ class RoleplayAgent:
 
     def _build_context_text(self, ctx):
         parts = []
-        parts.append(f"??: {ctx.intent}")
+        parts.append(f"意图: {ctx.intent}")
         if ctx.action_name:
-            parts.append(f"????: {ctx.action_name}")
-            parts.append(f"????: {'??' if ctx.action_ok else '??'}")
+            parts.append(f"动作: {ctx.action_name}")
+            parts.append(f"结果: {'成功' if ctx.action_ok else '失败'}")
         if ctx.terminal_status:
-            parts.append(f"????: {ctx.terminal_status}")
+            parts.append(f"状态: {ctx.terminal_status}")
         if ctx.output_summary:
-            parts.append(f"????: {ctx.output_summary}")
+            parts.append(f"输出: {ctx.output_summary}")
         if ctx.error_summary:
-            parts.append(f"????: {ctx.error_summary}")
+            parts.append(f"错误: {ctx.error_summary}")
         if ctx.step_count > 0:
-            parts.append(f"?????: {ctx.step_count}")
+            parts.append(f"步数: {ctx.step_count}")
         return "\n".join(parts)
 
     def _fallback_quip(self, ctx):

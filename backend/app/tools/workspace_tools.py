@@ -10,7 +10,7 @@ from ..schemas import (
 from ..llm.client import call_llm_sync, llm_is_configured
 
 from .safe_fs import resolve_workspace_path
-from .workspace.constants import (
+from .workspace_constants import (
     CODE_CONTENT_SUFFIXES,
     DEFAULT_TOOL_ENTRY_LIMIT,
     DEFAULT_TOOL_TEST_TIMEOUT_SECONDS,
@@ -60,7 +60,7 @@ from .workspace.constants import (
     WORKSPACE_TOOL_WRITE_KEYWORDS,
     WORKSPACE_TOOL_CODEGEN_TASK_KEYWORDS,
 )
-from .workspace.file_ops import (
+from .workspace_file_ops import (
     copy_workspace_path,
     delete_workspace_path,
     desktop_export_disabled_summary as _desktop_export_disabled_summary,
@@ -73,7 +73,7 @@ from .workspace.file_ops import (
     summarize_command_failure,
     write_workspace_text,
 )
-from .workspace.formatters import (
+from .workspace_formatters import (
     format_file_operation_for_user as _format_file_operation_for_user,
     format_file_preview_for_user as _format_file_preview_for_user,
     format_listing_for_user as _format_listing_for_user,
@@ -86,7 +86,7 @@ from .workspace.formatters import (
     format_workspace_test_summary as _format_workspace_test_summary,
     format_workspace_write_summary as _format_workspace_write_summary,
 )
-from .workspace.utils import (
+from .workspace_utils import (
     contains_keyword as _contains_keyword,
     normalize_optional_bool as _normalize_optional_bool,
     normalize_optional_text as _normalize_optional_text,

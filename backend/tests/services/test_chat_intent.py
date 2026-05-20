@@ -1,4 +1,4 @@
-from backend.app.services.chat_action.intent import detect_intent
+from backend.app.agent_workflow.intent import detect_intent
 
 
 def test_detect_intent_returns_chat_for_greeting():

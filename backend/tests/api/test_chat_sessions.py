@@ -1,6 +1,6 @@
 import asyncio
 
-from backend.app.services.chat_action.types import ChatServiceResult
+from backend.app.services.chat import ChatServiceResult
 from backend.app.services.chat_interface import generate_chat_response
 from backend.app.storage.conversation_store import ConversationStore, conversation_store
 

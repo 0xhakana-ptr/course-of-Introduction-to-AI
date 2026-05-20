@@ -17,7 +17,7 @@ from ..schemas import (
     RunResponse,
     RunStateSnapshotResponse,
 )
-from ..services.run_interface import (
+from ..services.run import (
     get_run,
     get_run_attempt,
     get_run_attempt_output_chunk,

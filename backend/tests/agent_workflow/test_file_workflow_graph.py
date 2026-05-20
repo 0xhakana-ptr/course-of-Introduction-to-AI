@@ -1,13 +1,14 @@
 import json
 
-from backend.app.agent_workflow.file import FileWorkflowResult, run_file_workflow
 from backend.app.agent_workflow.graphs.file_graph import (
     FILE_EXECUTOR_NODE,
     FILE_FAILURE_NODE,
     FILE_FINISH_NODE,
     FILE_OBSERVER_NODE,
     FILE_START_NODE,
+    run_file_workflow,
 )
+from backend.app.agent_workflow.graphs.file_result import FileWorkflowResult
 from backend.app.tools.safe_fs import safe_write_file
 from backend.app.tools.workspace_tools import read_workspace_text
 

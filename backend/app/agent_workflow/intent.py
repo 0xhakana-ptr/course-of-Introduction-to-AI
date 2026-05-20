@@ -1,7 +1,7 @@
 import re
 from typing import Literal
 
-from ...schemas import INTENT_TYPE
+from ..schemas import INTENT_TYPE
 
 
 RUN_ACTION_TYPE = Literal["create", "inspect", "retry", "rerun", "cancel"]

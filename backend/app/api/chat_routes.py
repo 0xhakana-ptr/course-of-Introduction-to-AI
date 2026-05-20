@@ -19,7 +19,7 @@ from ..schemas import (
     ConversationSessionListResponse,
     ConversationSessionMetadataResponse,
 )
-from ..services.chat_interface import generate_chat_response
+from ..services.chat import generate_chat_response
 from ..storage.conversation_store import conversation_store
 
 

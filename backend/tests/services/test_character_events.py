@@ -1,12 +1,12 @@
 from backend.app.message_queue import message_queue
 from backend.app.schemas import MessageEnvelope
-from backend.app.services.character_action.events import CHARACTER_EVENTS
+from backend.app.services.character import CHARACTER_EVENTS
 from backend.app.services.character_interface import (
     dispatch_character_event,
     send_chat_started,
     send_task_done,
 )
-from backend.app.services.chat_action.types import ChatServiceResult
+from backend.app.services.chat import ChatServiceResult
 from backend.app.services.run_interface import create_run, execute_run
 
 

@@ -1,14 +1,14 @@
 from typing import TypedDict
 
 from ...llm.client import call_llm_sync, llm_is_configured
-from ...services.run_action.formatters import (
+from ..formatters import (
     build_attempt_summary,
     build_run_completion_chat_text,
     build_run_summary_text,
     get_attempt_records,
     preview_single_line,
 )
-from ...services.run_action.types import RunRecord
+from ..types.run_types import RunRecord
 from .summary_support import (
     SummaryResolution,
     build_prompt_text,

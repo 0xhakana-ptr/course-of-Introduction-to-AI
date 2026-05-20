@@ -8,7 +8,7 @@ from .api import agent_router, chat_router, health_router, llm_router, message_r
 from .api.error_handlers import register_exception_handlers
 from .core.config import settings
 from .core.logging_config import configure_logging
-from .services.run_interface import recover_interrupted_runs
+from .services.run import recover_interrupted_runs
 from .services.run import RunServiceImpl
 from .agent_workflow.actions.ports import bind_run_port
 from .storage.conversation_store import conversation_store

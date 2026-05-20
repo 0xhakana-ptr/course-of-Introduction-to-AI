@@ -1,12 +1,12 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from ...services.run_action.formatters import (
+from ..formatters import (
     build_attempt_record_snapshot,
     build_attempt_summary,
     build_repair_retry_feedback_text,
 )
-from ...services.run_action.types import CommandResult, ScriptGenerationResult, WorkflowChatMessage
+from ..types.run_types import CommandResult, ScriptGenerationResult, WorkflowChatMessage
 from .repair_retry_guidance import maybe_build_retry_guidance_for_repair_decision
 from ..contracts.workflow_nodes import TASK_REPAIRING_NODE
 from ..contracts.workflow_results import WorkflowRepairResult, invoke_graph_with_result

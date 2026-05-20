@@ -2,7 +2,7 @@ from fastapi import APIRouter, Request
 
 from .error_responses import COMMON_ERROR_RESPONSES
 from ..core.config import settings
-from ..services.run_interface import StartupRecoveryResult
+from ..services.run import StartupRecoveryResult
 
 
 router = APIRouter(

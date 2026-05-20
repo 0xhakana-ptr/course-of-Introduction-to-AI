@@ -1,7 +1,7 @@
 from typing import TypedDict
 
 from ...llm.client import call_llm_sync, llm_is_configured
-from ...services.run_action.formatters import (
+from ..formatters import (
     build_retry_outcome_chat_text,
     preview_single_line,
 )

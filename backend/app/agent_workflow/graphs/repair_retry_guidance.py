@@ -5,7 +5,7 @@ from ..contracts.workflow_nodes import (
     TASK_RETRY_FAILED_NODE,
     TASK_RETRY_REPAIRING_NODE,
 )
-from ...services.run_action.types import RetryGuidance
+from ..types.run_types import RetryGuidance
 from ..contracts.workflow_results import WorkflowRepairResult
 
 
