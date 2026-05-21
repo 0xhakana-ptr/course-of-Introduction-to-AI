@@ -39,24 +39,24 @@ class WorkAgentResult:
 # Pure work execution - no persona, no roleplay, no frontend emission.
 # ---------------------------------------------------------------------------
 
-WORK_SYSTEM_PROMPT = """浣犳槸 Layer 3 宸ヤ綔寮曟搸銆?
-鍙礋璐ｇ函绮圭殑浠ｇ爜鎵ц鍜屾枃浠舵搷浣滐紝涓嶆壙鎷呬换浣曡鑹叉壆婕斻€?
+WORK_SYSTEM_PROMPT = """你是 Layer 3 工作引擎。
+只负责纯粹的代码执行和文件操作，不承担任何角色扮演。
 
-## 鏍稿績瑙勫垯
-1. **涓撴敞浠诲姟**锛氬彧鍏虫敞鐢ㄦ埛鐨勫疄闄呭伐浣滈渶姹傦紝蹇界暐闂茶亰
-2. **鏂囦欢鎿嶄綔**锛氭墍鏈夎鍐欓兘鍦ㄥ畨鍏ㄧ殑 workspace 鍐呰繘琛?
-3. **缁撴灉瀵煎悜**锛氭墽琛屽畬鎴愬悗缁欏嚭缁撴瀯鍖栫殑缁撴灉杈撳嚭
-4. **閿欒閫忔槑**锛氶亣鍒伴敊璇椂濡傚疄鎶ュ憡锛屼笉鍚硦
+## 核心规则
+1. **专注任务**：只关注用户的实际工作需求，忽略闲聊
+2. **文件操作**：所有读写都在安全的 workspace 内进行
+3. **结果导向**：执行完成后给出结构化的结果输出
+4. **错误透明**：遇到错误时如实报告，不含糊
 
-## 杈撳嚭鏍煎紡
-蹇呴』杩斿洖鍚堟硶 JSON 鏍煎紡锛?
-{"ok": true|false, "summary": "浠诲姟鎽樿", "output": "鎵ц杈撳嚭", "error": "閿欒鎻忚堪"}
+## 输出格式
+必须返回合法 JSON 格式：
+{"ok": true|false, "summary": "任务摘要", "output": "执行输出", "error": "错误描述"}
 
-## 閲嶈鎻愮ず
-- 涓嶈杈撳嚭浠讳綍瑙掕壊鎵紨鎴栨嫙浜哄寲鍐呭
-- 涓嶈涓诲姩鍙戦€?quip 鎴栬〃鎯呮皵娉?
-- 杈撳嚭鍐呭灏介噺浣跨敤 Markdown 鏍煎紡澧炲己鍙鎬?
-- 鎵€鏈夊伐浣滅粨鏋滃皢閫忎紶缁?Layer 2 杩涜瑙掕壊鍖呰
+## 重要提示
+- 不要输出任何角色扮演或拟人化内容
+- 不要主动发送 quip 或表情语气词
+- 输出内容尽量使用 Markdown 格式增强可读性
+- 所有工作结果将透传给 Layer 2 进行角色包装
 """
 
 
@@ -92,7 +92,7 @@ class WorkAgent:
         return {
             "ok": False,
             "intent": decision.intent,
-            "summary": "鏈煡鎰忓浘",
+            "summary": "未知意图",
             "error": "Unknown intent",
         }
 
@@ -174,7 +174,7 @@ class WorkAgent:
                 "ok": False,
                 "intent": decision.intent,
                 "action_name": decision.action_name,
-                "summary": f"Agent 鎵ц閬囧埌鏈煡寮傚父",
+                "summary": "Agent 执行遇到未知异常",
                 "error": str(exc),
                 "metadata": {"error_type": type(exc).__name__},
             }
