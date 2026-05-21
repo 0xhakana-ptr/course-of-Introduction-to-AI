@@ -176,7 +176,7 @@ class RuntimeTracker:
                 metadata={"phase": "idle", "ui_status": "待命"},
                 event_type="status.updated",
                 event_source="workflow",
-                event_stage="idle",
+                event_stage="system",
             )
             self._task_running = False
             self._last_phase = ""

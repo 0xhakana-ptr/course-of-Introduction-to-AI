@@ -32,12 +32,14 @@ def test_get_messages_since_id_returns_incremental_items_only():
     assert [message["content"] for message in messages] == ["step 2", "step 3"]
 
 
-def test_get_messages_with_unknown_since_id_returns_empty_list():
+def test_get_messages_with_unknown_since_id_returns_current_queue_for_resync():
     queue = MessageQueue()
 
     queue.add_message({"type": "chat", "content": "hello"})
 
-    assert queue.get_messages("missing-message-id") == []
+    messages = queue.get_messages("missing-message-id")
+    assert len(messages) == 1
+    assert messages[0]["bridge_payload"]["content"] == "hello"
 
 
 def test_add_message_normalizes_runtime_event_fields():

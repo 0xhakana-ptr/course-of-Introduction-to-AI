@@ -904,11 +904,18 @@ async function pollBackendMessagesOnce() {
             url.searchParams.set('since_id', backendBridgeSinceId)
         }
 
+        const timeoutMs = parsePositiveIntegerEnv('AI_AGENT_MESSAGES_TIMEOUT_MS', 8000)
+        const controller = new AbortController()
+        const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
+
         const response = await fetch(url.toString(), {
             method: 'GET',
             headers: {
                 accept: 'application/json',
             },
+            signal: controller.signal,
+        }).finally(() => {
+            clearTimeout(timeoutHandle)
         })
         const rawText = await response.text()
         if (!response.ok) {

@@ -597,7 +597,10 @@ class RoleplayAgent:
 
         if decision.intent == INTENT_CHAT:
             result = self._handle_chat(decision, emit_chat_message=emit_chat_message)
-            runtime_tracker.task_done(ok=True)
+            chat_ok = True
+            if isinstance(result.work_metadata, dict):
+                chat_ok = bool(result.work_metadata.get("chat_ok", True))
+            runtime_tracker.task_done(ok=chat_ok)
             return result
 
         # Call Layer 3 for actual work (coding/file/etc.)
@@ -644,7 +647,8 @@ class RoleplayAgent:
         )
 
         mood = get_session_mood()
-        if result.ok and result.output:
+        chat_ok = bool(result.ok and result.output)
+        if chat_ok:
             mood.record_neutral()
             chat_line = result.output[:600]
         else:
@@ -656,10 +660,17 @@ class RoleplayAgent:
             expression="neutral",
             quip="思考中~ 稍等一下",
             scenario="chat",
-            llm_used=result.ok,
+            llm_used=chat_ok,
         )
         self._emit_chat_to_frontend(response, emit_chat_message=emit_chat_message)
-        return ProcessResult(response=response)
+        work_metadata: dict[str, Any] = {
+            "chat_ok": chat_ok,
+        }
+        if not chat_ok:
+            # Preserve the underlying error for UI/logging even though we return a
+            # user-friendly fallback line.
+            work_metadata["chat_error"] = getattr(result, "error", None)
+        return ProcessResult(response=response, work_metadata=work_metadata)
 
     def _generate_persona_response(self, decision, work_result):
         """Generate persona-wrapped response from work result."""

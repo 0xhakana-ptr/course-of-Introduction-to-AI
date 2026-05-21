@@ -60,7 +60,10 @@ class MessageQueue:
                 return self.messages.copy()
             index = self._message_index.get(since_id)
             if index is None:
-                return []
+                # Client might be holding an evicted/unknown since_id (queue is bounded).
+                # Returning the current queue lets the client resync instead of getting
+                # stuck receiving empty arrays forever.
+                return self.messages.copy()
             result = self.messages[index + 1:]
         if result:
             logger.debug("Messages fetched: count=%s since_id=%s", len(result), since_id)

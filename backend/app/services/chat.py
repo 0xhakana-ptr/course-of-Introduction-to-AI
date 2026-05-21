@@ -243,13 +243,22 @@ async def generate_chat_response(
     # Build result — extract run metadata from ProcessResult (work-engine layer)
     run_id = process_result.work_metadata.get("run_id") if isinstance(process_result.work_metadata, dict) else None
     run_action = process_result.work_metadata.get("run_action") if isinstance(process_result.work_metadata, dict) else None
+
+    chat_ok = True
+    chat_error: str | None = None
+    if isinstance(process_result.work_metadata, dict):
+        if "chat_ok" in process_result.work_metadata:
+            chat_ok = bool(process_result.work_metadata.get("chat_ok"))
+        raw_error = process_result.work_metadata.get("chat_error")
+        chat_error = _normalize_optional_str(raw_error)
     
     result = ChatServiceResult(
         run_id=str(run_id) if run_id else None,
         run_action=str(run_action) if run_action else None,
         intent=decision.intent,
-        ok=True,
+        ok=chat_ok,
         output=process_result.response.chat_line,
+        error=chat_error,
         session_id=active_session_id,
     )
 
