@@ -10,28 +10,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from ...core.limits import FORBIDDEN_KEYS_WORKER_ONLY, WORKER_TEXT_MAX
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-MAX_WORKER_TEXT_CHARS: int = 1200
-FORBIDDEN_WORKER_PAYLOAD_KEYS: frozenset[str] = frozenset({
-    "action_result",
-    "artifact_content",
-    "code_diff",
-    "current_code",
-    "current_code_or_patch",
-    "debug_trace",
-    "full_code",
-    "llm_prompt",
-    "raw_error",
-    "raw_error_ref",
-    "stack_trace",
-    "stderr",
-    "stdout",
-    "tool_internal_stack_trace",
-    "workflow_trace",
-})
+MAX_WORKER_TEXT_CHARS: int = WORKER_TEXT_MAX
+FORBIDDEN_WORKER_PAYLOAD_KEYS: frozenset[str] = FORBIDDEN_KEYS_WORKER_ONLY
 
 # ---------------------------------------------------------------------------
 # String / bool / int coercion

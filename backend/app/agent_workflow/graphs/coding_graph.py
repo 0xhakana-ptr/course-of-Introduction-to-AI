@@ -6,6 +6,11 @@ from pathlib import PurePosixPath
 import re
 from langgraph.graph import END, StateGraph
 
+from ...core.limits import (
+    LLM_PLANNER_OUTPUT_PREVIEW_MAX,
+    WORKER_ARTIFACT_SUMMARY_MAX,
+    WORKER_ERROR_SUMMARY_MAX,
+)
 from ..actions import default_action_registry
 from ..state.utils_shared import coerce_bool, coerce_int, compact_text, normalize_text, safe_mapping
 from ..contracts.workflow_results import invoke_graph_with_result
@@ -103,13 +108,6 @@ def _partition_state(state: Mapping[str, object]) -> dict[str, object]:
     return CodingWorkflowState.from_mapping(state).as_dict()
 
 
-def compact_text(value: object, *, limit: int = 500) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit].rstrip()}..."
-
-
 def _sanitize_action_result_for_state(
     action_result: Mapping[str, object],
     *,
@@ -138,8 +136,8 @@ def _build_error_summary(raw_artifact: Mapping[str, object] | None) -> str:
         return "执行失败，但没有可读取的错误详情。"
 
     action_name = normalize_text(raw_artifact.get("action_name"), default="coding action")
-    summary = compact_text(raw_artifact.get("summary"), limit=700)
-    error = compact_text(raw_artifact.get("error"), limit=700)
+    summary = compact_text(raw_artifact.get("summary"), limit=WORKER_ARTIFACT_SUMMARY_MAX)
+    error = compact_text(raw_artifact.get("error"), limit=WORKER_ARTIFACT_SUMMARY_MAX)
     metadata = raw_artifact.get("metadata")
     error_code = ""
     if isinstance(metadata, Mapping):
@@ -443,7 +441,7 @@ def executor_node(state: CodingGraphState) -> CodingGraphState:
         raw_error_ref = store_coding_artifact("raw-error", action_result)
         action_result = _sanitize_action_result_for_state(
             action_result,
-            error_summary=compact_text(result.summary or result.error, limit=900),
+            error_summary=compact_text(result.summary or result.error, limit=WORKER_ERROR_SUMMARY_MAX),
             raw_error_ref=raw_error_ref,
         )
     next_state = _merge_state(

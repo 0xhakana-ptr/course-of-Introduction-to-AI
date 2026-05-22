@@ -3,29 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
+from ...core.limits import FORBIDDEN_KEYS_FRONTEND_ONLY, FRONTEND_TEXT_MAX
+
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 
-MAX_FRONTEND_TEXT_CHARS = 1200
+MAX_FRONTEND_TEXT_CHARS = FRONTEND_TEXT_MAX
 
-FRONTEND_FORBIDDEN_KEYS = frozenset(
-    {
-        "artifact_refs",
-        "code_diff",
-        "current_code",
-        "current_code_or_patch",
-        "current_code_or_patch_ref",
-        "debug_trace",
-        "full_code",
-        "raw_error",
-        "raw_error_ref",
-        "stack_trace",
-        "stderr",
-        "stdout",
-        "tool_internal_stack_trace",
-        "workflow_trace",
-    }
-)
+FRONTEND_FORBIDDEN_KEYS = FORBIDDEN_KEYS_FRONTEND_ONLY
 
 
 def _normalize_optional_text(value: object, *, max_chars: int = MAX_FRONTEND_TEXT_CHARS) -> str | None:

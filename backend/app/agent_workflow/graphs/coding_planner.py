@@ -6,6 +6,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...core.limits import (
+    LLM_PLANNER_MAX_TOKENS,
+    LLM_PLANNER_OUTPUT_PREVIEW_MAX,
+    LLM_PLANNER_TARGET_FILES_MAX,
+    PLANNER_MAX_TASKS,
+    PLANNER_REASON_TEXT_MAX,
+    PLANNER_TASK_TEXT_MAX,
+    PLANNER_TEXT_VALUE_MAX,
+)
 from ...llm.client import call_llm_sync, llm_is_configured, preview_text
 
 
@@ -33,11 +42,10 @@ FORBIDDEN_ACTION_INPUT_KEY_PARTS = (
     "token",
 )
 JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)```", re.IGNORECASE | re.DOTALL)
-MAX_PLANNER_TASKS = 6
-MAX_PLANNER_TASK_CHARS = 240
-MAX_PLANNER_REASON_CHARS = 400
-MAX_PLANNER_TEXT_VALUE_CHARS = 4000
-LLM_PLANNER_MAX_TOKENS = 700
+MAX_PLANNER_TASKS = PLANNER_MAX_TASKS
+MAX_PLANNER_TASK_CHARS = PLANNER_TASK_TEXT_MAX
+MAX_PLANNER_REASON_CHARS = PLANNER_REASON_TEXT_MAX
+MAX_PLANNER_TEXT_VALUE_CHARS = PLANNER_TEXT_VALUE_MAX
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,7 +232,7 @@ def parse_llm_coding_plan_json(
     token_budget: Mapping[str, int] | None = None,
 ) -> CodingPlannerResult:
     normalized_output = _normalize_text(raw_output)
-    raw_output_preview = preview_text(normalized_output, limit=500)
+    raw_output_preview = preview_text(normalized_output, limit=LLM_PLANNER_OUTPUT_PREVIEW_MAX)
     if not normalized_output:
         return CodingPlannerResult(
             ok=False,
@@ -283,7 +291,7 @@ def parse_llm_coding_plan_json(
     if not tasks_list:
         tasks_list = [_clip_text(prompt, limit=MAX_PLANNER_TASK_CHARS)]
 
-    target_files = _coerce_text_list(parsed.get("target_files"), limit=260)
+    target_files = _coerce_text_list(parsed.get("target_files"), limit=LLM_PLANNER_TARGET_FILES_MAX)
     plan = CodingTaskPlan(
         tasks_list=tasks_list,
         executor_action_name=action_name,
@@ -366,7 +374,7 @@ def plan_coding_task_with_llm(
             ok=False,
             error=result.error or result.output or "LLM planner call failed.",
             error_kind=result.error_kind or "llm_call_failed",
-            raw_output_preview=preview_text(result.output, limit=500),
+            raw_output_preview=preview_text(result.output, limit=LLM_PLANNER_OUTPUT_PREVIEW_MAX),
             token_budget=token_budget,
         )
 

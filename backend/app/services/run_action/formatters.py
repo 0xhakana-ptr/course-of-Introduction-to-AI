@@ -1,3 +1,8 @@
+from ...core.limits import (
+    API_DIAGNOSTICS_PREVIEW_MAX,
+    API_RESULT_PREVIEW_MAX,
+    FRONTEND_SINGLE_LINE_MAX,
+)
 from ...core.text_utils import build_preview, clip_text
 from ...schemas import (
     RunDetailSection,
@@ -7,11 +12,11 @@ from ...schemas import (
     RunSummaryResponse,
 )
 from .types import (
-    ATTEMPT_OUTPUT_PREVIEW_LIMIT,
+    RUN_ATTEMPT_OUTPUT_PREVIEW_MAX,
     AttemptRecord,
     CommandResult,
     RunRecord,
-    SUMMARY_PREVIEW_LIMIT,
+    SUMMARY_PREVIEW_MAX,
 )
 from ...agent_workflow.formatters import (
     build_attempt_record_snapshot,
@@ -41,15 +46,15 @@ def find_attempt_record(record: RunRecord, attempt_number: int) -> AttemptRecord
 def to_run_attempt_response(record: AttemptRecord) -> RunAttemptResponse:
     stdout_value, stdout_length, stdout_truncated = clip_text(
         str(record.get("stdout")) if record.get("stdout") is not None else None,
-        limit=ATTEMPT_OUTPUT_PREVIEW_LIMIT,
+        limit=RUN_ATTEMPT_OUTPUT_PREVIEW_MAX,
     )
     stderr_value, stderr_length, stderr_truncated = clip_text(
         str(record.get("stderr")) if record.get("stderr") is not None else None,
-        limit=ATTEMPT_OUTPUT_PREVIEW_LIMIT,
+        limit=RUN_ATTEMPT_OUTPUT_PREVIEW_MAX,
     )
     error_value, error_length, error_truncated = clip_text(
         str(record.get("error")) if record.get("error") is not None else None,
-        limit=ATTEMPT_OUTPUT_PREVIEW_LIMIT,
+        limit=RUN_ATTEMPT_OUTPUT_PREVIEW_MAX,
     )
     script_rel_path = str(record["script_rel_path"]) if record.get("script_rel_path") is not None else None
     return RunAttemptResponse(
@@ -134,7 +139,7 @@ def _build_result_section(record: RunRecord) -> RunDetailSection:
     return RunDetailSection(
         key="result",
         title="最终结果",
-        summary=preview_single_line(summary_source, limit=300),
+        summary=preview_single_line(summary_source, limit=API_RESULT_PREVIEW_MAX),
         items=artifacts,
         technical=False,
     )
@@ -182,11 +187,11 @@ def _build_diagnostics_section(record: RunRecord, attempts: list[AttemptRecord])
     ]
     content_parts: list[str] = []
     if latest_stdout.strip():
-        content_parts.append(f"stdout preview:\n{preview_single_line(latest_stdout, limit=600)}")
+        content_parts.append(f"stdout preview:\n{preview_single_line(latest_stdout, limit=API_DIAGNOSTICS_PREVIEW_MAX)}")
     if latest_stderr.strip():
-        content_parts.append(f"stderr preview:\n{preview_single_line(latest_stderr, limit=600)}")
+        content_parts.append(f"stderr preview:\n{preview_single_line(latest_stderr, limit=API_DIAGNOSTICS_PREVIEW_MAX)}")
     if latest_error.strip():
-        content_parts.append(f"error preview:\n{preview_single_line(latest_error, limit=600)}")
+        content_parts.append(f"error preview:\n{preview_single_line(latest_error, limit=API_DIAGNOSTICS_PREVIEW_MAX)}")
     return RunDetailSection(
         key="diagnostics",
         title="调试信息",
@@ -297,8 +302,8 @@ def to_run_state_snapshot_response(record: RunRecord) -> RunStateSnapshotRespons
 def to_run_summary_response(record: RunRecord) -> RunSummaryResponse:
     attempts = get_attempt_records(record)
     latest_attempt = attempts[-1] if attempts else None
-    prompt_preview = preview_single_line(str(record.get("prompt") or ""), limit=160)
-    output_preview = preview_single_line(str(record.get("output") or ""), limit=160)
+    prompt_preview = preview_single_line(str(record.get("prompt") or ""), limit=FRONTEND_SINGLE_LINE_MAX)
+    output_preview = preview_single_line(str(record.get("output") or ""), limit=FRONTEND_SINGLE_LINE_MAX)
     error_text = str(record.get("error") or "").strip()
     return RunSummaryResponse(
         run_id=str(record["run_id"]),
@@ -318,7 +323,7 @@ def to_run_summary_response(record: RunRecord) -> RunSummaryResponse:
         started_at=str(record["started_at"]) if record.get("started_at") is not None else None,
         finished_at=str(record["finished_at"]) if record.get("finished_at") is not None else None,
         duration_ms=int(record["duration_ms"]) if record.get("duration_ms") is not None else None,
-        error_preview=preview_single_line(error_text, limit=160) if error_text else None,
+        error_preview=preview_single_line(error_text, limit=FRONTEND_SINGLE_LINE_MAX) if error_text else None,
         latest_attempt_summary=build_attempt_summary(latest_attempt) if latest_attempt is not None else None,
     )
 

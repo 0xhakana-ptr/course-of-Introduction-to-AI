@@ -2,6 +2,11 @@ from typing import TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from ...core.limits import (
+    LLM_PREVIEW_MAX,
+    LLM_REPAIR_COMMAND_PREVIEW_MAX,
+    SUMMARY_OUTCOME_MAX,
+)
 from ...core.text_utils import build_preview
 from ...llm.client import call_llm_sync, llm_is_configured
 from ..codegen import generate_repaired_script_with_llm
@@ -39,8 +44,8 @@ REPAIR_ANALYSIS_SYSTEM_PROMPT = """你是 LangGraph 中负责失败分析的 QA 
 """
 
 
-FAILURE_PREVIEW_LIMIT = 220
-SCRIPT_PREVIEW_LIMIT = 400
+FAILURE_PREVIEW_LIMIT = SUMMARY_OUTCOME_MAX
+SCRIPT_PREVIEW_LIMIT = LLM_PREVIEW_MAX
 
 
 class RepairDecisionState(TypedDict, total=False):
@@ -73,7 +78,7 @@ def preview_text(text: str, *, limit: int = FAILURE_PREVIEW_LIMIT) -> str:
 
 
 def summarize_failure_result(result: CommandResult) -> str:
-    command = preview_text(str(result.get("command") or "(not executed)"), limit=120)
+    command = preview_text(str(result.get("command") or "(not executed)"), limit=LLM_REPAIR_COMMAND_PREVIEW_MAX)
     returncode = result.get("returncode")
     error_text = (
         str(result.get("error") or "").strip()

@@ -1,5 +1,6 @@
 from typing import TypedDict
 
+from ...core.limits import FRONTEND_SINGLE_LINE_MAX, SUMMARY_SINGLE_LINE_MAX
 from ...llm.client import call_llm_sync, llm_is_configured
 from ..formatters import (
     build_attempt_summary,
@@ -48,9 +49,9 @@ class RunSummaryState(TypedDict, total=False):
 def build_run_summary_prompt(record: RunRecord) -> str:
     status = str(record.get("status") or "unknown")
     run_id = str(record.get("run_id") or "").strip()
-    prompt_preview = preview_single_line(str(record.get("prompt") or ""), limit=160) or "(empty)"
-    output_preview = preview_single_line(str(record.get("output") or ""), limit=200) or "(empty)"
-    error_preview = preview_single_line(str(record.get("error") or ""), limit=200) or "(none)"
+    prompt_preview = preview_single_line(str(record.get("prompt") or ""), limit=FRONTEND_SINGLE_LINE_MAX) or "(empty)"
+    output_preview = preview_single_line(str(record.get("output") or ""), limit=SUMMARY_SINGLE_LINE_MAX) or "(empty)"
+    error_preview = preview_single_line(str(record.get("error") or ""), limit=SUMMARY_SINGLE_LINE_MAX) or "(none)"
     attempts = get_attempt_records(record)
     latest_attempt = attempts[-1] if attempts else None
     latest_attempt_summary = (

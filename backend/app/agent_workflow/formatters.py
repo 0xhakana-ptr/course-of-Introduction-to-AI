@@ -1,3 +1,9 @@
+from ..core.limits import (
+    SUMMARY_OUTCOME_MAX,
+    SUMMARY_PREVIEW_MAX,
+    SUMMARY_RUN_MAX,
+    SUMMARY_SINGLE_LINE_MAX,
+)
 from ..core.text_utils import build_preview
 from .types.run_types import (
     AttemptRecord,
@@ -148,7 +154,7 @@ def build_repair_retry_feedback_text(
 ) -> str:
     analysis_text = preview_single_line(
         str(analysis_note or "我已经拿到了这次失败的关键信息。"),
-        limit=200,
+        limit=SUMMARY_SINGLE_LINE_MAX,
     )
     return build_run_chat_text(
         title="我先同步一下这次代码任务的进展。",
@@ -167,7 +173,7 @@ def build_retry_outcome_chat_text(
     next_action: str,
     summary_text: str | None = None,
 ) -> str:
-    outcome_text = preview_single_line(summary_text or attempt_summary, limit=220)
+    outcome_text = preview_single_line(summary_text or attempt_summary, limit=SUMMARY_OUTCOME_MAX)
     return build_run_chat_text(
         title="我继续同步一下自动修复后的这轮结果。",
         run_id=run_id,
@@ -235,7 +241,7 @@ def build_run_completion_chat_text(
         "queued": "代码任务还在排队中。",
     }.get(status, "代码任务状态已更新。")
 
-    summary = preview_single_line(summary_text or build_run_summary_text(record), limit=240)
+    summary = preview_single_line(summary_text or build_run_summary_text(record), limit=SUMMARY_RUN_MAX)
     return build_run_chat_text(
         title=status_title,
         run_id=run_id,

@@ -1,5 +1,6 @@
 from typing import TypedDict
 
+from ...core.limits import SUMMARY_OUTCOME_MAX
 from ...llm.client import call_llm_sync, llm_is_configured
 from ..formatters import (
     build_retry_outcome_chat_text,
@@ -62,7 +63,7 @@ def _build_attempt_summary_output(
         run_id=str(state.get("run_id") or ""),
         attempt_summary=str(state.get("attempt_summary") or "").strip(),
         next_action=str(state.get("next_action") or "").strip(),
-        summary_text=preview_single_line(resolution.text, limit=220),
+        summary_text=preview_single_line(resolution.text, limit=SUMMARY_OUTCOME_MAX),
     )
 
 
