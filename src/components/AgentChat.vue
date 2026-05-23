@@ -49,6 +49,7 @@ import markdownItKatex from 'markdown-it-katex'
 import 'katex/dist/katex.min.css'
 import { getIpcRenderer } from '../platform/electronIpc'
 import BackendIndicator from './BackendIndicator.vue'
+import PixelPet from './PixelPet.vue'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
 import WorkspaceSelector from './WorkspaceSelector.vue'
 
@@ -967,6 +968,7 @@ function autoResizeInput() {
           @newSession="createNewSession"
         />
         <span class="header-title">AI Chat</span>
+        <PixelPet />
       </div>
       <div class="header-center">
         <WorkspaceSelector @updateWorkspace="updateWorkspace" />
