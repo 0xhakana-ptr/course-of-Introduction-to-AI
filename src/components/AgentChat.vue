@@ -7,6 +7,22 @@ function toggleTheme() {
   localStorage.setItem('cyber-waifu-theme', theme.value)
 }
 
+function copyMessage(text: string) {
+  const raw = String(text || '')
+  if (!raw) return
+  navigator.clipboard.writeText(raw).catch(() => {
+    const ta = document.createElement('textarea')
+    ta.value = raw
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  })
+}
+
+
 // Init theme
 const savedTheme = localStorage.getItem('cyber-waifu-theme')
 if (savedTheme === 'dark' || savedTheme === 'light') {
@@ -982,6 +998,9 @@ function autoResizeInput() {
       <div v-for="(l, i) in lines" :key="i" class="msg-row" :class="l.role">
         <!-- Assistant with rich text -->
         <div v-if="shouldRenderRichMessage(l)" class="msg-bubble assistant">
+          <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
           <div class="msg-content rich" v-html="renderAssistantText(l.text)" />
           <div class="msg-copy-row" v-if="hasCodeBlocks(l.text)">
             <button class="copy-code-btn" @click="copyLastCodeBlock(l.text)">复制代码</button>
@@ -994,24 +1013,44 @@ function autoResizeInput() {
               <span class="file-action-title">{{ l.fileAction.title }}</span>
               <span class="file-action-badge">{{ l.fileAction.status }}</span>
             </div>
-            <div class="file-action-grid">
-              <div v-if="l.fileAction.actionName"><span>动作</span><code>{{ l.fileAction.actionName }}</code></div>
-              <div v-if="l.fileAction.source"><span>来源</span><code>{{ l.fileAction.source }}</code></div>
-              <div v-if="l.fileAction.target"><span>目标</span><code>{{ l.fileAction.target }}</code></div>
-              <div v-if="l.fileAction.query"><span>查询</span><code>{{ l.fileAction.query }}</code></div>
-              <div v-if="typeof l.fileAction.matchCount === 'number'"><span>命中</span><code>{{ l.fileAction.matchCount }}</code></div>
-              <div v-if="l.fileAction.tool"><span>工具</span><code>{{ l.fileAction.tool }}</code></div>
-              <div v-if="l.fileAction.error" class="file-action-error"><span>错误</span><code>{{ l.fileAction.error }}</code></div>
+            <button class="msg-copy-btn" @click="copyMessage(l.fileAction.title + ' - ' + l.fileAction.status)" title="复制">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <div class="file-action-boxes">
+              <div class="fa-box" v-if="l.fileAction.actionName">
+                <span class="fa-box-label">动作</span>
+                <code class="fa-box-value">{{ l.fileAction.actionName }}</code>
+              </div>
+              <div class="fa-box" v-if="l.fileAction.tool">
+                <span class="fa-box-label">工具</span>
+                <code class="fa-box-value">{{ l.fileAction.tool }}</code>
+              </div>
+              <div class="fa-box fa-box-error" v-if="l.fileAction.error">
+                <span class="fa-box-label">错误</span>
+                <code class="fa-box-value">{{ l.fileAction.error }}</code>
+              </div>
+            </div>
+            <div class="file-action-meta" v-if="l.fileAction.source || l.fileAction.target || l.fileAction.query || typeof l.fileAction.matchCount === 'number'">
+              <span v-if="l.fileAction.source">来源: {{ l.fileAction.source }}</span>
+              <span v-if="l.fileAction.target">目标: {{ l.fileAction.target }}</span>
+              <span v-if="l.fileAction.query">查询: {{ l.fileAction.query }}</span>
+              <span v-if="typeof l.fileAction.matchCount === 'number'">命中: {{ l.fileAction.matchCount }}</span>
             </div>
           </div>
         </div>
         <!-- User message -->
         <div v-else-if="l.role === 'user'" class="msg-bubble user">
           <div class="msg-content">{{ l.text }}</div>
+          <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
         </div>
         <!-- System / error -->
         <div v-else class="msg-bubble system">
           <div class="msg-content">{{ l.text }}</div>
+          <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
         </div>
       </div>
     </div>
@@ -1095,14 +1134,14 @@ function autoResizeInput() {
   --text-muted: rgba(169,177,214,0.45);
   --border-rgb: 169,177,214;
   --accent-indigo-rgb: 122,162,247;
-  --accent-sakura-rgb: 247,118,142;
-  --accent-error-rgb: 247,118,142;
+  --accent-sakura-rgb: 255,210,218;
+  --accent-error-rgb: 255,180,190;
   --text-primary-rgb: 192,202,245;
   --accent-green: #9ece6a;
   --accent-green-bright: #9ece6a;
   --accent-link: #7aa2f7;
-  --accent-sakura-text: #f7768e;
-  --accent-error-text: #f7768e;
+  --accent-sakura-text: #e8a0b0;
+  --accent-error-text: #e8a0b0;
   --status-dot-idle: rgba(169,177,214,0.2);
   --scrollbar-thumb: rgba(169,177,214,0.1);
   --shadow-popup: 0 8px 32px rgba(0,0,0,0.5);
@@ -1276,8 +1315,10 @@ function autoResizeInput() {
   max-width: 85%;
   border-radius: 14px;
   padding: 12px 16px;
+  padding-right: 36px;
   word-break: break-word;
   overflow-wrap: anywhere;
+  position: relative;
 }
 
 .msg-bubble.user {
@@ -1431,29 +1472,90 @@ function autoResizeInput() {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.file-action-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 6px 12px;
-  font-size: 12px;
+.file-action-boxes {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
 }
-.file-action-grid span {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-.file-action-grid code {
-  display: block;
-  overflow: hidden;
-  padding: 3px 6px;
-  border-radius: 5px;
+.fa-box {
+  flex: 1;
+  min-width: 130px;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: 8px;
   background: rgba(var(--border-rgb), 0.06);
+  border: 1px solid rgba(var(--border-rgb), 0.1);
+  overflow: hidden;
+}
+.fa-box-error {
+  background: rgba(var(--accent-error-rgb), 0.08);
+  border-color: rgba(var(--accent-error-rgb), 0.18);
+}
+.fa-box-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+.fa-box-value {
+  display: block;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
   color: var(--text-primary);
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.fa-box-error .fa-box-value {
+  color: var(--accent-error-text);
+}
+.file-action-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+.file-action-meta span {
+  white-space: nowrap;
+}
 .file-action-error code { color: var(--accent-sakura-text); }
+
+/* ---- Copy Button ---- */
+.msg-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: rgba(var(--border-rgb), 0.06);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.15s;
+  z-index: 2;
+}
+.msg-bubble:hover .msg-copy-btn,
+.msg-copy-btn:focus-visible {
+  opacity: 1;
+}
+.msg-copy-btn:hover {
+  background: rgba(var(--border-rgb), 0.12);
+  color: var(--text-primary);
+}
+.msg-copy-btn:active {
+  transform: scale(0.9);
+}
 
 /* ---- Input Area ---- */
 .input-area {

@@ -1,4 +1,4 @@
-"""Layer 3 work engine: streamlined LangGraph agent loop.
+﻿"""Layer 3 work engine: streamlined LangGraph agent loop.
 
 This module keeps the original file name but is now drastically simplified:
 - perceive_node removed (Layer 1 handles intent detection)
@@ -167,7 +167,7 @@ def act_node(state: AgentLoopState) -> AgentLoopState:
         state,
         action_result=result.as_dict(),
         output=result.summary,
-        error=None if result.ok else state.get("error"),
+        error=None if result.ok else (result.error or state.get("error")),
         ui_status="loop_action_done" if result.ok else "loop_action_failed",
     )
     emit_workflow_action_event(

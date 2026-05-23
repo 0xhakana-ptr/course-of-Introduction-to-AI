@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Layer 3: Work Agent.
 
 The actual work execution layer. Called by Layer 2 (RoleplayAgent).
@@ -139,14 +139,14 @@ class WorkAgent:
             )
 
             # Extract structured data from the workflow result
-            state = result.final_state if hasattr(result, 'final_state') else {}
+            state = result.state if hasattr(result, 'state') else {}
             ar = state.get("action_result") or {}
             if isinstance(ar, dict):
                 ok = bool(ar.get("ok", True))
             else:
                 ok = True
 
-            runtime_tracker.task_done(ok=True)
+            runtime_tracker.task_done(ok=ok)
 
             return {
                 "ok": ok,

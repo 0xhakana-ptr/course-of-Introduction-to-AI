@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Layer 2: Roleplay Agent.
 
 The persona layer that users interact with directly.
@@ -672,6 +672,22 @@ class RoleplayAgent:
         return ProcessResult(response=response, work_metadata=work_metadata)
 
     def _generate_persona_response(self, decision, work_result):
+        wr = work_result if isinstance(work_result, dict) else {}
+        work_ok = bool(wr.get("ok", True))
+        work_error = str(wr.get("error") or "")
+        if not work_ok and work_error:
+            logger.info("Roleplay force-failure: ok=%s error=%s", work_ok, work_error[:80])
+            mood = get_session_mood()
+            mood.record_failure()
+            return RoleplayResponse(
+                chat_line="出错啦~ 本机检测到一个小问题：\n" + work_error[:200],
+                expression="sad",
+                quip="唔... 失败了",
+                motion="",
+                mood_label=mood.label,
+                scenario="failure",
+                llm_used=False,
+            )
         """Generate persona-wrapped response from work result."""
         ctx = RoleplayAgentContext.from_routing_and_result(decision, work_result)
         mood = get_session_mood()
