@@ -206,6 +206,9 @@ def format_search_result_for_user(data: Mapping[str, object]) -> str:
 
 
 def format_workspace_write_summary(data: Mapping[str, object]) -> str:
+    if bool(data.get("file_existed")):
+        return f"文件已存在，未覆盖写入。\n\npath: {data.get('path')}"
+
     if str(data.get("target_location") or "").strip() == "desktop":
         action = "覆盖" if bool(data.get("overwritten")) else "导出"
         lines = [

@@ -31,7 +31,7 @@ WORKER_TEXT_MAX: int = 3000
 LLM_PREVIEW_MAX: int = 1200
 LLM_PLANNER_OUTPUT_PREVIEW_MAX: int = 1500
 LLM_PLANNER_TARGET_FILES_MAX: int = 600
-LLM_PLANNER_MAX_TOKENS: int = 2000
+LLM_PLANNER_MAX_TOKENS: int = 3000
 LLM_REPAIR_COMMAND_PREVIEW_MAX: int = 600
 
 # Summary previews: inline previews in chat messages and status cards.
@@ -46,10 +46,15 @@ API_RESULT_PREVIEW_MAX: int = 1200
 
 # Run attempt output: chunked delivery to frontend.
 RUN_ATTEMPT_OUTPUT_PREVIEW_MAX: int = 4000
-RUN_ATTEMPT_OUTPUT_CHUNK_DEFAULT: int = 8000
+RUN_ATTEMPT_OUTPUT_CHUNK_DEFAULT: int = 30000
 RUN_ATTEMPT_OUTPUT_CHUNK_MAX: int = 50000
 STARTUP_RECOVERY_PREVIEW_MAX: int = 20
 
+
+# ---------------------------------------------------------------------------
+# ROUTER
+# ---------------------------------------------------------------------------
+ROUTER_LLM_EXTRACTION_MAX_TOKENS = 30000
 # ---------------------------------------------------------------------------
 # Coding planner limits
 # ---------------------------------------------------------------------------

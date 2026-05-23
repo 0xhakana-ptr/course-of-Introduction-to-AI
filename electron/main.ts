@@ -491,6 +491,14 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
     const context = typeof req?.context === 'string' ? req.context : ''
     if (!prompt) return { ok: false, output: '空输入' }
 
+    // Always sync workspace to backend before sending chat.
+    // This covers the case where the initial sync (on mount / change) failed
+    // because the backend wasn't ready yet.
+    const wsPath = loadWorkspacePath()
+    if (wsPath) {
+        syncBackendWorkspace(wsPath).catch(() => { /* best-effort */ })
+    }
+
     const endpoint = process.env.AI_AGENT_ENDPOINT
     if (endpoint && endpoint.trim()) {
         try {

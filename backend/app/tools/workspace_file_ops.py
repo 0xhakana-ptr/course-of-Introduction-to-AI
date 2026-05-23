@@ -1,4 +1,4 @@
-import re
+﻿import re
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
@@ -136,7 +136,16 @@ def write_workspace_text(
     target = resolve_workspace_path(normalized_path)
     existed = target.exists()
     if existed and not overwrite:
-        raise FileExistsError(f"workspace file already exists: {normalized_path}")
+        return {
+            "path": normalized_path,
+            "created": False,
+            "overwritten": False,
+            "file_existed": True,
+            "chars_written": 0,
+            "total_chars": 0,
+            "truncated": False,
+            "content": "",
+        }
 
     clipped_content, total_chars, truncated = clip_output(
         content,

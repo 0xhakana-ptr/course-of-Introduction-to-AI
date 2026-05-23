@@ -50,6 +50,8 @@ import 'katex/dist/katex.min.css'
 import { getIpcRenderer } from '../platform/electronIpc'
 import BackendIndicator from './BackendIndicator.vue'
 import PixelPet from './PixelPet.vue'
+import StatusTicker from './StatusTicker.vue'
+import PixelLoading from './PixelLoading.vue'
 import ChatHistoryPanel from './ChatHistoryPanel.vue'
 import WorkspaceSelector from './WorkspaceSelector.vue'
 
@@ -430,6 +432,7 @@ function onBackendActivity() {
 const outputRef = ref<HTMLDivElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
+const statusTickerRef = ref<InstanceType<typeof StatusTicker> | null>(null)
 const desktopConfirmVisible = ref(false)
 let desktopConfirmResolver: ((confirmed: boolean) => void) | null = null
 
@@ -712,10 +715,10 @@ function handleQuip(_event: any, data: QuipMessage) {
   lastQuipLogKey = logDecision.nextKey
 
   if (data.event_type === 'workflow.node_entered') {
-    push('system', `[过程] ${content}（${node}）`)
+    statusTickerRef.value?.push(`[过程] ${content}（${node}）`)
     return
   }
-  push('system', `[提示] ${content}`)
+  statusTickerRef.value?.push(`[提示] ${content}`)
 }
 
 // 处理状态更新
@@ -749,15 +752,15 @@ function handleStatus(_event: any, data: StatusUpdate) {
   if (fileActionCard) {
     push('system', actionStatusText || fileActionCard.title, { fileAction: fileActionCard })
   } else if (actionStatusText) {
-    push('system', actionStatusText)
+    statusTickerRef.value?.push(actionStatusText)
   } else if (data.status === 'running') {
-    push('system', `[状态] 正在运行... 节点: ${node} 进度: ${data.progress || 0}%`)
+    statusTickerRef.value?.push(`[状态] 正在运行... 节点: ${node} 进度: ${data.progress || 0}%`)
   } else if (data.status === 'done') {
-    push('system', data.event_type === 'workflow.completed' ? '[状态] 工作流完成' : '[状态] 任务完成')
+    statusTickerRef.value?.push('[状态] 任务完成')
   } else if (data.status === 'error') {
-    push('system', data.event_type === 'workflow.failed' ? '[状态] 工作流失败' : '[状态] 发生错误')
+    statusTickerRef.value?.push('[状态] 工作流失败')
   } else if (data.status === 'cancelled') {
-    push('system', '[状态] 任务已取消')
+    statusTickerRef.value?.push('[状态] 任务已取消')
   }
 }
 
@@ -904,7 +907,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 onMounted(() => {
-  push('system', 'AI Chat 已启动。Enter 发送，Shift+Enter 换行，↑/↓ 历史，Ctrl+L 清屏。')
+  statusTickerRef.value?.push('AI Chat 已启动')
   if (!canInvoke.value) push('err', '（仅 Electron 可用：请通过 pnpm dev 启动桌面端）')
   focusInputSoon()
   
@@ -969,6 +972,7 @@ function autoResizeInput() {
         />
         <span class="header-title">AI Chat</span>
         <PixelPet />
+        <StatusTicker ref="statusTickerRef" />
       </div>
       <div class="header-center">
         <WorkspaceSelector @updateWorkspace="updateWorkspace" />
@@ -1054,6 +1058,9 @@ function autoResizeInput() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           </button>
         </div>
+      </div>
+      <div v-if="isSending" class="msg-row assistant">
+        <PixelLoading />
       </div>
     </div>
 

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Layer 1: Routing Guard.
 
 Independent layer that detects user intent and determines routing.
@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..llm.client import call_llm_sync
+from ..core.limits import ROUTER_LLM_EXTRACTION_MAX_TOKENS
 from .intent import detect_intent, detect_run_action, extract_run_reference
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ JSON schema for each action:
 
 Rules:
 - rel_path must be a relative workspace path (no absolute paths, no .. escapes)
-- Use the exact filename the user provides; if none given, generate a reasonable one
+- Preserve the full relative path the user specifies (e.g., "src/components/Button.vue"); if no path given, generate a reasonable filename
 - For workspace.write: generate COMPLETE, working file content based on the request
 - For workspace.write: if the user asks for code, write the code; if text, write text
 - For workspace.write: NEVER leave content empty; always generate appropriate content
@@ -79,17 +80,99 @@ Rules:
 """
 
 
+
+
+def _extract_dir_from_chinese_prompt(prompt: str, filename: str) -> str | None:
+    """If prompt has '在 dir 下' pattern, extract the directory."""
+    dir_match = re.search(
+        r"(?:\u5728|\u4ece)\s*([a-zA-Z0-9_\-./\\\\]+)\s*(?:\u4e0b|\u91cc|\u4e2d|\u76ee\u5f55)",
+        prompt
+    )
+    if dir_match:
+        return dir_match.group(1).strip().strip("'\"").replace("\\", "/")
+    return None
+
 def _extract_path_from_prompt(prompt: str) -> str | None:
-    """Heuristically extract the first file path from a user prompt (no LLM)."""
+    """Heuristically extract a file path from a user prompt (no LLM).
+
+    Handles both bare paths and Chinese patterns like "在 xxx 下创建 yyy.ext".
+    """
+    # Try to find a full path+filename via regex first
     for m in _PATH_RE.finditer(prompt):
         candidate = m.group(1).strip().strip("'\"")
         candidate = candidate.replace("\\", "/")
         if candidate and not candidate.startswith(".."):
             if any(candidate.endswith(ext) for ext in _PATH_EXTENSIONS):
+                # Check if a directory prefix exists in Chinese patterns
+                dir_prefix = _extract_dir_from_chinese_prompt(prompt, candidate)
+                if dir_prefix:
+                    return dir_prefix + "/" + candidate
                 return candidate
             if "/" in candidate:
                 return candidate
+
+    # Fallback: extract directory from Chinese pattern + generate filename
+    dir_match = re.search(
+        r"(?:\u5728|\u4ece)\s*([a-zA-Z0-9_\-./\\\\]+)\s*(?:\u4e0b|\u91cc|\u4e2d|\u76ee\u5f55)",
+        prompt
+    )
+    if dir_match:
+        dir_path = dir_match.group(1).strip().strip("'\"").replace("\\", "/")
+        # Also look for a filename in the prompt
+        for m in _PATH_RE.finditer(prompt):
+            fname = m.group(1).strip().strip("'\"").replace("\\", "/")
+            if fname and not fname.startswith("..") and any(fname.endswith(ext) for ext in _PATH_EXTENSIONS):
+                return dir_path + "/" + fname
+        return dir_path
+
     return None
+
+
+def _safe_json_parse(text: str) -> dict[str, Any] | None:
+    """Parse JSON with automatic repair for truncated/incomplete LLM output."""
+
+    text = text.strip()
+    if not text:
+        return None
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    fixed = text.rstrip()
+    in_string = False
+    i = 0
+    while i < len(fixed):
+        ch = fixed[i]
+        if ch == '\\':
+            i += 2
+            continue
+        if ch == '"':
+            in_string = not in_string
+        i += 1
+
+    if in_string:
+        fixed = fixed + '"'
+
+    open_braces = fixed.count('{') - fixed.count('}')
+    open_brackets = fixed.count('[') - fixed.count(']')
+
+    import re as _re
+    fixed = _re.sub(r",\s*$", "", fixed.rstrip())
+
+    fixed += "}" * max(0, open_braces)
+    fixed += "]" * max(0, open_brackets)
+
+    try:
+        result = json.loads(fixed)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    return None
+
 def _extract_workspace_params_via_llm(
     prompt: str,
     context: str | None,
@@ -106,14 +189,14 @@ def _extract_workspace_params_via_llm(
             context=None,
             system_prompt=_EXTRACTION_SYSTEM_PROMPT,
             temperature=0.1,
-            max_tokens=2500,
+            max_tokens=ROUTER_LLM_EXTRACTION_MAX_TOKENS,
         )
         if result.ok and result.output:
             output = result.output.strip()
             # Strip markdown fences
             output = re.sub(r"^`(?:json)?\s*\n?", "", output)
             output = re.sub(r"\n?`\s*$", "", output)
-            params = json.loads(output)
+            params = _safe_json_parse(output)
             if isinstance(params, dict):
                 # The LLM may override the action
                 action = params.pop("action", detected_action)
@@ -128,7 +211,11 @@ def _extract_workspace_params_via_llm(
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning("LLM workspace param extraction failed: %s", exc)
 
-    # Fallback: return run.create so coding workflow handles it
+    # Fallback: try heuristic path extraction; if found, use workspace.write
+    heuristic_path = _extract_path_from_prompt(prompt)
+    if heuristic_path and detected_action.startswith("workspace."):
+        logger.info("LLM extraction failed, but heuristic path found: %s", heuristic_path)
+        return detected_action, {"rel_path": heuristic_path, "prompt": prompt, "context": context}, "Heuristic fallback with path."
     logger.info("Falling back to run.create for prompt: %.120s", prompt)
     return "run.create", {"prompt": prompt, "context": context}, "Fallback to run.create."
 
