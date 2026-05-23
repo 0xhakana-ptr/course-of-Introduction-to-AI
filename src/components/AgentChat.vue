@@ -402,6 +402,16 @@ const desktopConfirmVisible = ref(false)
 let desktopConfirmResolver: ((confirmed: boolean) => void) | null = null
 
 function push(role: ChatLine['role'], text: string, extra: Omit<ChatLine, 'role' | 'text'> = {}) {
+  // Assistant messages: typewriter animation
+  if (role === 'assistant' && text) {
+    const mode = (extra.renderMode || 'rich_text') as 'rich_text' | 'plain_text'
+    startTypewriter(text, mode)
+    return
+  }
+  // Non-assistant (user/system/err): flush any running typewriter first
+  if (role !== 'assistant') {
+    flushTypewriter(true)
+  }
   lines.value.push({ role, text, ...extra })
   // Keep last ~500 lines
   if (lines.value.length > 500) lines.value.splice(0, lines.value.length - 500)
@@ -413,6 +423,7 @@ function push(role: ChatLine['role'], text: string, extra: Omit<ChatLine, 'role'
 }
 
 function clearScreen() {
+  flushTypewriter(true)
   lines.value = []
   push('system', '屏幕已清空（Ctrl+L）。')
   focusInputSoon()
@@ -441,6 +452,68 @@ function normalizeAssistantContent(text: string): string {
 
 // Track last assistant message content for dedup (prevents double-reply from IPC + invoke)
 let _lastAssistantContent = ''
+
+// ---- Typewriter animation state ----
+const TYPEWRITER_SPEED_MS = 20   // ms per character batch
+const TYPEWRITER_CHARS_PER_TICK = 3  // characters per animation frame
+const typewriterTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const typewriterFullText = ref('')
+const typewriterLineIndex = ref(-1)
+const typewriterLineRenderMode = ref<'rich_text' | 'plain_text'>('rich_text')
+
+function flushTypewriter(finishLine = true) {
+  if (typewriterTimer.value !== null) {
+    clearInterval(typewriterTimer.value)
+    typewriterTimer.value = null
+  }
+  const idx = typewriterLineIndex.value
+  if (finishLine && idx >= 0 && idx < lines.value.length && typewriterFullText.value) {
+    lines.value[idx] = {
+      ...lines.value[idx],
+      text: typewriterFullText.value,
+      renderMode: typewriterLineRenderMode.value,
+    }
+  }
+  typewriterFullText.value = ''
+  typewriterLineIndex.value = -1
+}
+
+function startTypewriter(text: string, renderMode: 'rich_text' | 'plain_text' = 'rich_text') {
+  if (!text) return
+  flushTypewriter(true)
+  // Push placeholder line; render as plain_text during animation
+  const line: ChatLine = { role: 'assistant', text: '', renderMode: 'plain_text', contentType: 'markdown' }
+  lines.value.push(line)
+  const lineIndex = lines.value.length - 1
+  typewriterFullText.value = text
+  typewriterLineIndex.value = lineIndex
+  typewriterLineRenderMode.value = renderMode
+
+  let pos = 0
+  typewriterTimer.value = setInterval(() => {
+    pos += TYPEWRITER_CHARS_PER_TICK
+    if (pos >= text.length) {
+      // Done: switch to rich_text
+      if (lineIndex < lines.value.length) {
+        lines.value[lineIndex] = { ...lines.value[lineIndex], text, renderMode }
+      }
+      flushTypewriter(false)
+      void nextTick(() => {
+        const el = outputRef.value
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    } else {
+      if (lineIndex < lines.value.length) {
+        lines.value[lineIndex] = { ...lines.value[lineIndex], text: text.slice(0, pos) }
+      }
+      void nextTick(() => {
+        const el = outputRef.value
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    }
+  }, TYPEWRITER_SPEED_MS)
+}
+
 
 // 处理 Chat 消息
 function handleChat(_event: any, data: ChatMessage) {
@@ -749,6 +822,8 @@ async function sendPrompt(prompt: string) {
 function submit() {
   const trimmed = input.value.trim()
   if (!trimmed) return
+  // Immediately finish any in-progress typewriter for responsiveness
+  flushTypewriter(true)
   inputHistory.value.push(trimmed)
   historyIndex.value = -1
   void sendPrompt(trimmed)

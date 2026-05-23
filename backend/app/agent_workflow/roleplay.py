@@ -18,6 +18,7 @@ from typing import Any
 
 from .router import RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN
 from .runtime_tracker import runtime_tracker
+from ..core.limits import FRONTEND_TEXT_MAX, SUMMARY_PREVIEW_MAX, SUMMARY_RUN_MAX
 from ..messaging.message_sender import message_sender
 from ..llm.client import call_llm_sync, llm_is_configured
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ JSON 格式如下：
 {{"chat_line": "...", "expression": "...", "quip": "...", "motion": "..."}}
 
 字段说明：
-- **chat_line**：发送到聊天窗口的正文，可以有多句话。中文，Markdown 格式可选。根据场景可以是一句俏皮话，也可以是带格式的工作总结。最多 400 字。
+- **chat_line**：发送到聊天窗口的正文，可以有多句话。中文，Markdown 格式可选。根据场景可以是一句俏皮话，也可以是带格式的工作总结。可以很长，支持多段落 Markdown 格式，根据场景需要充分展开。最多 4000 字。
 - **expression**：Live2D 表情名。可选值：neutral / happy / proud / blush / worried / sad / surprised / thinking / focused
 - **quip**：浮在 Live2D 模型上方的短气泡，就是角色正在想/正在说的话。要简短俏皮，不超过 30 字。这是展现你性格的关键字段！
 - **motion**：Live2D 动作组名。如果不确定就填空字符串 ""。
@@ -241,9 +242,9 @@ def _scenario_fallback(ctx):
     quip = _pick(fallback_quips.get(scenario, ["嗯嗯~"]))
     expression = "neutral"
     if scenario == "chat" and ctx.output_summary:
-        chat_line = ctx.output_summary[:400]
+        chat_line = ctx.output_summary[:FRONTEND_TEXT_MAX]
     elif scenario == "coding" and ctx.output_summary:
-        chat_line = quip + "\n" + ctx.output_summary[:300]
+        chat_line = quip + "\n" + ctx.output_summary[:SUMMARY_PREVIEW_MAX]
     else:
         chat_line = quip
     return {"chat_line": chat_line, "expression": expression, "quip": quip, "motion": ""}
@@ -273,8 +274,8 @@ class RoleplayAgentContext:
             ui_status=_norm(state.get("ui_status")),
             action_name=_norm(state.get("action_name")),
             action_ok=action_ok,
-            output_summary=_norm(state.get("output"))[:400],
-            error_summary=(_norm(state.get("error_summary") or state.get("error"))[:200] if not action_ok else ""),
+            output_summary=_norm(state.get("output"))[:SUMMARY_RUN_MAX],
+            error_summary=(_norm(state.get("error_summary") or state.get("error"))[:SUMMARY_PREVIEW_MAX] if not action_ok else ""),
             terminal_status=_norm(state.get("stop_reason") or state.get("terminal_status")),
             step_count=_int(state.get("step_count")),
             node_name=_norm(state.get("node_name"), default="agent_loop_roleplay"),
@@ -320,8 +321,8 @@ class RoleplayAgentContext:
             intent=str(w.get("intent", decision.intent)),
             action_name=str(w.get("action_name", decision.action_name)),
             action_ok=bool(w.get("ok", True)),
-            output_summary=str(w.get("summary", ""))[:400],
-            error_summary=(str(w.get("error", ""))[:200] if not w.get("ok") else ""),
+            output_summary=str(w.get("summary", ""))[:SUMMARY_RUN_MAX],
+            error_summary=(str(w.get("error", ""))[:SUMMARY_PREVIEW_MAX] if not w.get("ok") else ""),
             step_count=sc,
             terminal_status=str(md.get("stop_reason", "")),
         )
@@ -374,7 +375,7 @@ def _parse_llm_json(raw):
     if not isinstance(data, dict):
         return {}
     return {
-        "chat_line": str(data.get("chat_line", "")).strip()[:400],
+        "chat_line": str(data.get("chat_line", "")).strip()[:FRONTEND_TEXT_MAX],
         "expression": str(data.get("expression", "neutral")).strip(),
         "quip": str(data.get("quip", "")).strip()[:80],
         "motion": str(data.get("motion", "")).strip(),
@@ -429,7 +430,6 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
                 context=None,
                 system_prompt=system_prompt,
                 temperature=0.78,
-                max_tokens=500,
             )
             if result.ok:
                 parsed = _parse_llm_json(result.output)
@@ -643,14 +643,13 @@ class RoleplayAgent:
             prompt, context,
             system_prompt=CHAT_SYSTEM_PROMPT,
             temperature=0.78,
-            max_tokens=600,
         )
 
         mood = get_session_mood()
         chat_ok = bool(result.ok and result.output)
         if chat_ok:
             mood.record_neutral()
-            chat_line = result.output[:600]
+            chat_line = result.output[:FRONTEND_TEXT_MAX]
         else:
             mood.record_neutral()
             chat_line = "嗯...让我想想...~ 好像出了点问题，稍等一下哦~"
@@ -690,7 +689,6 @@ class RoleplayAgent:
                     context=None,
                     system_prompt=system_prompt,
                     temperature=0.78,
-                    max_tokens=500,
                 )
                 if result.ok:
                     parsed = _parse_llm_json(result.output)
@@ -713,9 +711,9 @@ class RoleplayAgent:
         # Fallback
         fallback = _scenario_fallback(ctx)
         if ctx.output_summary and scenario in {"success", "coding"}:
-            fallback["chat_line"] = ctx.output_summary[:400]
+            fallback["chat_line"] = ctx.output_summary[:FRONTEND_TEXT_MAX]
         elif ctx.error_summary and scenario == "failure":
-            fallback["chat_line"] = ctx.error_summary[:400]
+            fallback["chat_line"] = ctx.error_summary[:FRONTEND_TEXT_MAX]
         return RoleplayResponse(
             chat_line=fallback["chat_line"],
             expression=fallback.get("expression", "neutral"),
