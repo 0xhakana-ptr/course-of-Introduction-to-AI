@@ -1,4 +1,19 @@
 <script setup lang="ts">
+const theme = ref<'light' | 'dark'>('light')
+
+function toggleTheme() {
+  theme.value = theme.value === 'light' ? 'dark' : 'light'
+  document.documentElement.setAttribute('data-theme', theme.value)
+  localStorage.setItem('cyber-waifu-theme', theme.value)
+}
+
+// Init theme
+const savedTheme = localStorage.getItem('cyber-waifu-theme')
+if (savedTheme === 'dark' || savedTheme === 'light') {
+  theme.value = savedTheme
+}
+document.documentElement.setAttribute('data-theme', theme.value)
+
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
@@ -897,115 +912,135 @@ onUnmounted(() => {
     ipcRenderer.removeListener('agent:expression', handleExpression)
   }
 })
+
+
+// ---- Code copy utilities ----
+function hasCodeBlocks(text: string): boolean {
+  return /```[\s\S]*?```/.test(text)
+}
+
+async function copyLastCodeBlock(text: string) {
+  const match = text.match(/```(?:\w+\n)?([\s\S]*?)```/g)
+  if (!match) return
+  const last = match[match.length - 1]
+  const code = last.replace(/```(?:\w+\n)?|```/g, '').trim()
+  try {
+    await navigator.clipboard.writeText(code)
+  } catch {
+    // fallback: ignore
+  }
+}
+
+function autoResizeInput() {
+  const el = inputRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+}
+
 </script>
 
 <template>
   <div class="chat-root">
-    <div class="header">
+    <!-- Header -->
+    <header class="chat-header">
       <div class="header-left">
         <ChatHistoryPanel
           :currentSessionId="currentSessionId"
           @selectSession="switchSession"
           @newSession="createNewSession"
         />
-        <div class="title">AI Chat</div>
+        <span class="header-title">AI Chat</span>
       </div>
       <div class="header-center">
         <WorkspaceSelector @updateWorkspace="updateWorkspace" />
       </div>
-      <div class="right">
+      <div class="header-right">
         <BackendIndicator />
-        <!-- 显示当前状态 -->
         <div class="status-info" v-if="currentStatus !== 'idle'">
-          <span class="status-badge" :class="currentStatus">{{ currentStatus }}</span>
-          <span v-if="currentProgress > 0" class="progress">{{ currentProgress }}%</span>
-          <span v-if="currentNodeLabel || currentNode" class="node">{{ currentNodeLabel || currentNode }}</span>
+          <span class="status-dot" :class="currentStatus" />
+          <span class="status-label">{{ currentNodeLabel || currentNode || currentStatus }}</span>
+          <span v-if="currentProgress > 0" class="progress-text">{{ currentProgress }}%</span>
         </div>
-        <div class="status" :class="{ busy: isSending }">{{ isSending ? 'thinking…' : 'ready' }}</div>
-        <button class="btn" type="button" @click="clearScreen">清屏</button>
+        <button class="header-btn" type="button" @click="clearScreen" title="清屏">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+        </button>
+
+        <button class="theme-toggle header-btn" type="button" @click="toggleTheme" :title="theme === 'dark' ? 'Switch Light' : 'Switch Dark'">
+          <svg v-if="theme === 'dark'" class="theme-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg v-else class="theme-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Messages -->
+    <div ref="outputRef" class="msg-list" role="log" aria-live="polite">
+      <div v-for="(l, i) in lines" :key="i" class="msg-row" :class="l.role">
+        <!-- Assistant with rich text -->
+        <div v-if="shouldRenderRichMessage(l)" class="msg-bubble assistant">
+          <div class="msg-content rich" v-html="renderAssistantText(l.text)" />
+          <div class="msg-copy-row" v-if="hasCodeBlocks(l.text)">
+            <button class="copy-code-btn" @click="copyLastCodeBlock(l.text)">复制代码</button>
+          </div>
+        </div>
+        <!-- File action card -->
+        <div v-else-if="l.fileAction" class="msg-bubble assistant">
+          <div class="file-action-card" :class="l.fileAction.status">
+            <div class="file-action-head">
+              <span class="file-action-title">{{ l.fileAction.title }}</span>
+              <span class="file-action-badge">{{ l.fileAction.status }}</span>
+            </div>
+            <div class="file-action-grid">
+              <div v-if="l.fileAction.actionName"><span>动作</span><code>{{ l.fileAction.actionName }}</code></div>
+              <div v-if="l.fileAction.source"><span>来源</span><code>{{ l.fileAction.source }}</code></div>
+              <div v-if="l.fileAction.target"><span>目标</span><code>{{ l.fileAction.target }}</code></div>
+              <div v-if="l.fileAction.query"><span>查询</span><code>{{ l.fileAction.query }}</code></div>
+              <div v-if="typeof l.fileAction.matchCount === 'number'"><span>命中</span><code>{{ l.fileAction.matchCount }}</code></div>
+              <div v-if="l.fileAction.tool"><span>工具</span><code>{{ l.fileAction.tool }}</code></div>
+              <div v-if="l.fileAction.error" class="file-action-error"><span>错误</span><code>{{ l.fileAction.error }}</code></div>
+            </div>
+          </div>
+        </div>
+        <!-- User message -->
+        <div v-else-if="l.role === 'user'" class="msg-bubble user">
+          <div class="msg-content">{{ l.text }}</div>
+        </div>
+        <!-- System / error -->
+        <div v-else class="msg-bubble system">
+          <div class="msg-content">{{ l.text }}</div>
+        </div>
       </div>
     </div>
 
-    <div ref="outputRef" class="output" role="log" aria-live="polite">
-      <div v-for="(l, i) in lines" :key="i" class="line" :class="l.role">
-        <div
-          v-if="shouldRenderRichMessage(l)"
-          class="rich-message"
-          v-html="renderAssistantText(l.text)"
+    <!-- Input -->
+    <footer class="input-area">
+      <div class="input-row">
+        <textarea
+          ref="inputRef"
+          v-model="input"
+          class="input-box"
+          placeholder="输入你的问题…（Enter 发送，Shift+Enter 换行）"
+          spellcheck="false"
+          rows="1"
+          @keydown="onKeydown"
+          @input="autoResizeInput"
         />
-        <div
-          v-else-if="l.fileAction"
-          class="file-action-card"
-          :class="l.fileAction.status"
-        >
-          <div class="file-action-head">
-            <span class="file-action-title">{{ l.fileAction.title }}</span>
-            <span class="file-action-badge">{{ l.fileAction.status }}</span>
-          </div>
-          <div class="file-action-grid">
-            <div v-if="l.fileAction.actionName">
-              <span>动作</span>
-              <code>{{ l.fileAction.actionName }}</code>
-            </div>
-            <div v-if="l.fileAction.source">
-              <span>来源</span>
-              <code>{{ l.fileAction.source }}</code>
-            </div>
-            <div v-if="l.fileAction.target">
-              <span>目标</span>
-              <code>{{ l.fileAction.target }}</code>
-            </div>
-            <div v-if="l.fileAction.query">
-              <span>查询</span>
-              <code>{{ l.fileAction.query }}</code>
-            </div>
-            <div v-if="typeof l.fileAction.matchCount === 'number'">
-              <span>命中</span>
-              <code>{{ l.fileAction.matchCount }}</code>
-            </div>
-            <div v-if="l.fileAction.tool">
-              <span>工具</span>
-              <code>{{ l.fileAction.tool }}</code>
-            </div>
-            <div v-if="l.fileAction.error" class="file-action-error">
-              <span>错误</span>
-              <code>{{ l.fileAction.error }}</code>
-            </div>
-          </div>
-        </div>
-        <template v-else>{{ l.text }}</template>
+        <button class="send-btn" type="button" :disabled="isSending || !input.trim()" @click="submit" title="发送">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
       </div>
-    </div>
+      <div class="input-hint">Enter 发送 · Shift+Enter 换行 · Ctrl+L 清屏 · ↑↓ 历史</div>
+    </footer>
 
-    <div class="input-wrap">
-      <textarea
-        ref="inputRef"
-        v-model="input"
-        class="cmd"
-        placeholder="像命令行一样输入你的要求…（Enter 发送，Shift+Enter 换行）"
-        spellcheck="false"
-        @keydown="onKeydown"
-      />
-      <div class="actions">
-        <button class="btn primary" type="button" :disabled="isSending" @click="submit">发送</button>
-      </div>
-    </div>
-
-    <div
-      v-if="desktopConfirmVisible"
-      class="confirm-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="desktop-export-confirm-title"
-      tabindex="-1"
-      @keydown.esc="resolveDesktopExportConfirmation(false)"
-    >
+    <!-- Desktop export confirm dialog -->
+    <div v-if="desktopConfirmVisible" class="confirm-backdrop" role="dialog" aria-modal="true" tabindex="-1" @keydown.esc="resolveDesktopExportConfirmation(false)">
       <div class="confirm-panel">
-        <div id="desktop-export-confirm-title" class="confirm-title">确认桌面文本导出</div>
-        <div class="confirm-copy">
-          这个请求可能会触发桌面文本导出。后端仍会限制只能写入配置好的 DESKTOP_EXPORT_DIR，
-          但为了避免误操作，请确认是否继续发送这个请求。
-        </div>
+        <div class="confirm-title">确认桌面文本导出</div>
+        <div class="confirm-copy">这个请求可能会触发桌面文本导出。后端仍会限制只能写入配置好的 DESKTOP_EXPORT_DIR，但为了避免误操作，请确认是否继续发送这个请求。</div>
         <div class="confirm-actions">
           <button class="btn" type="button" @click="resolveDesktopExportConfirmation(false)">取消</button>
           <button class="btn primary" type="button" @click="resolveDesktopExportConfirmation(true)">继续发送</button>
@@ -1015,155 +1050,369 @@ onUnmounted(() => {
   </div>
 </template>
 
+<!-- Theme CSS Variables -->
+<style>
+:root {
+  --bg-root: #f2ede6;
+  --bg-surface: #f5f0ea;
+  --bg-code: #f0ebe4;
+  --bg-input: rgba(255,248,240,0.6);
+  --bg-input-focus: rgba(255,248,240,0.8);
+  --text-primary: #4a3f35;
+  --text-secondary: #8b7355;
+  --text-muted: rgba(74,63,53,0.45);
+  --border-rgb: 139,115,85;
+  --accent-indigo-rgb: 107,142,158;
+  --accent-sakura-rgb: 244,172,183;
+  --accent-error-rgb: 220,120,130;
+  --text-primary-rgb: 74,63,53;
+  --accent-green: #7eb8a0;
+  --accent-green-bright: #9ece6a;
+  --accent-link: #6b8e7a;
+  --accent-sakura-text: #d08090;
+  --accent-error-text: #c06070;
+  --status-dot-idle: rgba(139,115,85,0.2);
+  --scrollbar-thumb: rgba(139,115,85,0.12);
+  --shadow-popup: 0 8px 32px rgba(0,0,0,0.12);
+  --header-btn-bg: rgba(139,115,85,0.06);
+  --header-btn-color: var(--text-muted);
+  --header-btn-hover-bg: rgba(139,115,85,0.12);
+  --header-btn-hover-color: #4a3f35;
+  --input-border: rgba(139,115,85,0.15);
+  --input-border-focus: rgba(139,115,85,0.3);
+  --input-hint: rgba(139,115,85,0.35);
+  --theme-transition: background-color 0.4s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+:root[data-theme=dark] {
+  --bg-root: #1a1b26;
+  --bg-surface: #1e2030;
+  --bg-code: #161822;
+  --bg-input: rgba(255,255,255,0.04);
+  --bg-input-focus: rgba(255,255,255,0.06);
+  --text-primary: #c0caf5;
+  --text-secondary: #a9b1d6;
+  --text-muted: rgba(169,177,214,0.45);
+  --border-rgb: 169,177,214;
+  --accent-indigo-rgb: 122,162,247;
+  --accent-sakura-rgb: 247,118,142;
+  --accent-error-rgb: 247,118,142;
+  --text-primary-rgb: 192,202,245;
+  --accent-green: #9ece6a;
+  --accent-green-bright: #9ece6a;
+  --accent-link: #7aa2f7;
+  --accent-sakura-text: #f7768e;
+  --accent-error-text: #f7768e;
+  --status-dot-idle: rgba(169,177,214,0.2);
+  --scrollbar-thumb: rgba(169,177,214,0.1);
+  --shadow-popup: 0 8px 32px rgba(0,0,0,0.5);
+  --header-btn-bg: rgba(169,177,214,0.06);
+  --header-btn-color: rgba(192,202,245,0.45);
+  --header-btn-hover-bg: rgba(169,177,214,0.12);
+  --header-btn-hover-color: #c0caf5;
+  --input-border: rgba(169,177,214,0.12);
+  --input-border-focus: rgba(122,162,247,0.3);
+  --input-hint: rgba(169,177,214,0.25);
+}
+</style>
+
 <style scoped>
+/* ================================================================
+   Modern AI Chat UI — inspired by LobeChat / ChatGPT-Next-Web
+   ================================================================ */
+
 .chat-root {
   width: 100vw;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
-  padding: 12px;
-  gap: 10px;
-  background: #0f1115;
-  color: #eaeaea;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  background: var(--bg-root);
+  color: var(--text-primary);
+  transition: var(--theme-transition);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow: hidden;
 }
 
-.header {
+/* ---- Header ---- */
+.chat-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.12);
+  flex-shrink: 0;
 }
 
-.title {
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.2px;
-}
-
-.right {
+.header-left {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-.status {
-  font-size: 12px;
-  opacity: 0.85;
+.header-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
 }
 
-.status.busy {
-  opacity: 1;
-}
-
-.output {
+.header-center {
   flex: 1;
-  overflow: auto;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 10px;
-  padding: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  display: flex;
+  justify-content: center;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: var(--header-btn-bg);
+  color: var(--header-btn-color);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+.header-btn:hover {
+  background: var(--header-btn-hover-bg);
+  color: var(--header-btn-hover-color);
+}
+
+/* Theme toggle animation */
+.theme-icon {
+  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.theme-toggle:active .theme-icon {
+  transform: rotate(180deg) scale(0.85);
+}
+
+.status-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-dot-idle);
+}
+.status-dot.running {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.status-dot.done { background: var(--accent-green-bright); }
+.status-dot.error, .status-dot.failed { background: var(--accent-error-text); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.status-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.progress-text {
+  font-size: 11px;
+  color: var(--accent-green);
+  font-weight: 600;
+}
+
+/* ---- Messages ---- */
+.msg-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scroll-behavior: smooth;
+}
+.msg-list::-webkit-scrollbar {
+  width: 5px;
+}
+.msg-list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 99px;
+}
+
+.msg-row {
+  display: flex;
+  animation: fadeInUp 0.28s ease-out;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg-row.user {
+  justify-content: flex-end;
+}
+.msg-row.assistant {
+  justify-content: flex-start;
+}
+.msg-row.system, .msg-row.err {
+  justify-content: center;
+}
+
+/* ---- Message Bubbles ---- */
+.msg-bubble {
+  max-width: 85%;
+  border-radius: 14px;
+  padding: 12px 16px;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.msg-bubble.user {
+  background: rgba(var(--accent-indigo-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-indigo-rgb), 0.16);
+  color: var(--text-primary);
+  border-bottom-right-radius: 4px;
+}
+
+.msg-bubble.assistant {
+  background: rgba(var(--accent-sakura-rgb), 0.2);
+  border: 1px solid rgba(var(--accent-sakura-rgb), 0.25);
+  border-radius: 14px;
+  padding: 10px 14px;
+  border-bottom-left-radius: 4px;
+}
+
+.msg-bubble.system {
+  background: rgba(var(--border-rgb), 0.06);
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 8px;
+}
+
+.msg-row.err .msg-bubble {
+  background: rgba(var(--accent-error-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-error-rgb), 0.2);
+  color: var(--accent-error-text);
+  font-size: 12.5px;
+  border-radius: 8px;
+}
+
+.msg-content {
   white-space: pre-wrap;
 }
 
-.line {
-  line-height: 1.55;
-  font-size: 12.5px;
-}
-
-.rich-message {
+.msg-content.rich {
   white-space: normal;
 }
 
-.rich-message :deep(p) {
-  margin: 0 0 0.72em;
+/* ---- Rich Markdown ---- */
+.msg-content.rich :deep(p) {
+  margin: 0 0 0.8em;
 }
-
-.rich-message :deep(p:last-child) {
+.msg-content.rich :deep(p:last-child) {
   margin-bottom: 0;
 }
-
-.rich-message :deep(ul),
-.rich-message :deep(ol) {
-  margin: 0.4em 0 0.72em;
-  padding-left: 1.5em;
+.msg-content.rich :deep(ul),
+.msg-content.rich :deep(ol) {
+  margin: 0.5em 0 0.8em;
+  padding-left: 1.6em;
 }
-
-.rich-message :deep(li + li) {
-  margin-top: 0.22em;
+.msg-content.rich :deep(li + li) {
+  margin-top: 0.3em;
 }
-
-.rich-message :deep(code) {
-  padding: 0.12em 0.34em;
+.msg-content.rich :deep(code) {
+  padding: 0.15em 0.4em;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #f3f6ff;
+  background: rgba(var(--border-rgb), 0.08);
+  color: var(--text-secondary);
+  font-size: 0.9em;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
 }
 
-.rich-message :deep(pre) {
-  overflow: auto;
-  margin: 0.55em 0 0.75em;
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: rgba(0, 0, 0, 0.34);
-  white-space: pre;
+/* ---- Code Blocks ---- */
+.msg-content.rich :deep(pre) {
+  overflow-x: auto;
+  margin: 0.65em 0 0.85em;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--bg-code);
+  border: 1px solid rgba(var(--border-rgb), 0.12);
+  position: relative;
 }
-
-.rich-message :deep(pre code) {
+.msg-content.rich :deep(pre code) {
   padding: 0;
   background: transparent;
+  color: var(--text-primary);
+  font-size: 0.88em;
+  line-height: 1.6;
 }
 
-.rich-message :deep(blockquote) {
-  margin: 0.55em 0;
-  padding-left: 0.9em;
-  border-left: 3px solid rgba(183, 215, 255, 0.38);
-  color: rgba(234, 234, 234, 0.82);
+/* ---- Blockquote ---- */
+.msg-content.rich :deep(blockquote) {
+  margin: 0.6em 0;
+  padding-left: 1em;
+  border-left: 3px solid rgba(var(--border-rgb), 0.3);
+  color: var(--text-primary);
 }
 
-.rich-message :deep(a) {
-  color: #b7d7ff;
+.msg-content.rich :deep(a) {
+  color: var(--accent-link);
 }
 
-.rich-message :deep(.katex-display) {
+.msg-content.rich :deep(.katex-display) {
   overflow-x: auto;
-  overflow-y: hidden;
-  margin: 0.65em 0;
-  padding: 0.2em 0;
+  margin: 0.7em 0;
+  padding: 0.25em 0;
 }
 
-.line.user {
-  color: #b7d7ff;
+/* ---- Code Copy Button ---- */
+.msg-copy-row {
+  margin-top: 6px;
+  display: flex;
+  justify-content: flex-end;
 }
 
-.line.assistant {
-  color: #eaeaea;
+.copy-code-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(var(--border-rgb), 0.12);
+  background: rgba(var(--border-rgb), 0.06);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.copy-code-btn:hover {
+  background: rgba(var(--border-rgb), 0.1);
+  color: var(--text-primary);
 }
 
-.line.system {
-  color: rgba(234, 234, 234, 0.72);
-}
-
-.line.err {
-  color: #ffb4b4;
-}
-
+/* ---- File Action Card ---- */
 .file-action-card {
-  margin: 6px 0;
-  padding: 10px 12px;
-  border: 1px solid rgba(183, 215, 255, 0.16);
+  padding: 12px 14px;
+  border: 1px solid rgba(var(--border-rgb), 0.15);
   border-radius: 10px;
-  background: rgba(183, 215, 255, 0.06);
-  color: rgba(234, 234, 234, 0.88);
-  white-space: normal;
+  background: rgba(var(--border-rgb), 0.05);
+  color: var(--text-primary);
 }
-
 .file-action-card.failed {
-  border-color: rgba(255, 180, 180, 0.28);
-  background: rgba(255, 180, 180, 0.07);
+  border-color: rgba(var(--accent-error-rgb), 0.25);
+  background: rgba(var(--accent-error-rgb), 0.06);
 }
-
 .file-action-head {
   display: flex;
   align-items: center;
@@ -1171,147 +1420,132 @@ onUnmounted(() => {
   gap: 12px;
   margin-bottom: 8px;
 }
-
 .file-action-title {
-  font-weight: 800;
+  font-weight: 700;
 }
-
 .file-action-badge {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(var(--border-rgb), 0.12);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-
 .file-action-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 6px 12px;
+  font-size: 12px;
 }
-
-.file-action-grid > div {
-  min-width: 0;
-}
-
 .file-action-grid span {
   display: block;
   margin-bottom: 2px;
-  color: rgba(234, 234, 234, 0.52);
-  font-size: 10.5px;
+  color: var(--text-muted);
+  font-size: 10px;
 }
-
 .file-action-grid code {
   display: block;
   overflow: hidden;
   padding: 3px 6px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.26);
-  color: #f3f6ff;
+  border-radius: 5px;
+  background: rgba(var(--border-rgb), 0.06);
+  color: var(--text-primary);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.file-action-error code { color: var(--accent-sakura-text); }
 
-.file-action-error code {
-  color: #ffb4b4;
+/* ---- Input Area ---- */
+.input-area {
+  flex-shrink: 0;
+  padding: 10px 16px 14px;
+  border-top: 1px solid rgba(var(--border-rgb), 0.1);
 }
 
-.input-wrap {
+.input-row {
   display: flex;
   gap: 10px;
-  align-items: stretch;
+  align-items: flex-end;
 }
 
-.cmd {
+.input-box {
   flex: 1;
-  min-height: 92px;
-  max-height: 220px;
-  resize: vertical;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.35);
-  color: inherit;
-  padding: 10px 12px;
+  resize: none;
+  border-radius: 12px;
+  border: 1px solid var(--input-border);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  padding: 10px 14px;
   outline: none;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.55;
+  font-family: inherit;
+  max-height: 200px;
+  transition: border-color 0.15s;
+}
+.input-box:focus {
+  border-color: var(--input-border-focus);
+  background: var(--bg-input-focus);
+}
+.input-box::placeholder {
+  color: var(--input-hint);
 }
 
-.actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.btn {
-  height: 36px;
-  padding: 0 14px;
+.send-btn {
+  width: 40px;
+  height: 40px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
+  border: none;
+  background: rgba(var(--accent-sakura-rgb), 0.25);
+  color: var(--accent-sakura-text);
   cursor: pointer;
-}
-
-.status-info {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-right: 12px;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
 }
-
-.status-badge {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
+.send-btn:hover:not(:disabled) {
+  background: rgba(var(--accent-sakura-rgb), 0.4);
+  transform: scale(1.04);
 }
-
-.status-badge.running {
-  background: rgba(183, 215, 255, 0.2);
-  color: #b7d7ff;
-}
-
-.status-badge.done {
-  background: rgba(180, 255, 180, 0.2);
-  color: #b4ffb4;
-}
-
-.status-badge.error {
-  background: rgba(255, 180, 180, 0.2);
-  color: #ffb4b4;
-}
-
-.status-badge.cancelled {
-  background: rgba(255, 220, 160, 0.2);
-  color: #ffdca0;
-}
-
-.status-badge.paused {
-  background: rgba(220, 220, 220, 0.16);
-  color: #dddddd;
-}
-
-.progress {
-  font-size: 11px;
-  color: rgba(234, 234, 234, 0.8);
-}
-
-.node {
-  font-size: 11px;
-  color: rgba(234, 234, 234, 0.6);
-}
-
-
-.btn.primary {
-  background: rgba(183, 215, 255, 0.14);
-}
-
-.btn:disabled {
+.send-btn:disabled {
+  opacity: 0.3;
   cursor: not-allowed;
-  opacity: 0.6;
 }
 
+.input-hint {
+  margin-top: 6px;
+  font-size: 10.5px;
+  color: var(--input-hint);
+  text-align: center;
+}
+
+/* ---- Buttons (confirm dialog) ---- */
+.btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 9px;
+  border: 1px solid rgba(var(--border-rgb), 0.12);
+  background: rgba(var(--border-rgb), 0.05);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.btn:hover {
+  background: rgba(var(--border-rgb), 0.1);
+}
+.btn.primary {
+  background: rgba(107,142,158,0.15);
+  border-color: rgba(107,142,158,0.25);
+  color: var(--accent-link);
+}
+.btn.primary:hover {
+  background: rgba(107,142,158,0.22);
+}
+
+/* ---- Confirm Dialog ---- */
 .confirm-backdrop {
   position: fixed;
   inset: 0;
@@ -1319,47 +1553,35 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   padding: 18px;
-  background: rgba(0, 0, 0, 0.56);
+  background: rgba(0,0,0,0.6);
 }
-
 .confirm-panel {
-  width: min(460px, 100%);
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  width: min(440px, 100%);
+  border: 1px solid rgba(var(--border-rgb), 0.15);
   border-radius: 14px;
-  padding: 18px;
-  background: #161a22;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+  padding: 20px;
+  background: var(--bg-root);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.5);
 }
-
 .confirm-title {
   margin-bottom: 10px;
-  font-size: 14px;
-  font-weight: 800;
+  font-size: 15px;
+  font-weight: 700;
 }
-
 .confirm-copy {
-  color: rgba(234, 234, 234, 0.78);
-  font-size: 12.5px;
+  color: var(--text-muted);
+  font-size: 13px;
   line-height: 1.7;
 }
-
 .confirm-actions {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 16px;
+  margin-top: 18px;
 }
 
-
-/* === New: header layout === */
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.header-center {
-  flex: 1;
-  display: flex;
-  justify-content: center;
+/* ---- Workspace / History integration ---- */
+:deep(.workspace-bar) {
+  font-size: 11px;
 }
 </style>

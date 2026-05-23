@@ -83,7 +83,7 @@ onUnmounted(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--status-dot-idle);
   transition: background 0.3s;
   flex-shrink: 0;
 }

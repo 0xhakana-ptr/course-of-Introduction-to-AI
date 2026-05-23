@@ -153,14 +153,14 @@ onMounted(() => loadSessions())
 .history-toggle {
   background: none;
   border: none;
-  color: rgba(255,255,255,0.7);
+  color: var(--text-primary);
   cursor: pointer;
   padding: 4px;
   border-radius: 6px;
 }
 .history-toggle:hover {
-  background: rgba(255,255,255,0.08);
-  color: #fff;
+  background: rgba(var(--border-rgb), 0.1);
+  color: var(--text-primary);
 }
 
 .history-panel {
@@ -169,12 +169,12 @@ onMounted(() => loadSessions())
   left: 0;
   width: 280px;
   max-height: 400px;
-  background: #1a1d2a;
-  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--bg-surface);
+  border: 1px solid rgba(var(--border-rgb), 0.15);
   border-radius: 10px;
   z-index: 200;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  box-shadow: var(--shadow-popup);
 }
 
 .history-header {
@@ -182,22 +182,22 @@ onMounted(() => loadSessions())
   justify-content: space-between;
   align-items: center;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.1);
   font-weight: 700;
   font-size: 13px;
 }
 
 .new-chat-btn {
-  background: rgba(100,180,255,0.15);
-  border: 1px solid rgba(100,180,255,0.2);
-  color: #a0c8ff;
+  background: rgba(var(--accent-indigo-rgb), 0.12);
+  border: 1px solid rgba(var(--accent-indigo-rgb), 0.18);
+  color: var(--accent-link);
   padding: 4px 10px;
   border-radius: 6px;
   font-size: 11px;
   cursor: pointer;
 }
 .new-chat-btn:hover {
-  background: rgba(100,180,255,0.25);
+  background: rgba(var(--accent-indigo-rgb), 0.2);
 }
 
 .history-list {
@@ -207,16 +207,16 @@ onMounted(() => loadSessions())
 
 .history-item {
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.08);
   cursor: pointer;
 }
 .history-item:hover {
-  background: rgba(255,255,255,0.04);
+  background: rgba(var(--border-rgb), 0.06);
 }
 
 .history-preview {
   font-size: 12.5px;
-  color: rgba(255,255,255,0.85);
+  color: var(--text-primary);
   margin-bottom: 4px;
   line-height: 1.4;
 }
@@ -225,13 +225,13 @@ onMounted(() => loadSessions())
   display: flex;
   gap: 12px;
   font-size: 10.5px;
-  color: rgba(255,255,255,0.4);
+  color: var(--text-muted);
 }
 
 .history-empty {
   padding: 20px;
   text-align: center;
-  color: rgba(255,255,255,0.35);
+  color: var(--text-muted);
   font-size: 12px;
 }
 
@@ -239,7 +239,7 @@ onMounted(() => loadSessions())
   display: flex;
   align-items: center;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
+  border-bottom: 1px solid rgba(var(--border-rgb), 0.08);
 }
 
 .history-item-main {
@@ -251,7 +251,7 @@ onMounted(() => loadSessions())
 .export-btn {
   background: none;
   border: none;
-  color: rgba(255,255,255,0.2);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -259,14 +259,14 @@ onMounted(() => loadSessions())
   margin-left: 8px;
 }
 .export-btn:hover {
-  color: rgba(255,255,255,0.7);
-  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+  background: rgba(var(--border-rgb), 0.08);
 }
 
 .delete-btn {
   background: none;
   border: none;
-  color: rgba(255,255,255,0.2);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -274,7 +274,7 @@ onMounted(() => loadSessions())
   margin-left: 6px;
 }
 .delete-btn:hover {
-  color: rgba(255,255,255,0.7);
-  background: rgba(255,255,255,0.06);
+  color: var(--text-primary);
+  background: rgba(var(--border-rgb), 0.08);
 }
 </style>

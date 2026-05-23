@@ -114,19 +114,19 @@ onMounted(() => loadWorkspace())
   align-items: center;
   gap: 6px;
   padding: 2px 8px;
-  background: rgba(255,255,255,0.03);
+  background: rgba(var(--border-rgb), 0.06);
   border-radius: 6px;
-  border: 1px solid rgba(255,255,255,0.06);
+  border: 1px solid rgba(var(--border-rgb), 0.1);
 }
 
 .ws-icon {
-  color: rgba(255,255,255,0.4);
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
 .ws-path {
   font-size: 11px;
-  color: rgba(255,255,255,0.55);
+  color: var(--text-primary);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -134,39 +134,39 @@ onMounted(() => loadWorkspace())
   max-width: 120px;
 }
 .ws-path:hover {
-  color: rgba(255,255,255,0.8);
+  color: var(--text-primary);
 }
 
 .ws-edit-btn {
   background: none;
   border: none;
-  color: rgba(255,255,255,0.3);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 2px;
   display: flex;
   align-items: center;
 }
 .ws-edit-btn:hover {
-  color: rgba(255,255,255,0.7);
+  color: var(--text-primary);
 }
 
 .ws-pick-btn {
   background: none;
   border: none;
-  color: rgba(255,255,255,0.3);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 2px;
   display: flex;
   align-items: center;
 }
 .ws-pick-btn:hover {
-  color: rgba(255,255,255,0.7);
+  color: var(--text-primary);
 }
 
 .ws-input {
-  background: rgba(0,0,0,0.3);
-  border: 1px solid rgba(100,180,255,0.3);
-  color: #fff;
+  background: rgba(var(--border-rgb), 0.08);
+  border: 1px solid rgba(var(--border-rgb), 0.2);
+  color: var(--text-primary);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 11px;
