@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .api import agent_router, chat_router, health_router, llm_router, message_router, run_router, workspace_router
+from .api import agent_router, chat_router, health_router, llm_router, message_router, run_router, vision_router, workspace_router
 from .api.error_handlers import register_exception_handlers
 from .core.config import settings
 from .core.logging_config import configure_logging
@@ -39,12 +39,19 @@ async def lifespan(app: FastAPI):
 
     # Start idle quip background loop
     idle_task = asyncio.create_task(_idle_quip_loop())
+
+    # Start vision monitor background loop
+    vision_task = asyncio.create_task(_vision_monitor_loop())
+
     yield
+
     idle_task.cancel()
-    try:
-        await idle_task
-    except asyncio.CancelledError:
-        pass
+    vision_task.cancel()
+    for task in (idle_task, vision_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def create_app() -> FastAPI:
@@ -61,8 +68,8 @@ def create_app() -> FastAPI:
     app.include_router(run_router)
     app.include_router(workspace_router)
     app.include_router(message_router)
+    app.include_router(vision_router)
     return app
-
 
 
 async def _idle_quip_loop():
@@ -74,6 +81,19 @@ async def _idle_quip_loop():
             roleplay_agent.emit_idle_quip_if_due()
         except Exception:
             pass
+
+
+async def _vision_monitor_loop():
+    """Background vision monitor: screenshot -> ONNX inference -> quip."""
+    try:
+        from .vision.monitor import vision_monitor
+        await vision_monitor.run_loop()
+    except ImportError as exc:
+        import logging
+        logging.getLogger(__name__).error("Vision monitor disabled (import failed): %s", exc)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("Vision monitor crashed")
 
 
 app = create_app()

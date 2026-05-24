@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { getIpcRenderer } from '../platform/electronIpc'
 
@@ -26,7 +26,7 @@ const isOpen = ref(false)
 async function loadSessions() {
   if (!ipcRenderer?.invoke) return
   try {
-    const result = await ipcRenderer.invoke('chat:listSessions', { limit: 20 })
+    const result = await ipcRenderer.invoke('chat:listSessions', { limit: 20 }) as { ok?: boolean; sessions?: SessionItem[] }
     if (result?.ok && Array.isArray(result.sessions)) {
       sessions.value = result.sessions
     }

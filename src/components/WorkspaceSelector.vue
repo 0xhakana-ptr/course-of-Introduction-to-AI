@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { getIpcRenderer } from '../platform/electronIpc'
 
@@ -18,7 +18,7 @@ async function loadWorkspace() {
     return
   }
   try {
-    const result = await ipcRenderer.invoke('chat:getWorkspace')
+    const result = await ipcRenderer.invoke('chat:getWorkspace') as { ok?: boolean; path?: string }
     if (result?.ok && result.path) {
       workspacePath.value = result.path
     }
