@@ -814,6 +814,68 @@ class RoleplayAgent:
                 mode="set",
             )
 
+
+    def emit_vision_quip(self, analysis):
+        """Layer 2 vision-aware quip: uses character personality + screen observation."""
+        activity = analysis.get("activity_label", "unknown")
+        elements = analysis.get("element_summary", "")
+        mood_hint = analysis.get("mood_hint", "neutral")
+
+        if not llm_is_configured():
+            logger.warning("Vision quip skipped: LLM not configured")
+            return False
+
+        vision_prompt = (
+            f"[Screen] {elements}, activity: {activity}. "
+            f"You are desktop sprite Unnamed, you peeked at the user screen. "
+            f"React with ONE natural, cheeky quip (<=30 chars). "
+            f'Output ONLY valid JSON: {{"quip": "<=30 char quip", "expression": "name"}}'
+        )
+
+        mood = get_session_mood()
+        state_context = f"Screen: {elements}\nActivity: {activity}\nMood hint: {mood_hint}"
+        system_prompt = ROLEPLAY_SYSTEM_PROMPT.format(
+            state_context=state_context,
+            mood_modifier=mood.modifier_text,
+        )
+
+        try:
+            result = call_llm_sync(
+                prompt=vision_prompt, context=None,
+                system_prompt=system_prompt, temperature=0.85, max_tokens=2000,
+            )
+        except Exception as exc:
+            logger.exception("Vision LLM call failed")
+            return False
+
+        if not result.ok or not result.output:
+            logger.warning("Vision LLM failed: ok=%s", result.ok)
+            return False
+
+        parsed = _parse_llm_json(result.output)
+        if not parsed:
+            return False
+
+        quip = str(parsed.get("quip", "")).strip()
+        expression = str(parsed.get("expression", "neutral")).strip()
+        if not quip:
+            return False
+
+        message_sender.send_quip(
+            content=quip, node_name="vision_monitor", priority="medium", duration=4500,
+            event_type="character.quip", event_source="character", event_stage="roleplay",
+            metadata={"event_source": "vision_monitor", "phase": activity},
+        )
+        message_sender.send_expression(
+            expression=expression, node_name="vision_monitor",
+            intensity=0.75, duration=4000, transition="smooth", mode="set",
+            event_type="character.expression", event_source="character", event_stage="roleplay",
+        )
+        mood.idle_streak = 0
+        mood.record_neutral()
+        logger.info("Vision quip sent via Layer2: activity=%s quip=%s expr=%s", activity, quip, expression)
+        return True
+
     def emit_idle_quip_if_due(self):
         """Send idle quip if enough time has passed. Called by frontend polling."""
         if runtime_tracker.task_running:
