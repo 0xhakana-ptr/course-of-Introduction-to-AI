@@ -38,5 +38,6 @@ __pycache__/
 # Runtime-generated data (do not commit)
 workspace/
 _patch_*.py
+temp_*.py
 .vite/
 *.tsbuildinfo
