@@ -36,9 +36,9 @@ Copy-Item backend/.env.example backend/.env
 编辑 `backend/.env`，至少填入：
 
 ```text
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=sk-xxx
-LLM_MODEL=gpt-4o-mini
+LLM_BASE_URL=https://your-base-url/v1
+LLM_API_KEY=your-api-key
+LLM_MODEL=your-model
 ```
 
 后端只要求 OpenAI-compatible 接口，不限定供应商。更多配置项说明见 `.env.example` 内注释。
