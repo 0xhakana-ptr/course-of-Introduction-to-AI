@@ -5,6 +5,7 @@ import dataclasses
 from dataclasses import dataclass
 from typing import Literal
 
+from ...core.limits import ROLEPLAY_IDLE_QUIP_DURATION_MS
 from ...messaging.event_types import AGENT_EVENT_STAGE
 from ...messaging.message_sender import message_sender
 from ...schemas import MESSAGE_STATUS
@@ -237,7 +238,7 @@ def emit_idle_quip_if_due() -> bool:
         quip,
         node_name="idle",
         priority="low",
-        duration=3500,
+        duration=ROLEPLAY_IDLE_QUIP_DURATION_MS,
         metadata={"event_type": "idle.quip", "event_source": "idle"},
     )
     if ok:

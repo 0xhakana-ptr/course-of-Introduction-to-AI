@@ -12,6 +12,7 @@ import random
 import time
 from typing import Any
 
+from ..core.limits import ROLEPLAY_QUIP_DURATION_MS
 from ..messaging.message_sender import message_sender
 
 # ---------------------------------------------------------------------------
@@ -136,7 +137,7 @@ class RuntimeTracker:
                 quip,
                 node_name=phase,
                 priority="high",
-                duration=4000,
+                duration=ROLEPLAY_QUIP_DURATION_MS,
             )
             self._last_quip_ts = now
 
@@ -153,7 +154,7 @@ class RuntimeTracker:
             quip,
             node_name="task_done",
             priority="high",
-            duration=4000,
+            duration=ROLEPLAY_QUIP_DURATION_MS,
         )
 
         # Terminal status: done at 100%

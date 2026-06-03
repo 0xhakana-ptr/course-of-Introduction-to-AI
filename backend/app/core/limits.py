@@ -109,3 +109,62 @@ FORBIDDEN_KEYS_WORKER_ONLY: frozenset[str] = frozenset({
     "tool_internal_stack_trace",
     "workflow_trace",
 })
+
+# ---------------------------------------------------------------------------
+# Roleplay LLM temperatures
+# ---------------------------------------------------------------------------
+
+# Default temperature for roleplay persona generation (chat + work wrap).
+ROLEPLAY_LLM_TEMPERATURE: float = 0.78
+
+# Temperature for vision-screen observation quip generation.
+ROLEPLAY_VISION_LLM_TEMPERATURE: float = 0.85
+
+# Max tokens for vision quip LLM calls (short quips, kept low).
+ROLEPLAY_VISION_LLM_MAX_TOKENS: int = 2000
+
+# Max tokens for the vision test endpoint (even shorter).
+ROLEPLAY_VISION_TEST_MAX_TOKENS: int = 120
+
+# ---------------------------------------------------------------------------
+# Roleplay frontend event durations (milliseconds)
+# ---------------------------------------------------------------------------
+
+# Expression change (mode=set) default duration.
+ROLEPLAY_EXPRESSION_DURATION_MS: int = 5000
+
+# Expression change for chat-only responses (shorter).
+ROLEPLAY_CHAT_EXPRESSION_DURATION_MS: int = 3000
+
+# Default quip bubble duration.
+ROLEPLAY_QUIP_DURATION_MS: int = 4000
+
+# Vision-triggered quip bubble duration.
+ROLEPLAY_VISION_QUIP_DURATION_MS: int = 4500
+
+# Idle quip bubble duration.
+ROLEPLAY_IDLE_QUIP_DURATION_MS: int = 3500
+
+# ---------------------------------------------------------------------------
+# Roleplay expression intensity
+# ---------------------------------------------------------------------------
+
+# Default expression intensity (set mode).
+ROLEPLAY_EXPRESSION_INTENSITY: float = 0.85
+
+# Lighter expression intensity (vision-triggered).
+ROLEPLAY_EXPRESSION_INTENSITY_LIGHT: float = 0.75
+
+# ---------------------------------------------------------------------------
+# Router LLM extraction
+# ---------------------------------------------------------------------------
+
+# Temperature for router's LLM parameter extraction (deterministic).
+ROUTER_LLM_EXTRACTION_TEMPERATURE: float = 0.1
+
+# ---------------------------------------------------------------------------
+# Safe command execution
+# ---------------------------------------------------------------------------
+
+# Poll interval (seconds) when waiting for a subprocess to finish.
+COMMAND_POLL_INTERVAL_SECONDS: float = 0.2

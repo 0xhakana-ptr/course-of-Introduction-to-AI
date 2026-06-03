@@ -2,6 +2,14 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ..core.limits import (
+    ROLEPLAY_EXPRESSION_DURATION_MS,
+    ROLEPLAY_EXPRESSION_INTENSITY,
+    ROLEPLAY_QUIP_DURATION_MS,
+    ROLEPLAY_VISION_LLM_TEMPERATURE,
+    ROLEPLAY_VISION_TEST_MAX_TOKENS,
+)
+
 router = APIRouter(prefix="/vision", tags=["vision"])
 
 
@@ -62,7 +70,7 @@ async def vision_test():
         prompt = build_vision_prompt(analysis)
         steps.append({"step": "prompt", "ok": True, "detail": prompt[:200]})
 
-        result = call_llm_sync(prompt=prompt, context=None, system_prompt=VISION_QUIP_SYSTEM_PROMPT, temperature=0.85, max_tokens=120)
+        result = call_llm_sync(prompt=prompt, context=None, system_prompt=VISION_QUIP_SYSTEM_PROMPT, temperature=ROLEPLAY_VISION_LLM_TEMPERATURE, max_tokens=ROLEPLAY_VISION_TEST_MAX_TOKENS)
         steps.append({"step": "llm_call", "ok": result.ok, "detail": (result.output or result.error or "")[:300]})
 
         if not result.ok:
@@ -79,10 +87,10 @@ async def vision_test():
             quip = str(parsed.get("quip", "")).strip()
             expression = str(parsed.get("expression", "neutral")).strip()
             if quip:
-                message_sender.send_quip(content=quip, node_name="vision_test", priority="high", duration=5000,
+                message_sender.send_quip(content=quip, node_name="vision_test", priority="high", duration=ROLEPLAY_EXPRESSION_DURATION_MS,
                     metadata={"event_type": "vision.test", "event_source": "vision_test"})
                 message_sender.send_expression(expression=expression, node_name="vision_test",
-                    intensity=0.85, duration=4000, transition="smooth", mode="set")
+                    intensity=ROLEPLAY_EXPRESSION_INTENSITY, duration=ROLEPLAY_QUIP_DURATION_MS, transition="smooth", mode="set")
                 steps.append({"step": "sent", "ok": True, "detail": f"quip={quip}, expr={expression}"})
             else:
                 steps.append({"step": "empty_quip", "ok": False})

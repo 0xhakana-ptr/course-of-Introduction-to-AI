@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..core.config import settings
+from ..core.limits import COMMAND_POLL_INTERVAL_SECONDS
 from .safe_fs import ensure_workspace_dirs, get_workspace_dir, resolve_workspace_path
 
 
@@ -124,7 +125,7 @@ def safe_execute_command(
             on_process_start(process)
 
         started_at = time.monotonic()
-        poll_interval = 0.2
+        poll_interval = COMMAND_POLL_INTERVAL_SECONDS
 
         while True:
             if cancel_requested and cancel_requested():

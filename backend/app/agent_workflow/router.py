@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..llm.client import call_llm_sync
-from ..core.limits import ROUTER_LLM_EXTRACTION_MAX_TOKENS
+from ..core.limits import ROUTER_LLM_EXTRACTION_MAX_TOKENS, ROUTER_LLM_EXTRACTION_TEMPERATURE
 from .intent import detect_intent, detect_run_action, extract_run_reference
 
 logger = logging.getLogger(__name__)
@@ -188,7 +188,7 @@ def _extract_workspace_params_via_llm(
             prompt=full_prompt,
             context=None,
             system_prompt=_EXTRACTION_SYSTEM_PROMPT,
-            temperature=0.1,
+            temperature=ROUTER_LLM_EXTRACTION_TEMPERATURE,
             max_tokens=ROUTER_LLM_EXTRACTION_MAX_TOKENS,
         )
         if result.ok and result.output:

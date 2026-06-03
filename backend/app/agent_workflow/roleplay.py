@@ -18,7 +18,21 @@ from typing import Any
 
 from .router import RoutingDecision, INTENT_CHAT, INTENT_CODING, INTENT_UNKNOWN
 from .runtime_tracker import runtime_tracker
-from ..core.limits import FRONTEND_TEXT_MAX, SUMMARY_PREVIEW_MAX, SUMMARY_RUN_MAX
+from ..core.limits import (
+    FRONTEND_TEXT_MAX,
+    ROLEPLAY_CHAT_EXPRESSION_DURATION_MS,
+    ROLEPLAY_EXPRESSION_DURATION_MS,
+    ROLEPLAY_EXPRESSION_INTENSITY,
+    ROLEPLAY_EXPRESSION_INTENSITY_LIGHT,
+    ROLEPLAY_IDLE_QUIP_DURATION_MS,
+    ROLEPLAY_LLM_TEMPERATURE,
+    ROLEPLAY_QUIP_DURATION_MS,
+    ROLEPLAY_VISION_LLM_MAX_TOKENS,
+    ROLEPLAY_VISION_LLM_TEMPERATURE,
+    ROLEPLAY_VISION_QUIP_DURATION_MS,
+    SUMMARY_PREVIEW_MAX,
+    SUMMARY_RUN_MAX,
+)
 from ..messaging.message_sender import message_sender
 from ..llm.client import call_llm_sync, llm_is_configured
 logger = logging.getLogger(__name__)
@@ -429,7 +443,7 @@ def generate_roleplay_response(state, *, node_name="agent_loop_roleplay"):
                 prompt="请基于以下场景生成角色回复: " + scenario + "；记住：只输出合法 JSON，不要输出其他文字。",
                 context=None,
                 system_prompt=system_prompt,
-                temperature=0.78,
+                temperature=ROLEPLAY_LLM_TEMPERATURE,
             )
             if result.ok:
                 parsed = _parse_llm_json(result.output)
@@ -480,8 +494,8 @@ def emit_roleplay_to_frontend(response, *, node_name="agent_loop_roleplay", emit
         message_sender.send_expression(
             expression=response.expression,
             node_name=node_name,
-            intensity=0.85,
-            duration=5000,
+            intensity=ROLEPLAY_EXPRESSION_INTENSITY,
+            duration=ROLEPLAY_EXPRESSION_DURATION_MS,
             transition="smooth",
             mode="set",
         )
@@ -490,7 +504,7 @@ def emit_roleplay_to_frontend(response, *, node_name="agent_loop_roleplay", emit
             content=response.quip,
             node_name=node_name,
             priority="high",
-            duration=4000,
+            duration=ROLEPLAY_QUIP_DURATION_MS,
         )
     if response.motion:
         message_sender.send_motion(
@@ -642,7 +656,7 @@ class RoleplayAgent:
         result = call_llm_sync(
             prompt, context,
             system_prompt=CHAT_SYSTEM_PROMPT,
-            temperature=0.78,
+            temperature=ROLEPLAY_LLM_TEMPERATURE,
         )
 
         mood = get_session_mood()
@@ -704,7 +718,7 @@ class RoleplayAgent:
                     prompt="请基于以下场景生成角色回复: " + scenario + "；记住：只输出合法 JSON，不要输出其他文字。",
                     context=None,
                     system_prompt=system_prompt,
-                    temperature=0.78,
+                    temperature=ROLEPLAY_LLM_TEMPERATURE,
                 )
                 if result.ok:
                     parsed = _parse_llm_json(result.output)
@@ -777,8 +791,8 @@ class RoleplayAgent:
             message_sender.send_expression(
                 expression=response.expression,
                 node_name="roleplay_layer",
-                intensity=0.85,
-                duration=5000,
+                intensity=ROLEPLAY_EXPRESSION_INTENSITY,
+                duration=ROLEPLAY_EXPRESSION_DURATION_MS,
                 transition="smooth",
                 mode="set",
             )
@@ -787,7 +801,7 @@ class RoleplayAgent:
                 content=response.quip,
                 node_name="roleplay_layer",
                 priority="high",
-                duration=4000,
+                duration=ROLEPLAY_QUIP_DURATION_MS,
             )
         if response.motion:
             message_sender.send_motion(
@@ -809,7 +823,7 @@ class RoleplayAgent:
             message_sender.send_expression(
                 expression=response.expression,
                 node_name="roleplay_layer_chat",
-                duration=3000,
+                duration=ROLEPLAY_CHAT_EXPRESSION_DURATION_MS,
                 transition="smooth",
                 mode="set",
             )
@@ -842,7 +856,7 @@ class RoleplayAgent:
         try:
             result = call_llm_sync(
                 prompt=vision_prompt, context=None,
-                system_prompt=system_prompt, temperature=0.85, max_tokens=2000,
+                system_prompt=system_prompt, temperature=ROLEPLAY_VISION_LLM_TEMPERATURE, max_tokens=ROLEPLAY_VISION_LLM_MAX_TOKENS,
             )
         except Exception as exc:
             logger.exception("Vision LLM call failed")
@@ -862,13 +876,13 @@ class RoleplayAgent:
             return False
 
         message_sender.send_quip(
-            content=quip, node_name="vision_monitor", priority="medium", duration=4500,
+            content=quip, node_name="vision_monitor", priority="medium", duration=ROLEPLAY_VISION_QUIP_DURATION_MS,
             event_type="character.quip", event_source="character", event_stage="roleplay",
             metadata={"event_source": "vision_monitor", "phase": activity},
         )
         message_sender.send_expression(
             expression=expression, node_name="vision_monitor",
-            intensity=0.75, duration=4000, transition="smooth", mode="set",
+            intensity=ROLEPLAY_EXPRESSION_INTENSITY_LIGHT, duration=ROLEPLAY_QUIP_DURATION_MS, transition="smooth", mode="set",
             event_type="character.expression", event_source="character", event_stage="roleplay",
         )
         mood.idle_streak = 0
@@ -896,7 +910,7 @@ class RoleplayAgent:
         quip = random.choice(["你不要不理本机嘛...", "鱼呢？摸了~", "再不说话本机要休眠了哦...", "进行一个鱼的摸？", "本机的存在感正在降低……"])
         message_sender.send_quip(
             quip, node_name="idle",
-            priority="low", duration=3500,
+            priority="low", duration=ROLEPLAY_IDLE_QUIP_DURATION_MS,
             metadata={"event_type": "idle.quip", "event_source": "idle"},
         )
         self._last_idle_quip_ts = now
