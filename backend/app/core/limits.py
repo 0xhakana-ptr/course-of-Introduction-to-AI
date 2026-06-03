@@ -15,6 +15,7 @@ Value guidelines:
 
 from __future__ import annotations
 
+
 # ---------------------------------------------------------------------------
 # Text / preview limits
 # ---------------------------------------------------------------------------
@@ -55,26 +56,27 @@ STARTUP_RECOVERY_PREVIEW_MAX: int = 20
 # ROUTER
 # ---------------------------------------------------------------------------
 ROUTER_LLM_EXTRACTION_MAX_TOKENS = 30000
+
+
 # ---------------------------------------------------------------------------
 # Coding planner limits
 # ---------------------------------------------------------------------------
-
 PLANNER_MAX_TASKS: int = 10
 PLANNER_TASK_TEXT_MAX: int = 800
 PLANNER_REASON_TEXT_MAX: int = 800
 PLANNER_TEXT_VALUE_MAX: int = 8000
 
+
 # ---------------------------------------------------------------------------
 # Worker limits
 # ---------------------------------------------------------------------------
-
 WORKER_ARTIFACT_SUMMARY_MAX: int = 1500
 WORKER_ERROR_SUMMARY_MAX: int = 2000
+
 
 # ---------------------------------------------------------------------------
 # Forbidden keys for frontend and worker payloads
 # ---------------------------------------------------------------------------
-
 FORBIDDEN_KEYS_FRONTEND_ONLY: frozenset[str] = frozenset({
     "artifact_refs",
     "code_diff",
@@ -110,6 +112,7 @@ FORBIDDEN_KEYS_WORKER_ONLY: frozenset[str] = frozenset({
     "workflow_trace",
 })
 
+
 # ---------------------------------------------------------------------------
 # Roleplay LLM temperatures
 # ---------------------------------------------------------------------------
@@ -125,6 +128,7 @@ ROLEPLAY_VISION_LLM_MAX_TOKENS: int = 2000
 
 # Max tokens for the vision test endpoint (even shorter).
 ROLEPLAY_VISION_TEST_MAX_TOKENS: int = 120
+
 
 # ---------------------------------------------------------------------------
 # Roleplay frontend event durations (milliseconds)
@@ -145,6 +149,7 @@ ROLEPLAY_VISION_QUIP_DURATION_MS: int = 4500
 # Idle quip bubble duration.
 ROLEPLAY_IDLE_QUIP_DURATION_MS: int = 3500
 
+
 # ---------------------------------------------------------------------------
 # Roleplay expression intensity
 # ---------------------------------------------------------------------------
@@ -155,6 +160,7 @@ ROLEPLAY_EXPRESSION_INTENSITY: float = 0.85
 # Lighter expression intensity (vision-triggered).
 ROLEPLAY_EXPRESSION_INTENSITY_LIGHT: float = 0.75
 
+
 # ---------------------------------------------------------------------------
 # Router LLM extraction
 # ---------------------------------------------------------------------------
@@ -162,9 +168,21 @@ ROLEPLAY_EXPRESSION_INTENSITY_LIGHT: float = 0.75
 # Temperature for router's LLM parameter extraction (deterministic).
 ROUTER_LLM_EXTRACTION_TEMPERATURE: float = 0.1
 
+
 # ---------------------------------------------------------------------------
 # Safe command execution
 # ---------------------------------------------------------------------------
 
 # Poll interval (seconds) when waiting for a subprocess to finish.
 COMMAND_POLL_INTERVAL_SECONDS: float = 0.2
+
+
+# ---------------------------------------------------------------------------
+# Workspace tool LLM code generation
+# ---------------------------------------------------------------------------
+
+# Temperature for code-generation LLM calls (low = deterministic).
+WORKSPACE_CODEGEN_LLM_TEMPERATURE: float = 0.3
+
+# Max tokens for code-generation LLM calls.
+WORKSPACE_CODEGEN_LLM_MAX_TOKENS: int = 3000
