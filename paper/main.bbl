@@ -1,0 +1,101 @@
+\begin{thebibliography}{10}
+
+\bibitem{chase2022langchain}
+H.~Chase, ``Langchain.'' \url{https://github.com/langchain-ai/langchain}, 2022.
+\newblock GitHub repository.
+
+\bibitem{richards2023autogpt}
+T.~B. Richards, ``Auto-gpt: An autonomous gpt-4 experiment.''
+  \url{https://github.com/Significant-Gravitas/AutoGPT}, 2023.
+\newblock GitHub repository.
+
+\bibitem{hong2023metagpt}
+S.~Hong, M.~Zhuge, J.~Chen, X.~Zheng, Y.~Cheng, C.~Zhang, J.~Wang, Z.~Wang,
+  S.~K.~S. Yau, Z.~Lin, L.~Zhou, C.~Ran, L.~Xiao, C.~Wu, and J.~Schmidhuber,
+  ``Metagpt: Meta programming for a multi-agent collaborative framework,'' {\em
+  arXiv preprint arXiv:2308.00352}, 2023.
+
+\bibitem{anthropic2024computeruse}
+{Anthropic}, ``Computer use.''
+  \url{https://docs.anthropic.com/en/docs/build-with-claude/computer-use},
+  2024.
+\newblock Online; accessed 2024.
+
+\bibitem{zhang2024ufo}
+C.~Zhang, L.~He, J.~Qian, S.~Qin, Y.~Wu, D.~Zhang, S.~Rajmohan, and Q.~Lin,
+  ``Ufo: A ui-focused agent for windows os interaction,'' {\em arXiv preprint
+  arXiv:2402.07939}, 2024.
+
+\bibitem{wu2024oscopilot}
+Z.~Wu, C.~Han, Z.~Ding, Z.~Weng, Z.~Liu, S.~Yao, T.~Yu, and L.~Kong,
+  ``Os-copilot: Towards generalist computer agents with self-improvement,''
+  {\em arXiv preprint arXiv:2402.07456}, 2024.
+
+\bibitem{langchain2024langgraph}
+{LangChain Inc.}, ``Langgraph.''
+  \url{https://github.com/langchain-ai/langgraph}, 2024.
+\newblock GitHub repository.
+
+\bibitem{jocher2023yolov8}
+G.~Jocher, A.~Chaurasia, and J.~Qiu, ``Ultralytics yolo.''
+  \url{https://github.com/ultralytics/ultralytics}, 2023.
+\newblock GitHub repository.
+
+\bibitem{li2023camel}
+G.~Li, H.~A. A.~K. Hammoud, H.~Itani, D.~Khizbullin, and B.~Ghanem, ``Camel:
+  Communicative agents for ``mind'' exploration of large language model
+  society,'' in {\em Advances in Neural Information Processing Systems},
+  vol.~36, 2023.
+
+\bibitem{wang2023voyager}
+G.~Wang, Y.~Xie, Y.~Jiang, A.~Mandlekar, C.~Xiao, Y.~Zhu, L.~Fan, and
+  A.~Anandkumar, ``Voyager: An open-ended embodied agent with large language
+  models,'' {\em arXiv preprint arXiv:2305.16291}, 2023.
+
+\bibitem{bocklisch2017rasa}
+T.~Bocklisch, J.~Faulkner, N.~Pawlowski, and A.~Nichol, ``Rasa: Open source
+  language understanding and dialogue management,'' {\em arXiv preprint
+  arXiv:1712.05181}, 2017.
+
+\bibitem{devlin2019bert}
+J.~Devlin, M.-W. Chang, K.~Lee, and K.~Toutanova, ``Bert: Pre-training of deep
+  bidirectional transformers for language understanding,'' in {\em Proceedings
+  of the 2019 Conference of the North American Chapter of the Association for
+  Computational Linguistics: Human Language Technologies (NAACL-HLT)}, 2019.
+
+\bibitem{chen2019jointbert}
+Q.~Chen, Z.~Zhuo, and W.~Wang, ``Bert for joint intent classification and slot
+  filling,'' {\em arXiv preprint arXiv:1902.10909}, 2019.
+
+\bibitem{brown2020gpt3}
+T.~Brown, B.~Mann, N.~Ryder, M.~Subbiah, J.~D. Kaplan, P.~Dhariwal,
+  A.~Neelakantan, P.~Shyam, G.~Sastry, A.~Askell, {\em et~al.}, ``Language
+  models are few-shot learners,'' in {\em Advances in Neural Information
+  Processing Systems}, vol.~33, 2020.
+
+\bibitem{zhang2022cot}
+Z.~Zhang, A.~Zhang, M.~Li, and A.~Smola, ``Automatic chain of thought prompting
+  in large language models,'' {\em arXiv preprint arXiv:2210.03493}, 2022.
+
+\bibitem{redmon2018yolov3}
+J.~Redmon and A.~Farhadi, ``Yolov3: An incremental improvement,'' {\em arXiv
+  preprint arXiv:1804.02767}, 2018.
+
+\bibitem{bai2021screen2words}
+C.~Bai, X.~Zang, Y.~Xu, S.~Sunkara, A.~Rastogi, J.~Chen, and B.~A. y~Arcas,
+  ``Screen2words: Automatic mobile ui summarization with multimodal learning,''
+  in {\em Proceedings of the 34th Annual ACM Symposium on User Interface
+  Software and Technology (UIST)}, 2021.
+
+\bibitem{bai2022uibert}
+C.~Bai, S.~Sunkara, X.~Zang, A.~Rastogi, J.~Chen, and B.~A. y~Arcas, ``Uibert:
+  Learning generic multimodal representations for ui understanding,'' in {\em
+  Proceedings of the 31st ACM International Conference on Information \&
+  Knowledge Management (CIKM)}, 2022.
+
+\bibitem{you2024ferretui}
+K.~You, H.~Zhang, E.~Schoop, F.~Weers, A.~Swearngin, J.~Nichols, Y.~Yang, and
+  Z.~Gan, ``Ferret-ui: Grounded mobile ui understanding with multimodal llms,''
+  {\em arXiv preprint arXiv:2404.05719}, 2024.
+
+\end{thebibliography}

@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.minimaxi.com)",
+      "WebFetch(domain:skills.sh)",
+      "WebFetch(domain:github.com)",
+      "Skill(update-config)"
+    ]
+  },
+  "skillOverrides": {
+    "browser-use": "off",
+    "computer-vision-opencv": "off",
+    "wechat-article-extractor": "off",
+    "claude-api": "off",
+    "frontend-design": "off",
+    "init": "off",
+    "review": "off",
+    "security-review": "off",
+    "simplify": "off",
+    "update-config": "off",
+    "fewer-permission-prompts": "off",
+    "loop": "off",
+    "find-skills": "off",
+    "keybindings-help": "off",
+    "pptx": "off",
+    "superpowers:using-superpowers": "off",
+    "superpowers:dispatching-parallel-agents": "off",
+    "superpowers:subagent-driven-development": "off",
+    "superpowers:using-git-worktrees": "off",
+    "superpowers:requesting-code-review": "off",
+    "superpowers:receiving-code-review": "off",
+    "superpowers:finishing-a-development-branch": "off",
+    "superpowers:systematic-debugging": "off",
+    "superpowers:test-driven-development": "off",
+    "superpowers:writing-skills": "off"
+  }
+}

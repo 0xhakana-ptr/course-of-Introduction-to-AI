@@ -1,0 +1,161 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand*\HyPL@Entry[1]{}
+\citation{chase2022langchain}
+\citation{richards2023autogpt}
+\citation{hong2023metagpt}
+\citation{anthropic2024computeruse}
+\HyPL@Entry{0<</S/D>>}
+\citation{chase2022langchain}
+\citation{anthropic2024computeruse}
+\citation{zhang2024ufo}
+\citation{wu2024oscopilot}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{2}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Background and Motivation}{2}{subsection.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}Problem Statement}{2}{subsection.1.2}\protected@file@percent }
+\citation{langchain2024langgraph}
+\citation{jocher2023yolov8}
+\citation{jocher2023yolov8}
+\citation{langchain2024langgraph}
+\citation{chase2022langchain}
+\citation{langchain2024langgraph}
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}Method Overview}{3}{subsection.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.4}Contributions}{3}{subsection.1.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{3}{section.2}\protected@file@percent }
+\newlabel{sec:related}{{2}{3}{Related Work}{section.2}{}}
+\citation{richards2023autogpt}
+\citation{hong2023metagpt}
+\citation{li2023camel}
+\citation{wang2023voyager}
+\citation{bocklisch2017rasa}
+\citation{devlin2019bert}
+\citation{chen2019jointbert}
+\citation{brown2020gpt3}
+\citation{zhang2022cot}
+\citation{redmon2018yolov3}
+\citation{jocher2023yolov8}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}LLM-based Agent Frameworks}{4}{subsection.2.1}\protected@file@percent }
+\newlabel{sec:llm-agents}{{2.1}{4}{LLM-based Agent Frameworks}{subsection.2.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Intent Recognition and Dialogue Systems}{4}{subsection.2.2}\protected@file@percent }
+\newlabel{sec:intent}{{2.2}{4}{Intent Recognition and Dialogue Systems}{subsection.2.2}{}}
+\citation{bai2021screen2words}
+\citation{bai2022uibert}
+\citation{you2024ferretui}
+\citation{anthropic2024computeruse}
+\citation{zhang2024ufo}
+\citation{wu2024oscopilot}
+\citation{jocher2023yolov8}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Visual Perception and Desktop Agents}{5}{subsection.2.3}\protected@file@percent }
+\newlabel{sec:visual}{{2.3}{5}{Visual Perception and Desktop Agents}{subsection.2.3}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Method}{5}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Overall Architecture}{5}{subsection.3.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces 系统整体架构图。Layer 1 负责意图路由与视觉感知，Layer 2 负责角色化输出，Layer 3 负责基于 LangGraph 的图工作流编排。}}{6}{figure.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:architecture}{{1}{6}{系统整体架构图。Layer 1 负责意图路由与视觉感知，Layer 2 负责角色化输出，Layer 3 负责基于 LangGraph 的图工作流编排。}{figure.caption.1}{}}
+\citation{langchain2024langgraph}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Routing Layer}{7}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.1}Intent Space Definition}{7}{subsubsection.3.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.2}Keyword-Combination Gating Classification}{7}{subsubsection.3.2.2}\protected@file@percent }
+\newlabel{lst:keyword-gate}{{1}{8}{关键词组合门控伪代码}{lstlisting.1}{}}
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {1}{\ignorespaces 关键词组合门控伪代码}}{8}{lstlisting.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces 关键词组合门控判定流程图。四条分支依次判断文件引用/代码结构、错误信号组合、动作动词组合和强动作组合，所有分支未命中时回退至 $i_{\text  {chat}}$。}}{8}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:keyword_gate}{{2}{8}{关键词组合门控判定流程图。四条分支依次判断文件引用/代码结构、错误信号组合、动作动词组合和强动作组合，所有分支未命中时回退至 $i_{\text {chat}}$。}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.3}LLM-Based Structured Parameter Extraction}{9}{subsubsection.3.2.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces 动作类型及其参数抽取方式}}{9}{table.caption.3}\protected@file@percent }
+\newlabel{tab:action-schema}{{1}{9}{动作类型及其参数抽取方式}{table.caption.3}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.2.4}Priority-Based Action Matching}{9}{subsubsection.3.2.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces LLM 参数抽取 JSON Schema 结构图。展示 9 种动作类型及其对应的参数字段，标 * 为必填字段。}}{10}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:json_schema}{{3}{10}{LLM 参数抽取 JSON Schema 结构图。展示 9 种动作类型及其对应的参数字段，标 * 为必填字段。}{figure.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Visual Perception: YOLOv8 + Activity Analysis}{10}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.1}YOLOv8 Inference Pipeline}{10}{subsubsection.3.3.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces YOLOv8 推理管线数据流图。从截图输入到检测结果列表，标注各步骤的数据维度变化。}}{10}{figure.caption.5}\protected@file@percent }
+\newlabel{fig:yolo_pipeline}{{4}{10}{YOLOv8 推理管线数据流图。从截图输入到检测结果列表，标注各步骤的数据维度变化。}{figure.caption.5}{}}
+\citation{jocher2023yolov8}
+\citation{redmon2018yolov3}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces YOLOv8 模型检测的桌面 UI 元素类别}}{11}{table.caption.6}\protected@file@percent }
+\newlabel{tab:ui-classes}{{2}{11}{YOLOv8 模型检测的桌面 UI 元素类别}{table.caption.6}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.2}Activity Profile Mapping}{11}{subsubsection.3.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.3.3}Integration with Roleplay Layer}{11}{subsubsection.3.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Roleplay Layer}{11}{subsection.3.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces 活动画像映射规则}}{12}{table.caption.7}\protected@file@percent }
+\newlabel{tab:activity-profiles}{{3}{12}{活动画像映射规则}{table.caption.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces 活动画像映射决策树。按首次匹配策略依次判断 6 条主规则和 3 条回退规则，叶子节点为活动标签和情绪提示。}}{12}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:activity_tree}{{5}{12}{活动画像映射决策树。按首次匹配策略依次判断 6 条主规则和 3 条回退规则，叶子节点为活动标签和情绪提示。}{figure.caption.8}{}}
+\citation{langchain2024langgraph}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.1}Dual Persona System Prompts}{13}{subsubsection.3.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.2}Emotion System}{13}{subsubsection.3.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.4.3}Visual Context Integration}{13}{subsubsection.3.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Work Engine Layer: LangGraph Graph Orchestration}{13}{subsection.3.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.1}Agent Loop Graph}{13}{subsubsection.3.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.2}Coding Workflow Graph}{13}{subsubsection.3.5.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces LangGraph 工作引擎完整拓扑图。5 个子图（Agent Loop、Coding Workflow、File Workflow、Repair Decision、Summary）之间的调用关系和状态传递。}}{14}{figure.caption.9}\protected@file@percent }
+\newlabel{fig:langgraph}{{6}{14}{LangGraph 工作引擎完整拓扑图。5 个子图（Agent Loop、Coding Workflow、File Workflow、Repair Decision、Summary）之间的调用关系和状态传递。}{figure.caption.9}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.3}File Workflow Graph}{14}{subsubsection.3.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.4}Repair Decision Graph}{14}{subsubsection.3.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.5}Summary Graphs}{14}{subsubsection.3.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {3.5.6}Execution Environment}{14}{subsubsection.3.5.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.6}State Management and Memory}{15}{subsection.3.6}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces 记忆系统滑动窗口示意图。左侧为 maxlen=12 的 deque 结构，右侧为 \texttt  {build\_context()} 生成的格式化文本块示例。}}{15}{figure.caption.10}\protected@file@percent }
+\newlabel{fig:memory}{{7}{15}{记忆系统滑动窗口示意图。左侧为 maxlen=12 的 deque 结构，右侧为 \texttt {build\_context()} 生成的格式化文本块示例。}{figure.caption.10}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Experiments}{15}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Dataset and Evaluation Protocol}{15}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.1}Test Set Construction}{15}{subsubsection.4.1.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 测试集统计信息}}{16}{table.caption.11}\protected@file@percent }
+\newlabel{tab:dataset}{{4}{16}{测试集统计信息}{table.caption.11}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.2}Evaluation Metrics}{16}{subsubsection.4.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.1.3}Experiment Environment}{16}{subsubsection.4.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Baselines}{16}{subsection.4.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces 基线方法定义}}{16}{table.caption.12}\protected@file@percent }
+\newlabel{tab:baselines}{{5}{16}{基线方法定义}{table.caption.12}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Main Results}{16}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces 意图分类整体结果}}{17}{table.caption.13}\protected@file@percent }
+\newlabel{tab:results}{{6}{17}{意图分类整体结果}{table.caption.13}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces 各类别 F1 值}}{17}{table.caption.14}\protected@file@percent }
+\newlabel{tab:perclass}{{7}{17}{各类别 F1 值}{table.caption.14}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {8}{\ignorespaces F1-Score vs. 推理延迟散点图。三种方法延迟均在 0.020ms 以内。}}{17}{figure.caption.15}\protected@file@percent }
+\newlabel{fig:f1_latency}{{8}{17}{F1-Score vs. 推理延迟散点图。三种方法延迟均在 0.020ms 以内。}{figure.caption.15}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces 各类别 F1 值对比。Ours 在 unknown 类别上显著优于基线。}}{18}{figure.caption.16}\protected@file@percent }
+\newlabel{fig:perclass_f1}{{9}{18}{各类别 F1 值对比。Ours 在 unknown 类别上显著优于基线。}{figure.caption.16}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Ablation Study}{18}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.1}意图分类消融}{18}{subsubsection.4.4.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces 意图分类消融实验。去掉组合门控后 F1 上升但 unknown 类识别能力丧失。}}{18}{figure.caption.17}\protected@file@percent }
+\newlabel{fig:ablation}{{10}{18}{意图分类消融实验。去掉组合门控后 F1 上升但 unknown 类识别能力丧失。}{figure.caption.17}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {4.4.2}端到端任务消融}{18}{subsubsection.4.4.2}\protected@file@percent }
+\citation{bocklisch2017rasa}
+\citation{brown2020gpt3}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.5}Visual Perception in Interaction}{19}{subsection.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.6}Error Analysis}{19}{subsection.4.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.7}Case Study}{19}{subsection.4.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Discussion}{19}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Architectural Generality}{19}{subsection.5.1}\protected@file@percent }
+\citation{jocher2023yolov8}
+\citation{anthropic2024computeruse}
+\citation{jocher2023yolov8}
+\citation{langchain2024langgraph}
+\bibstyle{ieeetr}
+\bibdata{references}
+\bibcite{chase2022langchain}{1}
+\bibcite{richards2023autogpt}{2}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Engineering Trade-offs}{20}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Current Limitations}{20}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}Positioning vs. Related Work}{20}{subsection.5.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Future Work}{20}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{20}{section.6}\protected@file@percent }
+\bibcite{hong2023metagpt}{3}
+\bibcite{anthropic2024computeruse}{4}
+\bibcite{zhang2024ufo}{5}
+\bibcite{wu2024oscopilot}{6}
+\bibcite{langchain2024langgraph}{7}
+\bibcite{jocher2023yolov8}{8}
+\bibcite{li2023camel}{9}
+\bibcite{wang2023voyager}{10}
+\bibcite{bocklisch2017rasa}{11}
+\bibcite{devlin2019bert}{12}
+\bibcite{chen2019jointbert}{13}
+\bibcite{brown2020gpt3}{14}
+\bibcite{zhang2022cot}{15}
+\bibcite{redmon2018yolov3}{16}
+\bibcite{bai2021screen2words}{17}
+\bibcite{bai2022uibert}{18}
+\bibcite{you2024ferretui}{19}
+\gdef \@abspage@last{22}

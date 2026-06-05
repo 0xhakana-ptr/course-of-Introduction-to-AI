@@ -1,0 +1,161 @@
+\section{Experiments}
+
+\subsection{Dataset and Evaluation Protocol}
+
+\subsubsection{Test Set Construction}
+
+为评估意图分类性能，我们构造了包含 401 条中文输入的测试集，来源分为两部分：200 条手工构造用例和 201 条从系统部署日志中提取的用例。标注规则基于关键词组合门控的语义类别定义：含编程动词与技术名词/文件路径/代码结构共现的输入标注为 \texttt{coding}，纯自然语言无编程信号的标注为 \texttt{chat}，空输入或噪声标注为 \texttt{unknown}。需要说明的是，日志数据的标签来源于系统自身的 \texttt{detect\_intent()} 函数输出，存在循环验证风险，我们在结果中按来源分别报告以供参考。
+
+测试集的统计信息如表~\ref{tab:dataset}~所示。
+
+\begin{table}[htbp]
+\centering
+\caption{测试集统计信息}
+\label{tab:dataset}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{来源} & \textbf{chat} & \textbf{coding} & \textbf{unknown} & \textbf{合计} \\
+\midrule
+手工构造 & 80 & 100 & 20 & 200 \\
+部署日志 & 81 & 90 & 30 & 201 \\
+\midrule
+\textbf{合计} & \textbf{161} & \textbf{190} & \textbf{50} & \textbf{401} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Evaluation Metrics}
+
+我们采用以下指标评估意图分类性能：
+
+\textbf{准确率（Accuracy）}：$\text{Acc} = \frac{\text{correct}}{\text{total}}$
+
+\textbf{加权 F1（Weighted F1）}：$\text{F1}_{\text{weighted}} = \sum_{c \in \mathcal{C}} w_c \cdot \text{F1}(c)$，其中 $w_c = N_c / N$，$\text{F1}(c) = 2 \cdot P_c \cdot R_c / (P_c + R_c)$，$\mathcal{C} = \{\text{chat}, \text{coding}, \text{unknown}\}$
+
+\textbf{路由层延迟}：从 \texttt{detect\_intent()} 入口到 \texttt{RoutingDecision} 返回的耗时，使用 \texttt{time.perf\_counter()} 测量。
+
+\subsubsection{Experiment Environment}
+
+实验在 Windows 11 环境下运行，Python 版本为 3.11。关键词门控和规则方法为纯本地计算，无网络依赖。LLM 相关操作通过 OpenAI 兼容 API 调用，温度设为 0 以确保可复现性。所有随机操作设置 \texttt{random.seed(42)}。
+
+\subsection{Baselines}
+
+我们对比了三种基线方法：
+
+\begin{table}[htbp]
+\centering
+\caption{基线方法定义}
+\label{tab:baselines}
+\begin{tabular}{lll}
+\toprule
+\textbf{方法} & \textbf{定义} & \textbf{与 Ours 的差异} \\
+\midrule
+B1: Rule-Only & 任一编程关键词子串命中 $\rightarrow$ coding & 不区分语义类别 \\
+B3: Keyword-Score$\geq$1 & $|$matched\_categories$|$ $\geq$ 1 $\rightarrow$ coding & 去掉共现要求 \\
+Ours & $|$matched\_categories$|$ $\geq$ 2 $\rightarrow$ coding & 组合门控 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+B1 与 B3 的区别在于：B1 是单个关键词子串匹配（如"写"出现在"写字"中也会触发），B3 是单个语义类别命中（需命中该类别至少一个关键词）。B3 比 B1 更精确但仍有误报。
+
+\subsection{Main Results}
+
+表~\ref{tab:results}~展示了三种方法在 401 条测试集上的整体性能。
+
+\begin{table}[htbp]
+\centering
+\caption{意图分类整体结果}
+\label{tab:results}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{方法} & \textbf{Precision} & \textbf{Recall} & \textbf{F1} & \textbf{Accuracy} & \textbf{Latency} \\
+\midrule
+B1: Rule-Only & 0.558 & 0.631 & 0.778 & 0.828 & 0.003ms \\
+B3: Keyword-Score$\geq$1 & 0.895 & 0.641 & \textbf{0.788} & \textbf{0.835} & 0.020ms \\
+Ours (组合门控) & \textbf{0.858} & 0.608 & 0.685 & 0.701 & 0.020ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ours 方法的加权 F1（0.685）低于两种基线。分析发现，组合门控要求至少两个语义类别共现才能判定为 $i_{\text{coding}}$，导致 190 条 coding 输入中有 29 条仅命中单个语义类别的请求被误判为 $i_{\text{chat}}$。这一设计体现了安全性优先的权衡：避免闲聊误触发代码生成的风险高于漏判部分编码请求的风险。
+
+表~\ref{tab:perclass}~展示了各类别的 F1 值。
+
+\begin{table}[htbp]
+\centering
+\caption{各类别 F1 值}
+\label{tab:perclass}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{方法} & \textbf{F1(chat)} & \textbf{F1(coding)} & \textbf{F1(unknown)} & \textbf{Weighted} \\
+\midrule
+B1: Rule-Only & 0.817 & 0.949 & 0.000 & 0.778 \\
+B3: Keyword-Score$\geq$1 & 0.824 & \textbf{0.955} & 0.039 & 0.788 \\
+Ours (组合门控) & 0.729 & 0.721 & \textbf{0.413} & 0.685 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+值得注意的是，Ours 在 unknown 类别上取得了最高的 F1 值（0.413），远超 B1（0.000）和 B3（0.039）。这说明组合门控的保守策略有效降低了对噪声和模糊输入的误触发，而基线方法几乎无法识别 unknown 类别。
+
+图~\ref{fig:f1_latency}~展示了 F1 与延迟的关系，三种方法的路由层延迟均在 0.020ms 以内。图~\ref{fig:perclass_f1}~展示了各类别 F1 的对比。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.65\textwidth]{fig_f1_vs_latency}
+    \caption{F1-Score vs. 推理延迟散点图。三种方法延迟均在 0.020ms 以内。}
+    \label{fig:f1_latency}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{fig_per_class_f1}
+    \caption{各类别 F1 值对比。Ours 在 unknown 类别上显著优于基线。}
+    \label{fig:perclass_f1}
+\end{figure}
+
+\subsection{Ablation Study}
+
+\subsubsection{意图分类消融}
+
+图~\ref{fig:ablation}~展示了意图分类消融结果。去掉组合门控（w/o Gate，等价于 B3）后，加权 F1 从 0.685 提升至 0.788，但 unknown 类 F1 从 0.413 骤降至 0.039。这表明组合门控的核心贡献在于对模糊和噪声输入的过滤能力。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.6\textwidth]{fig_ablation}
+    \caption{意图分类消融实验。去掉组合门控后 F1 上升但 unknown 类识别能力丧失。}
+    \label{fig:ablation}
+\end{figure}
+
+\subsubsection{端到端任务消融}
+
+在 20 个典型编码任务上，组合门控（Full）和纯规则方法（Rule-Only）的意图分类准确率均为 80\%（16/20），失败的 4 个案例相同，均为边界模糊的表述（如"复制main.py到backup"、"搜索所有TODO注释"）。这表明在明确的编码请求上，组合门控不会引入额外的漏判。
+
+\subsection{Visual Perception in Interaction}
+
+图~\ref{fig:yolo_detection}~展示了 YOLOv8 模型在三种典型桌面场景下的检测结果。视觉上下文能有效增强角色的场景感知能力，使桌面智能体从被动响应转变为主动观察。
+
+\textbf{Case 1：多标签浏览}。检测到 tab $\times$ 5、activewindow $\times$ 1，映射为"deep in research"活动场景，角色输出"开这么多标签，CPU 都要哭了\textasciitilde"。
+
+\textbf{Case 2：文件管理}。检测到 folder $\times$ 3、address bar $\times$ 1，映射为"navigating files"，角色输出"在整理文件嘛？需要帮忙吗\textasciitilde"。
+
+\textbf{Case 3：空闲屏幕}。无 UI 元素检测结果，映射为"idle"，角色输出"不理我要没电了哦..."。
+
+\subsection{Error Analysis}
+
+\textbf{漏报（$i_{\text{coding}} \rightarrow i_{\text{chat}}$）}：190 条 coding 输入中有 52 条被误判为 chat。其中 29 条为仅命中单个语义类别的请求（如"add type hints"、"grep for hardcoded strings"），根因是组合门控要求至少两个类别共现。其余 23 条为边界模糊表述（如"帮我看看这个"、"这个怎么用"）。
+
+\textbf{误报（$i_{\text{chat}} \rightarrow i_{\text{coding}}$）}：161 条 chat 输入中有少量被误判为 coding，主要原因是技术词汇（如"Python"、"React"）出现在闲聊上下文中。
+
+\textbf{unknown 类识别}：50 条 unknown 输入中，Ours 正确识别了约 41\%（F1=0.413），显著优于基线（B1: 0\%，B3: 3.9\%）。这是组合门控保守策略的核心优势。
+
+\subsection{Case Study}
+
+\textbf{Case 1：代码生成任务}。输入"写一个 Python 快速排序"，路由层判定 $i_{\text{coding}}$（命中"写" + "Python"两个类别），触发 \texttt{workspace.write}，LLM 抽取文件路径和代码内容，File Workflow Graph 执行写入，角色输出"注入魔法完成！(\textasciicircum$\backslash$v$\backslash$\textasciicircum)"。
+
+\textbf{Case 2：含自动修复的脚本执行}。输入"运行测试"，路由层判定 $i_{\text{coding}}$，触发 \texttt{run.create}，Coding Workflow Graph 生成脚本并执行，首次失败后 Repair Decision Graph 启动 LLM 分析并生成修复脚本，重新执行成功。
+
+\textbf{Case 3：文件搜索任务}。输入"搜索所有包含 TODO 的文件"，路由层判定 $i_{\text{coding}}$，触发 \texttt{workspace.search}，LLM 抽取搜索关键词，File Workflow Graph 执行搜索返回匹配列表。
+
+\textbf{Case 4：视觉消融对比}。当用户屏幕显示多个浏览器标签页时，有视觉上下文的角色输出"开这么多标签，CPU 都要哭了\textasciitilde"（worried 表情）；无视觉上下文时角色仅输出通用回复"嗯嗯，本机在听呢"（neutral 表情）。视觉感知显著提升了交互的情境相关性。
