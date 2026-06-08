@@ -22,9 +22,9 @@
 
 视觉感知技术为桌面智能体提供了超越文本的环境理解能力。在目标检测领域，YOLO 系列经历了从 YOLOv3~\cite{redmon2018yolov3} 的 anchor-based 设计到 YOLOv5 的工程化优化，再到 YOLOv8~\cite{jocher2023yolov8} 的 anchor-free 架构演进。YOLOv8 采用 C2f 模块替代了 YOLOv5 的 C3 模块，引入解耦头将分类与回归任务分离，并使用 Task-Aligned Assigner 进行动态标签分配，在精度和速度之间取得了更好的平衡。本文使用的微调 YOLOv8 模型正是基于这一架构，针对桌面 UI 元素（窗口、标签页、菜单栏等 6 类）进行了领域适配。
 
-在屏幕理解方向，Screen2Words~\cite{bai2021screen2words} 首次将移动端 UI 截图编码为自然语言描述，为屏幕内容的语义理解奠定了基础。UIBert~\cite{bai2022uibert} 通过多模态预训练（视觉、文本、结构信息的联合编码）提升了对 UI 元素及其关系的理解能力。Ferret-UI~\cite{you2024ferretui} 进一步将大语言模型与屏幕理解结合，实现了对 UI 元素的精确定位和自然语言引用。这些工作推动了屏幕从"像素集合"向"可理解的交互界面"的转变。
+在屏幕理解方向，Screen2Words~\cite{wang2021screen2words} 首次将移动端 UI 截图编码为自然语言描述，为屏幕内容的语义理解奠定了基础。UIBert~\cite{bai2021uibert} 通过多模态预训练（视觉、文本、结构信息的联合编码）提升了对 UI 元素及其关系的理解能力。Ferret-UI~\cite{you2024ferretui} 进一步将大语言模型与屏幕理解结合，实现了对 UI 元素的精确定位和自然语言引用。这些工作推动了屏幕从"像素集合"向"可理解的交互界面"的转变。
 
-在桌面智能体系统方面，Claude Computer Use~\cite{anthropic2024computeruse} 将多模态 LLM 的视觉理解能力直接应用于桌面操作，通过截屏-理解-点击的闭环实现通用的桌面任务自动化，但依赖云端大模型和 GPU 推理。UFO~\cite{zhang2024ufo} 提出了面向 Windows 应用的 UI-Focused Agent，通过双智能体架构（AppAgent 和 ActAgent）分别负责应用选择和操作执行。OS-Copilot~\cite{wu2024oscopilot} 则探索了操作系统级别的通用智能体，能够跨应用协调完成复杂任务。这些系统展示了视觉感知在桌面智能体中的巨大潜力，但均依赖大规模云端模型，难以在资源受限的桌面端实时运行。
+在桌面智能体系统方面，Claude Computer Use~\cite{anthropic2024computeruse} 将多模态 LLM 的视觉理解能力直接应用于桌面操作，通过截屏-理解-点击的闭环实现通用的桌面任务自动化，但依赖云端大模型和 GPU 推理。UFO~\cite{zhang2025ufo} 提出了面向 Windows 应用的 UI-Focused Agent，通过双智能体架构（AppAgent 和 ActAgent）分别负责应用选择和操作执行。OS-Copilot~\cite{wu2024oscopilot} 则探索了操作系统级别的通用智能体，能够跨应用协调完成复杂任务。这些系统展示了视觉感知在桌面智能体中的巨大潜力，但均依赖大规模云端模型，难以在资源受限的桌面端实时运行。
 
 本文与上述工作的区别在于：使用轻量级的微调 YOLOv8 模型（12 MB，CPU 推理）实现桌面 UI 元素检测，不追求精细的 UI 语义理解，而是将检测结果映射为粗粒度的活动画像（browsing、managing files 等），作为角色对话的上下文输入。这种设计在保持实时性的同时，为桌面智能体提供了有效的场景感知能力。
 

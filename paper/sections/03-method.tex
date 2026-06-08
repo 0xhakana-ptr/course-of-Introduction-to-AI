@@ -39,25 +39,31 @@
 
 与传统的评分-阈值方法不同，本系统采用布尔组合门控：当且仅当至少两个语义类别的关键词在用户输入中共现时，才判定为 $i_{\text{coding}}$ 意图。这种设计的优势在于：（1）避免了单一类别关键词误触发，降低了误分类率；（2）布尔运算的计算开销极低，分类延迟可忽略不计；（3）规则可读性强，便于人工审计与调试。
 
-关键词组合门控的判定逻辑如下所示：
+关键词组合门控的判定逻辑分为三个阶段：（1）空输入过滤，将空或纯空白输入直接判定为 $i_{\text{unknown}}$；（2）快速通道，若输入包含文件引用或代码结构特征则立即判定为 $i_{\text{coding}}$；（3）特征标志提取与组合判断，提取 8 个布尔特征标志后按优先级依次判定。
 
 \begin{lstlisting}[caption={关键词组合门控伪代码}, label={lst:keyword-gate}, basicstyle=\small\ttfamily, frame=single, breaklines=true]
-function keyword_gate(x) -> bool:
+function keyword_gate(x) -> RoutingDecision:
+    if is_blank(x):
+        return RoutingDecision(intent=unknown)
     if has_file_reference(x) or has_code_structure_hint(x):
-        return True
-    if has_error_signal(x) AND (has_workspace_object(x) OR has_command(x) OR has_tech_context(x)):
-        return True
-    if has_action_verb(x) AND (has_workspace_object(x) OR has_deliverable(x) OR has_path_ref(x) OR has_command(x)):
-        return True
-    if has_strong_action(x) AND (has_tech_context(x) OR has_deliverable(x)):
-        return True
-    return False
+        return RoutingDecision(intent=coding)
+    # Extract 8 boolean feature flags:
+    has_action / has_strong_action / has_workspace_object /
+    has_deliverable / has_path / has_command / has_issue / has_tech
+    flags = extract_flags(x)
+    if has_issue AND (obj | cmd | tech):
+        return RoutingDecision(intent=coding)
+    if has_action AND (obj | deliverable | path | cmd):
+        return RoutingDecision(intent=coding)
+    if has_strong_action AND (tech | deliverable):
+        return RoutingDecision(intent=coding)
+    return RoutingDecision(intent=chat)
 \end{lstlisting}
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.75\textwidth]{keyword_gate_flowchart}
-    \caption{关键词组合门控判定流程图。四条分支依次判断文件引用/代码结构、错误信号组合、动作动词组合和强动作组合，所有分支未命中时回退至 $i_{\text{chat}}$。}
+    \caption{关键词组合门控判定流程图。首先过滤空输入至 $i_{\text{unknown}}$，然后通过文件引用快速通道、错误信号组合、动作动词组合和强动作组合四条分支依次判定，所有分支未命中时回退至 $i_{\text{chat}}$。}
     \label{fig:keyword_gate}
 \end{figure}
 
@@ -65,6 +71,7 @@ function keyword_gate(x) -> bool:
 
 \begin{equation}
 \text{intent}(x) = \begin{cases}
+i_{\text{unknown}} & \text{if } x \text{ is blank} \\
 i_{\text{coding}} & \text{if keyword\_gate}(x) = \text{True} \\
 i_{\text{chat}} & \text{otherwise}
 \end{cases}

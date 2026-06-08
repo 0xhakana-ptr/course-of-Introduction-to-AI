@@ -5,7 +5,8 @@
       "WebFetch(domain:www.minimaxi.com)",
       "WebFetch(domain:skills.sh)",
       "WebFetch(domain:github.com)",
-      "Skill(update-config)"
+      "Skill(update-config)",
+      "WebFetch(domain:api.crossref.org)"
     ]
   },
   "skillOverrides": {

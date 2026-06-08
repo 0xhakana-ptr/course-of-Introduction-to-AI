@@ -136,6 +136,26 @@ Ours (组合门控) & 0.729 & 0.721 & \textbf{0.413} & 0.685 \\
 
 图~\ref{fig:yolo_detection}~展示了 YOLOv8 模型在三种典型桌面场景下的检测结果。视觉上下文能有效增强角色的场景感知能力，使桌面智能体从被动响应转变为主动观察。
 
+\begin{figure}[htbp]
+    \centering
+    \begin{subfigure}[b]{0.3\textwidth}
+        \includegraphics[width=\textwidth]{yolo_detection_case1}
+        \caption{多标签浏览}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.3\textwidth}
+        \includegraphics[width=\textwidth]{yolo_detection_case2}
+        \caption{文件管理}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.3\textwidth}
+        \includegraphics[width=\textwidth]{yolo_detection_case3}
+        \caption{空闲屏幕}
+    \end{subfigure}
+    \caption{YOLOv8 在三种典型桌面场景下的 UI 元素检测结果。}
+    \label{fig:yolo_detection}
+\end{figure}
+
 \textbf{Case 1：多标签浏览}。检测到 tab $\times$ 5、activewindow $\times$ 1，映射为"deep in research"活动场景，角色输出"开这么多标签，CPU 都要哭了\textasciitilde"。
 
 \textbf{Case 2：文件管理}。检测到 folder $\times$ 3、address bar $\times$ 1，映射为"navigating files"，角色输出"在整理文件嘛？需要帮忙吗\textasciitilde"。

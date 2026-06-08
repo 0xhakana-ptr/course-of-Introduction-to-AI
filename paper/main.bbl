@@ -21,10 +21,12 @@ S.~Hong, M.~Zhuge, J.~Chen, X.~Zheng, Y.~Cheng, C.~Zhang, J.~Wang, Z.~Wang,
   2024.
 \newblock Online; accessed 2024.
 
-\bibitem{zhang2024ufo}
-C.~Zhang, L.~He, J.~Qian, S.~Qin, Y.~Wu, D.~Zhang, S.~Rajmohan, and Q.~Lin,
-  ``Ufo: A ui-focused agent for windows os interaction,'' {\em arXiv preprint
-  arXiv:2402.07939}, 2024.
+\bibitem{zhang2025ufo}
+C.~Zhang, L.~Li, S.~He, X.~Zhang, B.~Qiao, S.~Qin, M.~Ma, Y.~Kang, Q.~Lin,
+  S.~Rajmohan, D.~Zhang, and Q.~Zhang, ``Ufo: A ui-focused agent for windows os
+  interaction,'' in {\em Proceedings of the 2025 Conference of the North
+  American Chapter of the Association for Computational Linguistics (NAACL)},
+  2025.
 
 \bibitem{wu2024oscopilot}
 Z.~Wu, C.~Han, Z.~Ding, Z.~Weng, Z.~Liu, S.~Yao, T.~Yu, and L.~Kong,
@@ -81,17 +83,17 @@ Z.~Zhang, A.~Zhang, M.~Li, and A.~Smola, ``Automatic chain of thought prompting
 J.~Redmon and A.~Farhadi, ``Yolov3: An incremental improvement,'' {\em arXiv
   preprint arXiv:1804.02767}, 2018.
 
-\bibitem{bai2021screen2words}
-C.~Bai, X.~Zang, Y.~Xu, S.~Sunkara, A.~Rastogi, J.~Chen, and B.~A. y~Arcas,
-  ``Screen2words: Automatic mobile ui summarization with multimodal learning,''
-  in {\em Proceedings of the 34th Annual ACM Symposium on User Interface
-  Software and Technology (UIST)}, 2021.
+\bibitem{wang2021screen2words}
+B.~Wang, G.~Li, X.~Zhou, Z.~Chen, T.~Grossman, and Y.~Li, ``Screen2words:
+  Automatic mobile ui summarization with multimodal learning,'' in {\em
+  Proceedings of the 34th Annual ACM Symposium on User Interface Software and
+  Technology (UIST)}, 2021.
 
-\bibitem{bai2022uibert}
+\bibitem{bai2021uibert}
 C.~Bai, S.~Sunkara, X.~Zang, A.~Rastogi, J.~Chen, and B.~A. y~Arcas, ``Uibert:
   Learning generic multimodal representations for ui understanding,'' in {\em
-  Proceedings of the 31st ACM International Conference on Information \&
-  Knowledge Management (CIKM)}, 2022.
+  Proceedings of the Thirtieth International Joint Conference on Artificial
+  Intelligence (IJCAI)}, 2021.
 
 \bibitem{you2024ferretui}
 K.~You, H.~Zhang, E.~Schoop, F.~Weers, A.~Swearngin, J.~Nichols, Y.~Yang, and
