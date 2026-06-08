@@ -7,6 +7,7 @@ from ..schemas import (
     WORKSPACE_TOOL_CATEGORY,
     WORKSPACE_TOOL_OUTPUT_KIND,
 )
+from ..core.limits import WORKSPACE_CODEGEN_LLM_MAX_TOKENS, WORKSPACE_CODEGEN_LLM_TEMPERATURE
 from ..llm.client import call_llm_sync, llm_is_configured
 
 from .safe_fs import resolve_workspace_path
@@ -260,8 +261,8 @@ def _generate_code_via_llm(prompt: str, language_hint: str) -> str:
         prompt=prompt,
         context=None,
         system_prompt=system_prompt,
-        temperature=0.3,
-        max_tokens=3000,
+        temperature=WORKSPACE_CODEGEN_LLM_TEMPERATURE,
+        max_tokens=WORKSPACE_CODEGEN_LLM_MAX_TOKENS,
     )
     if result.ok and result.output:
         code = result.output.strip()

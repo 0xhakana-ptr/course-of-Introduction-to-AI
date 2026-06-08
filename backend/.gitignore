@@ -3,9 +3,9 @@
 !.env.example
 
 # runtime files
-/workspace/
+workspace/
 __pycache__/
 *.pyc
 
 # temporary files
-/.tmp_cache/*
+.tmp_cache/*
