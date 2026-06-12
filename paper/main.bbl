@@ -75,9 +75,10 @@ T.~Brown, B.~Mann, N.~Ryder, M.~Subbiah, J.~D. Kaplan, P.~Dhariwal,
   models are few-shot learners,'' in {\em Advances in Neural Information
   Processing Systems}, vol.~33, 2020.
 
-\bibitem{zhang2022cot}
-Z.~Zhang, A.~Zhang, M.~Li, and A.~Smola, ``Automatic chain of thought prompting
-  in large language models,'' {\em arXiv preprint arXiv:2210.03493}, 2022.
+\bibitem{arora2024intent}
+G.~Arora, S.~Jain, and S.~Merugu, ``Intent detection in the age of {LLMs},'' in
+  {\em Proceedings of the 2024 Conference on Empirical Methods in Natural
+  Language Processing (EMNLP)}, 2024.
 
 \bibitem{redmon2018yolov3}
 J.~Redmon and A.~Farhadi, ``Yolov3: An incremental improvement,'' {\em arXiv
