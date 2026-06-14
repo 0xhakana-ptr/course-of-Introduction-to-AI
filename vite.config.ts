@@ -16,7 +16,11 @@ export default defineConfig({
           },
         },
         onstart(options) {
-          options.startup()
+          // Clear ELECTRON_RUN_AS_NODE injected by VS Code terminal,
+          // otherwise electron.exe runs as plain Node.js instead of Electron.
+          options.startup(['.', '--no-sandbox'], {
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined },
+          })
         },
       },
     ]),
