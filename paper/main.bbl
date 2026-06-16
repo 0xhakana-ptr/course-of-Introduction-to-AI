@@ -1,104 +1,103 @@
 \begin{thebibliography}{10}
-
-\bibitem{chase2022langchain}
-H.~Chase, ``Langchain.'' \url{https://github.com/langchain-ai/langchain}, 2022.
-\newblock GitHub repository.
-
-\bibitem{richards2023autogpt}
-T.~B. Richards, ``Auto-gpt: An autonomous gpt-4 experiment.''
-  \url{https://github.com/Significant-Gravitas/AutoGPT}, 2023.
-\newblock GitHub repository.
-
-\bibitem{hong2023metagpt}
-S.~Hong, M.~Zhuge, J.~Chen, X.~Zheng, Y.~Cheng, C.~Zhang, J.~Wang, Z.~Wang,
-  S.~K.~S. Yau, Z.~Lin, L.~Zhou, C.~Ran, L.~Xiao, C.~Wu, and J.~Schmidhuber,
-  ``Metagpt: Meta programming for a multi-agent collaborative framework,'' {\em
-  arXiv preprint arXiv:2308.00352}, 2023.
+\providecommand{\url}[1]{\texttt{#1}}
+\providecommand{\urlprefix}{URL }
+\providecommand{\doi}[1]{https://doi.org/#1}
 
 \bibitem{anthropic2024computeruse}
-{Anthropic}, ``Computer use.''
-  \url{https://docs.anthropic.com/en/docs/build-with-claude/computer-use},
-  2024.
-\newblock Online; accessed 2024.
-
-\bibitem{zhang2025ufo}
-C.~Zhang, L.~Li, S.~He, X.~Zhang, B.~Qiao, S.~Qin, M.~Ma, Y.~Kang, Q.~Lin,
-  S.~Rajmohan, D.~Zhang, and Q.~Zhang, ``Ufo: A ui-focused agent for windows os
-  interaction,'' in {\em Proceedings of the 2025 Conference of the North
-  American Chapter of the Association for Computational Linguistics (NAACL)},
-  2025.
-
-\bibitem{wu2024oscopilot}
-Z.~Wu, C.~Han, Z.~Ding, Z.~Weng, Z.~Liu, S.~Yao, T.~Yu, and L.~Kong,
-  ``Os-copilot: Towards generalist computer agents with self-improvement,''
-  {\em arXiv preprint arXiv:2402.07456}, 2024.
-
-\bibitem{langchain2024langgraph}
-{LangChain Inc.}, ``Langgraph.''
-  \url{https://github.com/langchain-ai/langgraph}, 2024.
-\newblock GitHub repository.
-
-\bibitem{jocher2023yolov8}
-G.~Jocher, A.~Chaurasia, and J.~Qiu, ``Ultralytics yolo.''
-  \url{https://github.com/ultralytics/ultralytics}, 2023.
-\newblock GitHub repository.
-
-\bibitem{li2023camel}
-G.~Li, H.~A. A.~K. Hammoud, H.~Itani, D.~Khizbullin, and B.~Ghanem, ``Camel:
-  Communicative agents for ``mind'' exploration of large language model
-  society,'' in {\em Advances in Neural Information Processing Systems},
-  vol.~36, 2023.
-
-\bibitem{wang2023voyager}
-G.~Wang, Y.~Xie, Y.~Jiang, A.~Mandlekar, C.~Xiao, Y.~Zhu, L.~Fan, and
-  A.~Anandkumar, ``Voyager: An open-ended embodied agent with large language
-  models,'' {\em arXiv preprint arXiv:2305.16291}, 2023.
-
-\bibitem{bocklisch2017rasa}
-T.~Bocklisch, J.~Faulkner, N.~Pawlowski, and A.~Nichol, ``Rasa: Open source
-  language understanding and dialogue management,'' {\em arXiv preprint
-  arXiv:1712.05181}, 2017.
-
-\bibitem{devlin2019bert}
-J.~Devlin, M.-W. Chang, K.~Lee, and K.~Toutanova, ``Bert: Pre-training of deep
-  bidirectional transformers for language understanding,'' in {\em Proceedings
-  of the 2019 Conference of the North American Chapter of the Association for
-  Computational Linguistics: Human Language Technologies (NAACL-HLT)}, 2019.
-
-\bibitem{chen2019jointbert}
-Q.~Chen, Z.~Zhuo, and W.~Wang, ``Bert for joint intent classification and slot
-  filling,'' {\em arXiv preprint arXiv:1902.10909}, 2019.
-
-\bibitem{brown2020gpt3}
-T.~Brown, B.~Mann, N.~Ryder, M.~Subbiah, J.~D. Kaplan, P.~Dhariwal,
-  A.~Neelakantan, P.~Shyam, G.~Sastry, A.~Askell, {\em et~al.}, ``Language
-  models are few-shot learners,'' in {\em Advances in Neural Information
-  Processing Systems}, vol.~33, 2020.
+{Anthropic}: Computer use.
+  \url{https://docs.anthropic.com/en/docs/build-with-claude/computer-use}
+  (2024), online; accessed 2024
 
 \bibitem{arora2024intent}
-G.~Arora, S.~Jain, and S.~Merugu, ``Intent detection in the age of {LLMs},'' in
-  {\em Proceedings of the 2024 Conference on Empirical Methods in Natural
-  Language Processing (EMNLP)}, 2024.
-
-\bibitem{redmon2018yolov3}
-J.~Redmon and A.~Farhadi, ``Yolov3: An incremental improvement,'' {\em arXiv
-  preprint arXiv:1804.02767}, 2018.
-
-\bibitem{wang2021screen2words}
-B.~Wang, G.~Li, X.~Zhou, Z.~Chen, T.~Grossman, and Y.~Li, ``Screen2words:
-  Automatic mobile ui summarization with multimodal learning,'' in {\em
-  Proceedings of the 34th Annual ACM Symposium on User Interface Software and
-  Technology (UIST)}, 2021.
+Arora, G., Jain, S., Merugu, S.: Intent detection in the age of {LLMs}. In:
+  Proceedings of the 2024 Conference on Empirical Methods in Natural Language
+  Processing (EMNLP) (2024), \url{https://arxiv.org/abs/2410.01627}
 
 \bibitem{bai2021uibert}
-C.~Bai, S.~Sunkara, X.~Zang, A.~Rastogi, J.~Chen, and B.~A. y~Arcas, ``Uibert:
-  Learning generic multimodal representations for ui understanding,'' in {\em
+Bai, C., Sunkara, S., Zang, X., Rastogi, A., Chen, J., y~Arcas, B.A.: Uibert:
+  Learning generic multimodal representations for ui understanding. In:
   Proceedings of the Thirtieth International Joint Conference on Artificial
-  Intelligence (IJCAI)}, 2021.
+  Intelligence (IJCAI) (2021)
+
+\bibitem{bocklisch2017rasa}
+Bocklisch, T., Faulkner, J., Pawlowski, N., Nichol, A.: Rasa: Open source
+  language understanding and dialogue management. arXiv preprint
+  arXiv:1712.05181  (2017)
+
+\bibitem{brown2020gpt3}
+Brown, T., Mann, B., Ryder, N., Subbiah, M., Kaplan, J.D., Dhariwal, P.,
+  Neelakantan, A., Shyam, P., Sastry, G., Askell, A., et~al.: Language models
+  are few-shot learners. In: Advances in Neural Information Processing Systems.
+  vol.~33 (2020)
+
+\bibitem{chase2022langchain}
+Chase, H.: Langchain. \url{https://github.com/langchain-ai/langchain} (2022),
+  gitHub repository
+
+\bibitem{chen2019jointbert}
+Chen, Q., Zhuo, Z., Wang, W.: Bert for joint intent classification and slot
+  filling. arXiv preprint arXiv:1902.10909  (2019)
+
+\bibitem{devlin2019bert}
+Devlin, J., Chang, M.W., Lee, K., Toutanova, K.: Bert: Pre-training of deep
+  bidirectional transformers for language understanding. In: Proceedings of the
+  2019 Conference of the North American Chapter of the Association for
+  Computational Linguistics: Human Language Technologies (NAACL-HLT) (2019)
+
+\bibitem{hong2023metagpt}
+Hong, S., Zhuge, M., Chen, J., Zheng, X., Cheng, Y., Zhang, C., Wang, J., Wang,
+  Z., Yau, S.K.S., Lin, Z., Zhou, L., Ran, C., Xiao, L., Wu, C., Schmidhuber,
+  J.: Metagpt: Meta programming for a multi-agent collaborative framework.
+  arXiv preprint arXiv:2308.00352  (2023)
+
+\bibitem{jocher2023yolov8}
+Jocher, G., Chaurasia, A., Qiu, J.: Ultralytics yolo.
+  \url{https://github.com/ultralytics/ultralytics} (2023), gitHub repository
+
+\bibitem{langchain2024langgraph}
+{LangChain Inc.}: Langgraph. \url{https://github.com/langchain-ai/langgraph}
+  (2024), gitHub repository
+
+\bibitem{li2023camel}
+Li, G., Hammoud, H.A.A.K., Itani, H., Khizbullin, D., Ghanem, B.: Camel:
+  Communicative agents for ``mind'' exploration of large language model
+  society. In: Advances in Neural Information Processing Systems. vol.~36
+  (2023)
+
+\bibitem{redmon2018yolov3}
+Redmon, J., Farhadi, A.: Yolov3: An incremental improvement. arXiv preprint
+  arXiv:1804.02767  (2018)
+
+\bibitem{richards2023autogpt}
+Richards, T.B.: Auto-gpt: An autonomous gpt-4 experiment.
+  \url{https://github.com/Significant-Gravitas/AutoGPT} (2023), gitHub
+  repository
+
+\bibitem{wang2021screen2words}
+Wang, B., Li, G., Zhou, X., Chen, Z., Grossman, T., Li, Y.: Screen2words:
+  Automatic mobile ui summarization with multimodal learning. In: Proceedings
+  of the 34th Annual ACM Symposium on User Interface Software and Technology
+  (UIST) (2021)
+
+\bibitem{wang2023voyager}
+Wang, G., Xie, Y., Jiang, Y., Mandlekar, A., Xiao, C., Zhu, Y., Fan, L.,
+  Anandkumar, A.: Voyager: An open-ended embodied agent with large language
+  models. arXiv preprint arXiv:2305.16291  (2023)
+
+\bibitem{wu2024oscopilot}
+Wu, Z., Han, C., Ding, Z., Weng, Z., Liu, Z., Yao, S., Yu, T., Kong, L.:
+  Os-copilot: Towards generalist computer agents with self-improvement. arXiv
+  preprint arXiv:2402.07456  (2024)
 
 \bibitem{you2024ferretui}
-K.~You, H.~Zhang, E.~Schoop, F.~Weers, A.~Swearngin, J.~Nichols, Y.~Yang, and
-  Z.~Gan, ``Ferret-ui: Grounded mobile ui understanding with multimodal llms,''
-  {\em arXiv preprint arXiv:2404.05719}, 2024.
+You, K., Zhang, H., Schoop, E., Weers, F., Swearngin, A., Nichols, J., Yang,
+  Y., Gan, Z.: Ferret-ui: Grounded mobile ui understanding with multimodal
+  llms. arXiv preprint arXiv:2404.05719  (2024)
+
+\bibitem{zhang2025ufo}
+Zhang, C., Li, L., He, S., Zhang, X., Qiao, B., Qin, S., Ma, M., Kang, Y., Lin,
+  Q., Rajmohan, S., Zhang, D., Zhang, Q.: Ufo: A ui-focused agent for windows
+  os interaction. In: Proceedings of the 2025 Conference of the North American
+  Chapter of the Association for Computational Linguistics (NAACL) (2025)
 
 \end{thebibliography}
