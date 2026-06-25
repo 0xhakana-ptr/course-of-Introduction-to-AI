@@ -298,12 +298,22 @@ value 也支持简写：
 
 默认情况下项目内置了一个“占位 agent”，确保 UI 可用。
 
-本项目使用 `uv` 管理 Python 后端环境。最小启动流程如下：
+本项目使用 `uv` 管理 Python 后端环境。
+推荐正式切到 3.11；如果你更想用 3.12，把下面的 3.11 改成 3.12 即可。
+最小启动流程如下：
 
 ```powershell
-# 推荐正式切到 3.11；如果你更想用 3.12，把下面的 3.11 改成 3.12 即可
+# Windows Powershell
 uv python install 3.11
 if (Test-Path .venv) { Remove-Item -Recurse -Force .venv }
+uv venv --python 3.11 .venv
+uv pip install -r backend/requirements.txt
+uv run uvicorn backend.app.main:app --reload --port 8000
+```
+```bash
+# macOS / Linux bash
+uv python install 3.11
+if [ -d .venv ]; then rm -rf .venv; fi
 uv venv --python 3.11 .venv
 uv pip install -r backend/requirements.txt
 uv run uvicorn backend.app.main:app --reload --port 8000
@@ -311,19 +321,31 @@ uv run uvicorn backend.app.main:app --reload --port 8000
 
 如果你只是想先验证后端在推荐版本下是否正常，也可以不重建 `.venv`，直接运行：
 
-```powershell
+```bash
 uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
 ```
 
 然后在启动 Electron 前设置环境变量 `AI_AGENT_ENDPOINT` 指向你的 HTTP 服务：
 
-```bash
+```powershell
+# Windows Powershell
 $env:AI_AGENT_ENDPOINT="http://127.0.0.1:8000/chat"
+
+# 用 pnpm：
 pnpm dev
 
-# 或者直接用 npm:
-set AI_AGENT_ENDPOINT=http://127.0.0.1:8000/chat
+# 或用 npm:
+npm run dev
+```
+```bash
+# macOS / Linux bash
+export AI_AGENT_ENDPOINT="http://127.0.0.1:8000/chat"
+
+# 用 pnpm：
 pnpm dev
+
+# 用 npm:
+npm run dev
 ```
 
 - 请求：`POST` JSON `{ prompt, context }`

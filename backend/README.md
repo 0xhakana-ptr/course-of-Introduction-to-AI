@@ -13,7 +13,7 @@
 
 ### 2.1 安装
 
-```powershell
+```bash
 uv python install 3.11
 uv venv --python 3.11 .venv
 uv pip install -r backend/requirements.txt
@@ -22,7 +22,14 @@ uv pip install -r backend/requirements.txt
 如果 `.venv` 是用其他版本创建的，先删掉重建：
 
 ```powershell
+# Windows Powershell
 if (Test-Path .venv) { Remove-Item -Recurse -Force .venv }
+uv venv --python 3.11 .venv
+uv pip install -r backend/requirements.txt
+```
+```bash
+# macOS / Linux bash
+if [ -d ".venv" ]; then rm -rf .venv; fi
 uv venv --python 3.11 .venv
 uv pip install -r backend/requirements.txt
 ```
@@ -30,7 +37,12 @@ uv pip install -r backend/requirements.txt
 ### 2.2 配置
 
 ```powershell
+# Windows Powershell
 Copy-Item backend/.env.example backend/.env
+```
+```bash
+# macOS / Linux bash
+cp backend/.env.example backend/.env
 ```
 
 编辑 `backend/.env`，至少填入：
@@ -47,7 +59,7 @@ LLM_MODEL=your-model
 
 ### 2.3 启动
 
-```powershell
+```bash
 uv run uvicorn backend.app.main:app --reload --port 8000
 ```
 
@@ -58,18 +70,27 @@ uv run uvicorn backend.app.main:app --reload --port 8000
 
 ## 3. 运行测试
 
-```powershell
+```bash
 uv run --python 3.11 --with-requirements backend/requirements.txt pytest backend/tests -q
 ```
 
 ## 4. 检查 LLM 配置
 
 ```powershell
+# Windows Powershell
 # 本地配置
 Invoke-RestMethod http://127.0.0.1:8000/llm/diagnostics
 
 # 含上游连通性
 Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
+```
+```bash
+# macOS / Linux bash
+# 本地配置
+curl http://127.0.0.1:8000/llm/diagnostics
+
+# 含上游连通性
+curl "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
 ```
 
 ## 5. 性能提示
@@ -77,7 +98,11 @@ Invoke-RestMethod "http://127.0.0.1:8000/llm/diagnostics?check_remote=true"
 视觉截图识别功能默认开启，运行时可能偶尔卡顿。如果不需要，可以临时关闭：
 
 ```powershell
+# Windows Powershell
 $env:VISION_ENABLED="false"
+```
+```bash
+export VISION_ENABLED="false"
 ```
 
 后端侧同样支持：在 `backend/.env` 中设置 `VISION_ENABLED=false` 即可完全禁用。
@@ -116,15 +141,26 @@ backend/
 启动后端后，在另一个终端设置以下环境变量再运行 `pnpm dev`：
 
 ```powershell
+# Windows Powershell
 $env:AI_AGENT_ENDPOINT=”http://127.0.0.1:8000/chat”
 $env:AI_AGENT_BASE_URL=”http://127.0.0.1:8000”
+pnpm dev
+```
+```bash
+# macOS / Linux bash
+export AI_AGENT_ENDPOINT="http://127.0.0.1:8000/chat"
+export AI_AGENT_BASE_URL="http://127.0.0.1:8000"
 pnpm dev
 ```
 
 如果消息轮询地址不同：
 
 ```powershell
+# Windows Powershell
 $env:AI_AGENT_MESSAGES_ENDPOINT=”http://127.0.0.1:8000/messages”
+```
+```bash
+export AI_AGENT_MESSAGES_ENDPOINT=”http://127.0.0.1:8000/messages”
 ```
 
 视觉联调时如果卡顿，先关闭截图功能（见第 5 节）。
