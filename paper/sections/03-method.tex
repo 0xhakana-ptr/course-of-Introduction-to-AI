@@ -1,0 +1,302 @@
+\section{Method}
+
+本节详细阐述系统的整体架构设计（§3.1）与路由层的具体实现机制（§3.2）。
+
+\subsection{Overall Architecture}
+
+系统采用三层解耦架构，如图~\ref{fig:architecture}~所示。三层之间通过明确的数据接口解耦，各层职责单一，可独立迭代与优化。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{architecture}
+    \caption{系统整体架构图。Layer 1 负责意图路由与视觉感知，Layer 2 负责角色化输出，Layer 3 负责基于 LangGraph 的图工作流编排。}
+    \label{fig:architecture}
+\end{figure}
+
+路由层（Routing Guard）是系统的入口，负责对用户输入进行意图分类与参数抽取。该层包含文本意图分类器和视觉上下文分析器两个子模块：文本意图分类器基于关键词组合门控规则快速判定用户意图类别，对于需要结构化参数的任务类意图进一步调用 LLM 进行参数抽取；视觉上下文分析器基于微调的 YOLOv8\cite{jocher2023yolov8} 模型对桌面截图进行 UI 元素检测与活动画像分析。路由层的输出为一个结构化的 \texttt{RoutingDecision} 数据对象，包含意图类别、动作类型和抽取的参数。
+
+角色层（Roleplay Agent）是系统的人格化外壳，接收路由层的 \texttt{RoutingDecision} 并生成角色一致的输出。该层内置两套角色系统提示（system prompt），分别服务不同交互模式；同时维护一个五状态情绪追踪器，根据任务执行结果自动流转情绪状态。对于闲聊类意图，角色层直接调用 LLM 生成个性化回复；对于任务类意图，角色层委托工作引擎执行后将结果包装为人设风格的输出。
+
+工作引擎层（Work Engine）基于 LangGraph\cite{langchain2024langgraph} 的有向图状态机实现，包含 5 个专用子图，分别处理代码生成、文件操作、故障修复、摘要生成等任务。工作引擎通过动作注册表（Action Registry）统一管理各类操作的执行逻辑。
+
+\subsection{Routing Layer}
+
+路由层是系统的核心调度模块，其设计目标是在保证分类准确率的前提下实现低延迟的意图判定。本节从意图空间定义、关键词组合门控分类、LLM 结构化参数抽取和优先级动作匹配四个维度展开论述。
+
+\subsubsection{Intent Space Definition}
+
+系统定义的意图空间如下：
+
+\begin{equation}
+\mathcal{I} = \{i_{\text{chat}},\; i_{\text{coding}},\; i_{\text{unknown}}\}
+\end{equation}
+
+其中，$i_{\text{chat}}$ 表示闲聊类意图，$i_{\text{coding}}$ 表示包含编程、文件操作、系统维护等在内的任务类意图，$i_{\text{unknown}}$ 表示无法识别的意图类别。路由层的核心任务是将用户输入 $x$ 映射到意图空间 $\mathcal{I}$ 中的某一元素。
+
+\subsubsection{Keyword-Combination Gating Classification}
+
+系统定义了 11 个语义类别的关键词集合，共计约 230 个中英文关键词，涵盖编程动词（写/fix/write/refactor，60 个）、工作空间名词（代码文件/module/config/test，48 个）、技术栈名（python/vue/react/fastapi，15 个）、CLI 命令（pytest/npm/pip/curl，11 个）、错误信号（bug/报错/traceback/exception，12 个）等类别。
+
+与传统的评分-阈值方法不同，本系统采用布尔组合门控：当且仅当至少两个语义类别的关键词在用户输入中共现时，才判定为 $i_{\text{coding}}$ 意图。这种设计的优势在于：（1）避免了单一类别关键词误触发，降低了误分类率；（2）布尔运算的计算开销极低，分类延迟可忽略不计；（3）规则可读性强，便于人工审计与调试。
+
+关键词组合门控的判定逻辑分为三个阶段：（1）空输入过滤，将空或纯空白输入直接判定为 $i_{\text{unknown}}$；（2）快速通道，若输入包含文件引用或代码结构特征则立即判定为 $i_{\text{coding}}$；（3）特征标志提取与组合判断，提取 8 个布尔特征标志后按优先级依次判定。
+
+\begin{lstlisting}[caption={关键词组合门控伪代码}, label={lst:keyword-gate}, basicstyle=\small\ttfamily, frame=single, breaklines=true]
+function keyword_gate(x) -> RoutingDecision:
+    if is_blank(x):
+        return RoutingDecision(intent=unknown)
+    if has_file_reference(x) or has_code_structure_hint(x):
+        return RoutingDecision(intent=coding)
+    # Extract 8 boolean feature flags:
+    has_action / has_strong_action / has_workspace_object /
+    has_deliverable / has_path / has_command / has_issue / has_tech
+    flags = extract_flags(x)
+    if has_issue AND (obj | cmd | tech):
+        return RoutingDecision(intent=coding)
+    if has_action AND (obj | deliverable | path | cmd):
+        return RoutingDecision(intent=coding)
+    if has_strong_action AND (tech | deliverable):
+        return RoutingDecision(intent=coding)
+    return RoutingDecision(intent=chat)
+\end{lstlisting}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{keyword_gate_flowchart}
+    \caption{关键词组合门控判定流程图。首先过滤空输入至 $i_{\text{unknown}}$，然后通过文件引用快速通道、错误信号组合、动作动词组合和强动作组合四条分支依次判定，所有分支未命中时回退至 $i_{\text{chat}}$。}
+    \label{fig:keyword_gate}
+\end{figure}
+
+基于上述门控规则，意图分类的决策函数可形式化表示为：
+
+\begin{equation}
+\text{intent}(x) = \begin{cases}
+i_{\text{unknown}} & \text{if } x \text{ is blank} \\
+i_{\text{coding}} & \text{if keyword\_gate}(x) = \text{True} \\
+i_{\text{chat}} & \text{otherwise}
+\end{cases}
+\end{equation}
+
+\subsubsection{LLM-Based Structured Parameter Extraction}
+
+需要特别说明的是，LLM 不参与意图分类过程，仅在 $i_{\text{coding}}$ 意图确定后被调用，用于从用户输入中抽取结构化参数。这一设计将意图分类（低延迟、确定性）与参数抽取（高精度、生成性）两个阶段解耦，避免了 LLM 推理延迟影响意图分类的实时性。
+
+参数抽取的决策函数如下：
+
+\begin{equation}
+\text{params}(x, a) = \begin{cases}
+\text{LLM\_extract}(x, a) & \text{if needs\_extraction}(a) \\
+\text{rule\_extract}(x) & \text{otherwise}
+\end{cases}
+\end{equation}
+
+其中，$a$ 为动作类型，$\text{needs\_extraction}(a)$ 判断该动作是否需要 LLM 介入抽取参数。LLM 的推理参数设置为：temperature $= 0.1$ 以确保输出的确定性，最大 token 数 $= 30{,}000$，通过 OpenAI 兼容 API 调用。
+
+系统支持 9 种动作类型，各动作的参数抽取方式如表~\ref{tab:action-schema}~所示。
+
+\begin{table}[htbp]
+    \centering
+    \caption{动作类型及其参数抽取方式}
+    \label{tab:action-schema}
+    \small
+    \begin{tabular}{llll}
+        \toprule
+        \textbf{动作类型} & \textbf{说明} & \textbf{参数抽取方式} & \textbf{优先级层级} \\
+        \midrule
+        \texttt{workspace.write} & 写入文件 & LLM & Tier 1 \\
+        \texttt{workspace.read}  & 读取文件 & 规则优先，LLM 回退 & Tier 3 \\
+        \texttt{workspace.list}  & 列出文件 & 纯规则 & Tier 4 \\
+        \texttt{workspace.delete} & 删除文件 & LLM & Tier 1 \\
+        \texttt{workspace.move}  & 移动文件 & LLM & Tier 1 \\
+        \texttt{workspace.copy}  & 复制文件 & LLM & Tier 1 \\
+        \texttt{workspace.search} & 搜索文件 & LLM & Tier 2 \\
+        \texttt{workspace.test}  & 运行测试 & LLM & Tier 2 \\
+        \texttt{run.create}      & 创建运行实例 & LLM & Tier 2 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{json_schema_tree}
+    \caption{LLM 参数抽取 JSON Schema 结构图。展示 9 种动作类型及其对应的参数字段，标 * 为必填字段。}
+    \label{fig:json_schema}
+\end{figure}
+
+\subsubsection{Priority-Based Action Matching}
+
+当用户输入满足关键词门控规则且匹配多个潜在动作时，系统采用优先级排序机制进行动作消歧。动作的优先级序列为：
+
+\begin{equation}
+\text{WRITE} \succ \text{DELETE} \succ \text{MOVE} \succ \text{COPY} \succ \text{TEST} \succ \text{SEARCH} \succ \text{READ} \succ \text{LIST}
+\end{equation}
+
+各优先级层级与对应的参数抽取策略如下：
+
+\begin{itemize}
+    \item \textbf{Tier 1（始终调用 LLM）}：包括 \texttt{workspace.write}、\texttt{workspace.delete}、\texttt{workspace.move} 和 \texttt{workspace.copy}。这些操作具有不可逆性或高风险性，需要 LLM 从用户指令中精确抽取文件路径、内容等关键参数。
+    \item \textbf{Tier 2（始终调用 LLM）}：\texttt{workspace.test}、\texttt{workspace.search}。这些操作涉及测试配置、搜索模式等复杂参数，规则抽取难以覆盖所有情况。
+    \item \textbf{Tier 3（规则优先，LLM 回退）}：\texttt{workspace.read}。优先尝试从输入中用正则表达式提取文件路径，若失败则回退至 LLM 抽取。
+    \item \textbf{Tier 4（纯规则）}：\texttt{workspace.list}。参数结构简单，仅需匹配目录路径，无需 LLM 介入。
+\end{itemize}
+
+\subsection{Visual Perception: YOLOv8 + Activity Analysis}
+
+\subsubsection{YOLOv8 Inference Pipeline}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{yolo_pipeline}
+    \caption{YOLOv8 推理管线数据流图。从截图输入到检测结果列表，标注各步骤的数据维度变化。}
+    \label{fig:yolo_pipeline}
+\end{figure}
+
+输入图像 $I \in \mathbb{R}^{H \times W \times 3}$ 经预处理后送入 YOLOv8 模型：
+
+\begin{equation}
+I' = \text{Resize}(I, 640, 640), \quad \hat{I} = \frac{I'}{255} \in [0, 1]^{3 \times 640 \times 640}
+\end{equation}
+
+系统使用微调的 YOLOv8~\cite{jocher2023yolov8} 模型（ONNX 格式，12 MB），通过 ONNX Runtime 在 CPU 上执行推理。模型输出张量 $O \in \mathbb{R}^{1 \times 10 \times 8400}$，第二维 10 $=$ 4（bbox 坐标）$+$ 6（类别得分），不包含 objectness score——这是 YOLOv8 相较于 YOLOv3~\cite{redmon2018yolov3} 等早期版本的架构变化之一，采用 anchor-free 的解耦头设计，类别得分直接作为检测置信度。转置后每列为 $[c_x, c_y, w, h, p_0, p_1, p_2, p_3, p_4, p_5]$，其中 $p_0 \dots p_5$ 分别对应 6 类 UI 元素的类别得分。
+
+模型检测的 6 类桌面 UI 元素如表~\ref{tab:ui-classes}~所示。
+
+\begin{table}[htbp]
+\centering
+\caption{YOLOv8 模型检测的桌面 UI 元素类别}
+\label{tab:ui-classes}
+\begin{tabular}{@{}cll@{}}
+\toprule
+\textbf{类 ID} & \textbf{类名} & \textbf{说明} \\
+\midrule
+0 & activewindow & 活动窗口 \\
+1 & address bar & 地址栏 \\
+2 & folder & 文件夹 \\
+3 & menubar & 菜单栏 \\
+4 & tab & 浏览器标签页 \\
+5 & window & 窗口 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+检测结果经置信度过滤（默认阈值 $\tau_{\text{vis}} = 0.4$）：
+
+\begin{equation}
+D = \{(c_j, \text{cls}_j, b_j) : \max(p_j^{(0:5)}) > \tau_{\text{vis}}\}
+\end{equation}
+
+由于本系统的检测目的是活动分析而非精确定位，后处理不执行 NMS，直接取各类别的 argmax 得分。
+
+\subsubsection{Activity Profile Mapping}
+
+系统预定义了 6 种活动场景和 3 种回退标签，采用首次匹配策略，如表~\ref{tab:activity-profiles}~所示。
+
+\begin{table}[htbp]
+\centering
+\caption{活动画像映射规则}
+\label{tab:activity-profiles}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{UI 元素组合条件} & \textbf{活动标签} & \textbf{情绪提示} \\
+\midrule
+tab $\geq$ 3 $\land$ activewindow $\geq$ 1 & browsing & neutral \\
+activewindow $\geq$ 1 $\land$ menubar $\geq$ 1 & using an application & neutral \\
+folder $\geq$ 2 & managing files & neutral \\
+address bar $\geq$ 1 $\land$ folder $\geq$ 1 & navigating files & neutral \\
+tab $\geq$ 5 & deep in research & focused \\
+activewindow $\geq$ 3 & multitasking hard & focused \\
+检测总数 $\geq$ 2（无匹配） & using computer & neutral \\
+检测总数 $<$ 2 & minimal & neutral \\
+无检测结果 & idle & lonely \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{activity_decision_tree}
+    \caption{活动画像映射决策树。按首次匹配策略依次判断 6 条主规则和 3 条回退规则，叶子节点为活动标签和情绪提示。}
+    \label{fig:activity_tree}
+\end{figure}
+
+系统维护一个基于 MD5 指纹的去重冷却机制（默认 120 秒），避免对相同屏幕状态重复生成俏皮话。
+
+\subsubsection{Integration with Roleplay Layer}
+
+视觉感知以 60 秒为周期的后台轮询运行，与文本路由并行。数据流为：Electron 截屏 $\rightarrow$ \texttt{VisionMonitor} 读取 $\rightarrow$ YOLOv8 推理 $\rightarrow$ 活动分析；再通过 \texttt{RoleplayAgent.emit\_vision\_quip()} 生成俏皮话推送至前端。当 \texttt{runtime\_tracker} 检测到用户处于活跃任务中时，视觉俏皮话生成会被挂起。
+
+\subsection{Roleplay Layer}
+
+角色层是系统的"人格外壳"，接收路由决策并生成角色一致的输出。
+
+\subsubsection{Dual Persona System Prompts}
+
+系统定义了两套系统提示（system prompt），分别服务不同场景：
+\begin{itemize}
+    \item \textbf{主角色系统提示}：角色名「未命名」，混沌善桌面精灵人设，定义情绪光谱（开心/沮丧/寂寞/吐槽）、场景化 quip 模板、语言风格约束（颜文字、拟声词、中二术语），要求 JSON 结构化输出（\texttt{chat\_line}、\texttt{expression}、\texttt{quip}、\texttt{motion} 四字段）。包含 \texttt{\{state\_context\}} 和 \texttt{\{mood\_modifier\}} 两个模板占位符，用于注入当前状态和情绪信息。
+    \item \textbf{聊天角色系统提示}：角色名「Shion」，面向纯对话场景的简化人设，不要求 JSON 输出，适合开放式闲聊。
+\end{itemize}
+
+两个角色名的差异是刻意设计：主角色为通用桌面精灵，聊天角色为特定拟人化角色，分别服务不同交互模式。
+
+\subsubsection{Emotion System}
+
+角色层内置 5 种情绪状态（happy / neutral / frustrated / tired / lonely），基于连续成功/失败/闲置计数自动流转。情绪状态通过 \texttt{\{mood\_modifier\}} 占位符注入系统提示，影响 LLM 的输出语气和表情选择。当前实现为模块级全局单例，跨会话共享。
+
+\subsubsection{Visual Context Integration}
+
+\texttt{emit\_vision\_quip(analysis)} 方法接收视觉分析结果（活动标签、元素摘要、情绪提示），构造视觉感知系统提示，通过 LLM 生成情境化的俏皮话和表情，推送至前端。系统还实现了闲置检测机制：长时间无交互时主动生成求关注的俏皮话，增强桌面陪伴感。
+
+\subsection{Work Engine Layer: LangGraph Graph Orchestration}
+
+工作引擎基于 LangGraph~\cite{langchain2024langgraph} 的有向图状态机 $G = (V, E, S)$，实现了 5 个子图，覆盖从任务规划到执行、验证、修复的完整生命周期。图~\ref{fig:langgraph}~展示了 5 个子图的拓扑结构与调用关系。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{langgraph_topology}
+    \caption{LangGraph 工作引擎完整拓扑图。5 个子图（Agent Loop、Coding Workflow、File Workflow、Repair Decision、Summary）之间的调用关系和状态传递。}
+    \label{fig:langgraph}
+\end{figure}
+
+\subsubsection{Agent Loop Graph}
+
+主控循环图（6 节点），编排单轮对话中的任务执行：\texttt{plan\_node}（构建动作计划）$\rightarrow$ \texttt{act\_node}（分发到动作注册表或编码子图）$\rightarrow$ \texttt{observe\_node}（评估执行结果）$\rightarrow$ \texttt{decide\_continue\_node}（检查步数上限 15 步，决定继续循环、完成或失败）。终端节点为 \texttt{finalize\_node} 和 \texttt{failure\_node}。
+
+\subsubsection{Coding Workflow Graph}
+
+代码生成的完整工作流（8 节点）：\texttt{start\_node} $\rightarrow$ \texttt{pm\_node}（构建任务列表）$\rightarrow$ \texttt{coder\_node}（LLM Planner 生成 JSON 执行计划，不可用时回退到规则引擎）$\rightarrow$ \texttt{executor\_node}（执行计划）$\rightarrow$ \texttt{finish\_node}。失败路径为：\texttt{executor\_node} $\rightarrow$ \texttt{qa\_node}（汇总错误）$\rightarrow$ \texttt{debugger\_node}（规则修复，最大调试步数 $=$ 1）$\rightarrow$ \texttt{executor\_node}（重试）。
+
+\subsubsection{File Workflow Graph}
+
+文件操作的专用工作流（5 节点），支持 9 种文件操作：\texttt{workspace.read}、\texttt{workspace.write}、\texttt{workspace.list}、\texttt{workspace.move}、\texttt{workspace.copy}、\texttt{workspace.delete}、\texttt{workspace.search}、\texttt{workspace.test}（执行 pytest）、\texttt{workspace.export\_desktop}。\texttt{observer\_node} 负责将文件操作结果合并到上下文状态中，供后续对话使用。
+
+\subsubsection{Repair Decision Graph}
+
+脚本执行失败后启动自动修复决策（6 节点），依次执行：\texttt{inspect\_failure\_node} 汇总失败信息，\texttt{eligibility\_node} 检查 LLM 可用性和修复预算，\texttt{qa\_node} 分析失败原因，\texttt{decision\_node} 决定是否修复，\texttt{compose\_feedback\_node} 构建反馈消息，最后 \texttt{repair\_codegen\_node} 生成修复脚本。修复流程支持循环，直到成功、预算耗尽或用户取消。
+
+\subsubsection{Summary Graphs}
+
+\texttt{run\_summary\_graph} 和 \texttt{attempt\_summary\_graph} 分别在运行完成和单次尝试后生成 LLM 摘要，并通过角色层包装为人设风格的输出。
+
+\subsubsection{Execution Environment}
+
+代码执行采用本地 Python 子进程（\texttt{subprocess.\-Popen(\-shell=False)}），并配有安全过滤机制。阻塞的 shell 解释器包括 cmd、powershell、sh、bash；阻塞的危险参数包括 rm、del、format、shutdown、taskkill 等。所有文件操作限定在工作空间目录内，含路径穿越保护和敏感文件排除（.env、credentials.json 等）。文件操作仅支持 UTF-8 编码的文本文件。
+
+\subsection{State Management and Memory}
+
+采用 Hermes 风格的结构化记忆事件：
+
+\begin{equation}
+m_t = (\text{turn\_index}, \text{timestamp}, \text{user\_input}, \text{intent}, \text{action\_name}, \text{result\_summary}, \text{ok}, \text{error})
+\end{equation}
+
+记忆以滑动窗口方式管理，窗口大小为 12 条事件（\texttt{MAX\_RECENT\_EVENTS} $= 12$），存储在内存中的 \texttt{dict[str, deque[MemoryEvent]]}（按 session\_id 索引）。每轮对话结束后自动记录记忆事件，后续对话时通过 \texttt{build\_context()} 方法将最近的记忆事件格式化为文本注入 LLM 上下文。图~\ref{fig:memory}~展示了滑动窗口机制和 \texttt{build\_context()} 的输出格式。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{memory_sliding_window}
+    \caption{记忆系统滑动窗口示意图。左侧为 maxlen=12 的 deque 结构，右侧为 \texttt{build\_context()} 生成的格式化文本块示例。}
+    \label{fig:memory}
+\end{figure}
+
+当前限制：记忆仅存于内存，无磁盘持久化，服务重启即丢失。压缩归档和工作记忆层尚未实现，作为未来工作。
