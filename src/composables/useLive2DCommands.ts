@@ -138,7 +138,7 @@ export function useLive2DCommands(modelFns: {
           `motions: ${motionGroups.length} groups\n` +
           (motionGroups.length ? motionGroups.map((g) => `- ${g}: ${meta.motions[g]}`).join('\n') + '\n' : '') +
           `expressions: ${meta.expressions.length}\n` +
-          (meta.expressions.length ? meta.expressions.map((e) => `- ${e}`).join('\n') + '\n' : ''),
+          (meta.expressions.length ? meta.expressions.map((e: any) => `- ${e}`).join('\n') + '\n' : ''),
       }
     }
 
@@ -152,7 +152,7 @@ export function useLive2DCommands(modelFns: {
         if (!cat.motions.length) return { ok: true, output: '(none)' }
         return {
           ok: true,
-          output: cat.motions.map((a) => `${a.id}  # ${a.label}`).join('\n'),
+          output: cat.motions.map((a: any) => `${a.id}  # ${a.label}`).join('\n'),
         }
       }
       if (target === 'expressions') {
@@ -161,7 +161,7 @@ export function useLive2DCommands(modelFns: {
         if (!cat.expressions.length) return { ok: true, output: '(none)' }
         return {
           ok: true,
-          output: cat.expressions.map((a) => `${a.id}  # ${a.label}`).join('\n'),
+          output: cat.expressions.map((a: any) => `${a.id}  # ${a.label}`).join('\n'),
         }
       }
 

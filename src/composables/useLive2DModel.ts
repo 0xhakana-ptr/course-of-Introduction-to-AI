@@ -43,9 +43,6 @@ export function useLive2DModel(options: {
   // ─── Module-level state ────────────────────────────────────────────────────
 
   let pixiApp: PIXI.Application | null = null
-  let disposed = false
-  let resizeHandler: (() => void) | null = null
-  let layoutRaf: number | null = null
 
   let currentModel: any = null
   let currentModelSettingsUrl: string | null = null
@@ -885,6 +882,24 @@ export function useLive2DModel(options: {
     }
   }
 
+  // ─── State setters (needed by App.vue after model loading / cleanup) ──────
+
+  function setCurrentModel(m: any) {
+    currentModel = m
+  }
+
+  function setCurrentModelSettingsUrl(url: string | null) {
+    currentModelSettingsUrl = url
+  }
+
+  function resetCachedMeta() {
+    cachedMeta = null
+  }
+
+  function setPixiApp(app: PIXI.Application | null) {
+    pixiApp = app
+  }
+
   // ─── Return ────────────────────────────────────────────────────────────────
 
   return {
@@ -899,6 +914,12 @@ export function useLive2DModel(options: {
     activeExpressionHandles,
     pinnedExpressionHandleKeys,
     getLastMetaError: () => lastMetaError,
+
+    // State setters
+    setCurrentModel,
+    setCurrentModelSettingsUrl,
+    resetCachedMeta,
+    setPixiApp,
 
     // Model lifecycle
     ensureRuntimeLoaded,
