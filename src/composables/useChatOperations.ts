@@ -1,5 +1,5 @@
 import { computed, nextTick, ref, type Ref } from 'vue'
-import type { ChatLine, AgentChatResponse, MessageRenderMode } from './useAgentMessages'
+import type { ChatLine, AgentChatResponse } from './useAgentMessages'
 
 // ---- Desktop export patterns ----
 const DESKTOP_EXPORT_TARGET_PATTERN = /(桌面|desktop)/i
@@ -24,11 +24,11 @@ interface UseChatOperationsOptions {
   focusInputSoon: () => void
   buildContext: (maxChars?: number) => string
   normalizeAssistantContent: (text: string) => string
-  statusTickerRef: Ref<StatusTickerLike | null>
+  statusTickerRef?: Ref<StatusTickerLike | null>
 }
 
 export function useChatOperations(options: UseChatOperationsOptions) {
-  const { ipcRenderer, lines, push, clearScreen, focusInputSoon, buildContext, normalizeAssistantContent, statusTickerRef } = options
+  const { ipcRenderer, lines, push, clearScreen, focusInputSoon, buildContext, normalizeAssistantContent } = options
 
   // ---- Session state ----
   const currentSessionId = ref<string>('')
@@ -42,7 +42,6 @@ export function useChatOperations(options: UseChatOperationsOptions) {
   // ---- Refs for DOM elements ----
   const inputRef = ref<HTMLTextAreaElement | null>(null)
   const outputRef = ref<HTMLDivElement | null>(null)
-  const statusTickerRef = options.statusTickerRef
 
   const canInvoke = computed(() => Boolean(ipcRenderer?.invoke))
 

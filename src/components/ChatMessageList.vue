@@ -12,87 +12,68 @@ defineProps<{
 </script>
 
 <template>
-  <div class="msg-list" role="log" aria-live="polite">
-    <div v-for="(l, i) in lines" :key="i" class="msg-row" :class="l.role">
-      <!-- Assistant with rich text -->
-      <div v-if="shouldRenderRichMessage(l)" class="msg-bubble assistant">
-        <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
-        <div class="msg-content rich" v-html="renderAssistantText(l.text)" />
-        <div class="msg-copy-row" v-if="hasCodeBlocks(l.text)">
-          <button class="copy-code-btn" @click="copyLastCodeBlock(l.text)">复制代码</button>
-        </div>
+  <div v-for="(l, i) in lines" :key="i" class="msg-row" :class="l.role">
+    <!-- Assistant with rich text -->
+    <div v-if="shouldRenderRichMessage(l)" class="msg-bubble assistant">
+      <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+      <div class="msg-content rich" v-html="renderAssistantText(l.text)" />
+      <div class="msg-copy-row" v-if="hasCodeBlocks(l.text)">
+        <button class="copy-code-btn" @click="copyLastCodeBlock(l.text)">复制代码</button>
       </div>
-      <!-- File action card -->
-      <div v-else-if="l.fileAction" class="msg-bubble assistant">
-        <div class="file-action-card" :class="l.fileAction.status">
-          <div class="file-action-head">
-            <span class="file-action-title">{{ l.fileAction.title }}</span>
-            <span class="file-action-badge">{{ l.fileAction.status }}</span>
-          </div>
-          <button class="msg-copy-btn" @click="copyMessage(l.fileAction.title + ' - ' + l.fileAction.status)" title="复制">
+    </div>
+    <!-- File action card -->
+    <div v-else-if="l.fileAction" class="msg-bubble assistant">
+      <div class="file-action-card" :class="l.fileAction.status">
+        <div class="file-action-head">
+          <span class="file-action-title">{{ l.fileAction.title }}</span>
+          <span class="file-action-badge">{{ l.fileAction.status }}</span>
+        </div>
+        <button class="msg-copy-btn" @click="copyMessage(l.fileAction.title + ' - ' + l.fileAction.status)" title="复制">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
         <div class="file-action-boxes">
-            <div class="fa-box" v-if="l.fileAction.actionName">
-              <span class="fa-box-label">动作</span>
-              <code class="fa-box-value">{{ l.fileAction.actionName }}</code>
-            </div>
-            <div class="fa-box" v-if="l.fileAction.tool">
-              <span class="fa-box-label">工具</span>
-              <code class="fa-box-value">{{ l.fileAction.tool }}</code>
-            </div>
-            <div class="fa-box fa-box-error" v-if="l.fileAction.error">
-              <span class="fa-box-label">错误</span>
-              <code class="fa-box-value">{{ l.fileAction.error }}</code>
-            </div>
+          <div class="fa-box" v-if="l.fileAction.actionName">
+            <span class="fa-box-label">动作</span>
+            <code class="fa-box-value">{{ l.fileAction.actionName }}</code>
           </div>
-          <div class="file-action-meta" v-if="l.fileAction.source || l.fileAction.target || l.fileAction.query || typeof l.fileAction.matchCount === 'number'">
-            <span v-if="l.fileAction.source">来源: {{ l.fileAction.source }}</span>
-            <span v-if="l.fileAction.target">目标: {{ l.fileAction.target }}</span>
-            <span v-if="l.fileAction.query">查询: {{ l.fileAction.query }}</span>
-            <span v-if="typeof l.fileAction.matchCount === 'number'">命中: {{ l.fileAction.matchCount }}</span>
+          <div class="fa-box" v-if="l.fileAction.tool">
+            <span class="fa-box-label">工具</span>
+            <code class="fa-box-value">{{ l.fileAction.tool }}</code>
+          </div>
+          <div class="fa-box fa-box-error" v-if="l.fileAction.error">
+            <span class="fa-box-label">错误</span>
+            <code class="fa-box-value">{{ l.fileAction.error }}</code>
           </div>
         </div>
-      </div>
-      <!-- User message -->
-      <div v-else-if="l.role === 'user'" class="msg-bubble user">
-        <div class="msg-content">{{ l.text }}</div>
-        <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
-      </div>
-      <!-- System / error -->
-      <div v-else class="msg-bubble system">
-        <div class="msg-content">{{ l.text }}</div>
-        <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        </button>
+        <div class="file-action-meta" v-if="l.fileAction.source || l.fileAction.target || l.fileAction.query || typeof l.fileAction.matchCount === 'number'">
+          <span v-if="l.fileAction.source">来源: {{ l.fileAction.source }}</span>
+          <span v-if="l.fileAction.target">目标: {{ l.fileAction.target }}</span>
+          <span v-if="l.fileAction.query">查询: {{ l.fileAction.query }}</span>
+          <span v-if="typeof l.fileAction.matchCount === 'number'">命中: {{ l.fileAction.matchCount }}</span>
+        </div>
       </div>
     </div>
+    <!-- User message -->
+    <div v-else-if="l.role === 'user'" class="msg-bubble user">
+      <div class="msg-content">{{ l.text }}</div>
+      <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+    </div>
+    <!-- System / error -->
+    <div v-else class="msg-bubble system">
+      <div class="msg-content">{{ l.text }}</div>
+      <button class="msg-copy-btn" @click="copyMessage(l.text)" title="复制">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+    </div>
   </div>
+  <slot name="after-messages" />
 </template>
 
 <style scoped>
-/* ---- Messages ---- */
-.msg-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  scroll-behavior: smooth;
-}
-.msg-list::-webkit-scrollbar {
-  width: 5px;
-}
-.msg-list::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 99px;
-}
-
 .msg-row {
   display: flex;
   animation: fadeInUp 0.28s ease-out;

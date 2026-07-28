@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { ref } from 'vue'
+
 defineProps<{
   modelValue: string
   isSending: boolean
@@ -10,12 +12,16 @@ defineProps<{
 const emit = defineEmits<{
   'update:modelValue': [value: string]
 }>()
+
+const textarea = ref<HTMLTextAreaElement | null>(null)
+defineExpose({ textarea })
 </script>
 
 <template>
   <div class="input-area">
     <div class="input-row">
       <textarea
+        ref="textarea"
         :value="modelValue"
         :disabled="isSending"
         class="chat-input"
