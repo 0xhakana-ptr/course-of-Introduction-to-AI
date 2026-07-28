@@ -171,7 +171,7 @@ function resolveWorkspaceStatePath(): string {
     return path.join(app.getPath('userData'), 'workspace.json')
 }
 
-function loadWorkspacePath(): string | null {
+export function loadWorkspacePath(): string | null {
     try {
         const fp = resolveWorkspaceStatePath()
         if (!fs.existsSync(fp)) return null
@@ -184,7 +184,7 @@ function loadWorkspacePath(): string | null {
     }
 }
 
-function saveWorkspacePath(p: string): void {
+export function saveWorkspacePath(p: string): void {
     const normalized = String(p ?? '').trim()
     if (!normalized) return
     try {

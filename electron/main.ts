@@ -1,5 +1,5 @@
-﻿// electron/main.ts
-import { app, BrowserWindow, ipcMain, screen, dialog, desktopCapturer } from 'electron'
+// electron/main.ts
+import { app, BrowserWindow, ipcMain, screen, dialog } from 'electron'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
@@ -7,9 +7,57 @@ import { installGlobalMouseTracking } from './mouseTracking'
 import * as wsNamespace from 'ws'
 import type { WebSocketServer as WebSocketServerType } from 'ws'
 
-// Optional GPU/DComp workarounds (opt-in via env vars).
+import type {
+    Live2DCommandResponse,
+    Live2DApiRequest,
+    Live2DApiResponse,
+    AgentMessageEnvelope,
+    QuipMessage,
+    ExpressionMessage,
+    ChatMessage,
+    ErrorMessage,
+    StatusUpdate,
+    SidecarFilesResponse,
+    AgentChatRequest,
+    AgentChatResponse,
+} from './types'
+
+import {
+    createMainWindow,
+    createConsoleWindow,
+    createChatWindow,
+    showAndFocus,
+} from './windows'
+import type { WindowSet } from './windows'
+
+import {
+    resolveAgentBaseUrl,
+    fetchBackendWorkspace,
+    syncBackendWorkspace,
+    loadWorkspacePath,
+    saveWorkspacePath,
+    dispatchAgentMessage,
+    startBackendMessageBridge,
+    stopBackendMessageBridge,
+} from './backend-bridge'
+
+import {
+    handleManualResizeStart,
+    handleManualResizeEnd,
+    handleManualDragStart,
+    handleManualDragEnd,
+} from './window-manipulation'
+
+import {
+    startVisionScreenshotLoop,
+    stopVisionScreenshotLoop,
+} from './vision'
+
+// ---------------------------------------------------------------------------
+// Optional GPU / DComp workarounds (opt-in via env vars).
 // Some AMD driver + Chromium combos can spam DirectComposition errors.
-// Keep defaults unchanged to avoid impacting WebGL/Live2D.
+// Keep defaults unchanged to avoid impacting WebGL / Live2D.
+// ---------------------------------------------------------------------------
 const disableDComp = String(process.env.ELECTRON_DISABLE_DCOMP ?? '').trim() === '1'
 if (disableDComp) {
     app.commandLine.appendSwitch('disable-direct-composition')
@@ -21,112 +69,24 @@ if (forceAngle) {
     app.commandLine.appendSwitch('use-angle', forceAngle)
 }
 
-let mainWindow: BrowserWindow | null
-let consoleWindow: BrowserWindow | null
-let chatWindow: BrowserWindow | null
+// ---------------------------------------------------------------------------
+// Top-level mutable state
+// ---------------------------------------------------------------------------
+const windows: WindowSet = { mainWindow: null, consoleWindow: null, chatWindow: null }
 let mouseTracking: { dispose: () => void } | null = null
-const mouseTrackDebug = String(process.env.MOUSETRACK_DEBUG ?? '').trim() === '1'
 
-type Live2DCommandResponse = { ok: boolean; output: string }
+// ---------------------------------------------------------------------------
+// Live2D command bridge (CLI window -> main window renderer)
+// ---------------------------------------------------------------------------
 const pendingCommandResponses = new Map<string, (value: Live2DCommandResponse) => void>()
 
-// AI Agent 消息类型定义
-type QuipMessage = {
-    type: 'quip'
-    content: string
-    node_name: string
-    timestamp: string
-    event_type?: string
-    event_source?: string
-    event_stage?: string
-    metadata?: {
-        priority: 'low' | 'medium' | 'high'
-        duration?: number
-        node_label?: string
-        phase?: string
-        runtime_event?: string
-    }
-}
-
-type ExpressionMessage = {
-    type: 'expression'
-    expression: string
-    intensity?: number
-    node_name: string
-    timestamp: string
-    metadata?: {
-        duration?: number
-        transition?: 'smooth' | 'instant'
-    }
-}
-
-type ChatMessage = {
-    type: 'chat'
-    role: 'user' | 'assistant' | 'system'
-    content: string
-    timestamp: string
-    metadata?: {
-        is_partial: boolean
-        sequence_id?: number
-        total_parts?: number
-        node_name?: string
-    }
-}
-
-type ErrorMessage = {
-    type: 'error'
-    code: string
-    message: string
-    details?: any
-    timestamp: string
-    node_name?: string
-}
-
-type StatusUpdate = {
-    type: 'status'
-    status: 'idle' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
-    progress?: number
-    node_name?: string
-    timestamp: string
-    event_type?: string
-    event_source?: string
-    event_stage?: string
-    metadata?: {
-        node_label?: string
-        phase?: string
-        runtime_event?: string
-        action_name?: string
-        action_label?: string
-        action_status?: 'started' | 'completed' | 'failed'
-        action_category?: string
-        safety_level?: string
-        requires_confirmation?: boolean
-    }
-}
-
-type AgentMessage = QuipMessage | ExpressionMessage | ChatMessage | ErrorMessage | StatusUpdate
-type AgentMessageEnvelope = AgentMessage & {
-    _id?: string
-    _channel?: string
-    _timestamp?: string
-}
-type BackendMessagesResponse = {
-    ok?: boolean
-    messages?: unknown[]
-    count?: number
-}
-
-type Live2DApiRequest =
-    | { op: 'status' }
-    | { op: 'list'; type?: 'expression' | 'motion' }
-    | { op: 'stop' }
-    | { op: 'play'; type: 'expression' | 'motion'; id: string; mode?: 'set' | 'add' }
-
-type Live2DApiResponse = { ok: boolean; data?: any; error?: string }
+// ---------------------------------------------------------------------------
+// Live2D API request / response bridge (WebSocket server -> renderer)
+// ---------------------------------------------------------------------------
 const pendingApiResponses = new Map<string, { resolve: (value: Live2DApiResponse) => void; timeout: NodeJS.Timeout }>()
 
 function requestLive2DApi(payload: Live2DApiRequest, timeoutMs = 5000): Promise<Live2DApiResponse> {
-    if (!mainWindow || mainWindow.isDestroyed()) {
+    if (!windows.mainWindow || windows.mainWindow.isDestroyed()) {
         return Promise.resolve({ ok: false, error: '主窗口未就绪（mainWindow missing）' })
     }
 
@@ -141,7 +101,7 @@ function requestLive2DApi(payload: Live2DApiRequest, timeoutMs = 5000): Promise<
         }, timeoutMs)
 
         pendingApiResponses.set(id, { resolve, timeout })
-        mainWindow!.webContents.send('live2d:apiRequest', { id, payload })
+        windows.mainWindow!.webContents.send('live2d:apiRequest', { id, payload })
     })
 }
 
@@ -160,6 +120,9 @@ ipcMain.on('live2d:apiResponse', (_event, payload: any) => {
     pending.resolve({ ok, data, error })
 })
 
+// ---------------------------------------------------------------------------
+// Live2D WebSocket server (external tools can control the Live2D model)
+// ---------------------------------------------------------------------------
 const wsCompat = wsNamespace as typeof wsNamespace & {
     default?: {
         WebSocketServer?: new (...args: any[]) => WebSocketServerType
@@ -251,241 +214,9 @@ function startLive2DWebSocketServer() {
     })
 }
 
-function createWindow() {
-    mainWindow = new BrowserWindow({
-        width: 800,
-        height: 800,
-        minWidth: 320,
-        minHeight: 320,
-        backgroundColor: '#00000000',
-        transparent: true,    // 背景透明 
-        frame: false,          // 无边框 [cite: 28, 133]
-        alwaysOnTop: true,    // 永远置顶
-        hasShadow: false,
-        skipTaskbar: true,
-        // 允许缩放，但不使用 Windows 的 thickFrame（它会带来可见/可拖拽的系统边框）；缩放由渲染层热区 + setBounds 实现。
-        resizable: true,
-        thickFrame: false,
-        webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-        },
-    })
-
-    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
-        console.error('[did-fail-load]', { errorCode, errorDescription, validatedURL })
-    })
-
-    if (mouseTrackDebug) {
-        mainWindow.webContents.on('console-message', (_event: any, a: any, b?: any, c?: any, d?: any) => {
-            // Electron versions differ:
-            // - Old: (event, level, message, line, sourceId)
-            // - New: (event, { level, message, lineNumber, sourceId })
-            let level = 0
-            let message = ''
-            let line = 0
-            let sourceId = ''
-
-            if (typeof a === 'number') {
-                level = a
-                message = typeof b === 'string' ? b : String(b ?? '')
-                line = typeof c === 'number' ? c : 0
-                sourceId = typeof d === 'string' ? d : ''
-            } else {
-                const params = a
-                level = typeof params?.level === 'number' ? params.level : 0
-                message = typeof params?.message === 'string' ? params.message : String(params?.message ?? '')
-                line = typeof params?.lineNumber === 'number' ? params.lineNumber : typeof params?.line === 'number' ? params.line : 0
-                sourceId = typeof params?.sourceId === 'string' ? params.sourceId : ''
-            }
-
-            // level: 0=log, 1=warning, 2=error
-            const tag = level === 2 ? 'error' : level === 1 ? 'warn' : 'log'
-            console.log(`[renderer:${tag}] ${message}${sourceId ? ` (${sourceId}:${line})` : ''}`)
-        })
-    }
-
-    if (!app.isPackaged) {
-        const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
-        void mainWindow.loadURL(devServerUrl)
-        return
-    }
-
-    void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
-}
-
-function showAndFocus(win: BrowserWindow) {
-    if (win.isDestroyed()) return
-    if (!win.isVisible()) win.show()
-    if (win.isMinimized()) win.restore()
-    win.focus()
-}
-
-function createConsoleWindow() {
-    if (consoleWindow && !consoleWindow.isDestroyed()) {
-        showAndFocus(consoleWindow)
-        return
-    }
-
-    consoleWindow = new BrowserWindow({
-        width: 520,
-        height: 520,
-        minWidth: 420,
-        minHeight: 320,
-        title: 'Live2D 控制台',
-        backgroundColor: '#111111',
-        transparent: false,
-        frame: true,
-        alwaysOnTop: false,
-        resizable: true,
-        skipTaskbar: false,
-        webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-        },
-    })
-
-    consoleWindow.on('closed', () => {
-        consoleWindow = null
-    })
-
-    if (!app.isPackaged) {
-        const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
-        void consoleWindow.loadURL(`${devServerUrl}/?mode=cli`)
-        return
-    }
-
-    void consoleWindow.loadFile(path.join(__dirname, '../dist/index.html'), {
-        query: { mode: 'cli' },
-    })
-}
-
-function createChatWindow() {
-    if (chatWindow && !chatWindow.isDestroyed()) {
-        showAndFocus(chatWindow)
-        return
-    }
-
-    chatWindow = new BrowserWindow({
-        width: 880,
-        height: 720,
-        minWidth: 520,
-        minHeight: 420,
-        title: 'AI Chat',
-        backgroundColor: '#111111',
-        transparent: false,
-        frame: true,
-        alwaysOnTop: false,
-        resizable: true,
-        skipTaskbar: false,
-        webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
-        },
-    })
-
-    chatWindow.on('closed', () => {
-        chatWindow = null
-    })
-
-    if (!app.isPackaged) {
-        const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
-        void chatWindow.loadURL(`${devServerUrl}/?mode=chat`)
-        return
-    }
-
-    void chatWindow.loadFile(path.join(__dirname, '../dist/index.html'), {
-        query: { mode: 'chat' },
-    })
-}
-
-ipcMain.on('ui:openConsole', () => {
-    createConsoleWindow()
-})
-
-ipcMain.on('ui:openChat', () => {
-    createChatWindow()
-})
-
-ipcMain.on('ui:toggleConsole', () => {
-    if (consoleWindow && !consoleWindow.isDestroyed()) {
-        if (consoleWindow.isVisible() && !consoleWindow.isMinimized()) {
-            consoleWindow.hide()
-        } else {
-            showAndFocus(consoleWindow)
-        }
-        return
-    }
-
-    createConsoleWindow()
-})
-
-ipcMain.on('ui:toggleChat', () => {
-    if (chatWindow && !chatWindow.isDestroyed()) {
-        if (chatWindow.isVisible() && !chatWindow.isMinimized()) {
-            chatWindow.hide()
-        } else {
-            showAndFocus(chatWindow)
-        }
-        return
-    }
-
-    createChatWindow()
-})
-
-ipcMain.on('ui:toggleDevTools', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    if (mainWindow.webContents.isDevToolsOpened()) {
-        mainWindow.webContents.closeDevTools()
-    } else {
-        mainWindow.webContents.openDevTools({ mode: 'detach' })
-    }
-})
-
-// 🌟 核心：监听来自 Vue 前端的退出信号 
-ipcMain.on('close-app', () => {
-    app.quit()
-})
-
-ipcMain.on('chat:focus-window', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    if (win.isMinimized()) win.restore()
-    win.focus()
-})
-
-// Window click-through toggle (used for hover-fade passthrough UX)
-ipcMain.on('window:setIgnoreMouseEvents', (event, ignore: unknown) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-
-    const shouldIgnore = Boolean(ignore)
-    if (shouldIgnore) {
-        // forward=true keeps mouse-move events delivered to renderer so it can detect Ctrl state.
-        win.setIgnoreMouseEvents(true, { forward: true })
-    } else {
-        win.setIgnoreMouseEvents(false)
-    }
-})
-
-
-type AgentChatRequest = {
-    prompt: string
-    // Optional context string; UI may pass recent history.
-    context?: string
-    sessionId?: string
-}
-
-type AgentChatResponse = {
-    ok: boolean
-    output: string
-    error?: string
-    run_id?: string | null
-    session_id?: string
-    content_type?: 'plain_text' | 'markdown'
-    render_mode?: 'plain_text' | 'rich_text'
-}
-
+// ---------------------------------------------------------------------------
+// Backend agent runner (chat)
+// ---------------------------------------------------------------------------
 async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse> {
     const prompt = typeof req?.prompt === 'string' ? req.prompt.trim() : ''
     const context = typeof req?.context === 'string' ? req.context : ''
@@ -544,12 +275,93 @@ async function runBackendAgent(req: AgentChatRequest): Promise<AgentChatResponse
     }
 }
 
-ipcMain.handle('agent:chat', async (_event, payload: unknown): Promise<AgentChatResponse> => {
-    const p = payload as Partial<AgentChatRequest> | null
-    return await runBackendAgent({ prompt: String(p?.prompt ?? ''), context: typeof p?.context === 'string' ? p.context : '', sessionId: typeof p?.sessionId === 'string' ? p.sessionId : undefined })
+// ---------------------------------------------------------------------------
+// IPC handlers — UI windows
+// ---------------------------------------------------------------------------
+ipcMain.on('ui:openConsole', () => {
+    createConsoleWindow(windows)
 })
 
-// Workspace selection (chat window)
+ipcMain.on('ui:openChat', () => {
+    createChatWindow(windows)
+})
+
+ipcMain.on('ui:toggleConsole', () => {
+    if (windows.consoleWindow && !windows.consoleWindow.isDestroyed()) {
+        if (windows.consoleWindow.isVisible() && !windows.consoleWindow.isMinimized()) {
+            windows.consoleWindow.hide()
+        } else {
+            showAndFocus(windows.consoleWindow)
+        }
+        return
+    }
+
+    createConsoleWindow(windows)
+})
+
+ipcMain.on('ui:toggleChat', () => {
+    if (windows.chatWindow && !windows.chatWindow.isDestroyed()) {
+        if (windows.chatWindow.isVisible() && !windows.chatWindow.isMinimized()) {
+            windows.chatWindow.hide()
+        } else {
+            showAndFocus(windows.chatWindow)
+        }
+        return
+    }
+
+    createChatWindow(windows)
+})
+
+ipcMain.on('ui:toggleDevTools', () => {
+    if (!windows.mainWindow || windows.mainWindow.isDestroyed()) return
+    if (windows.mainWindow.webContents.isDevToolsOpened()) {
+        windows.mainWindow.webContents.closeDevTools()
+    } else {
+        windows.mainWindow.webContents.openDevTools({ mode: 'detach' })
+    }
+})
+
+// 🌟 核心：监听来自 Vue 前端的退出信号
+ipcMain.on('close-app', () => {
+    app.quit()
+})
+
+ipcMain.on('chat:focus-window', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+})
+
+// Window click-through toggle (used for hover-fade passthrough UX)
+ipcMain.on('window:setIgnoreMouseEvents', (event, ignore: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+
+    const shouldIgnore = Boolean(ignore)
+    if (shouldIgnore) {
+        // forward=true keeps mouse-move events delivered to renderer so it can detect Ctrl state.
+        win.setIgnoreMouseEvents(true, { forward: true })
+    } else {
+        win.setIgnoreMouseEvents(false)
+    }
+})
+
+// ---------------------------------------------------------------------------
+// IPC handlers — agent chat
+// ---------------------------------------------------------------------------
+ipcMain.handle('agent:chat', async (_event, payload: unknown): Promise<AgentChatResponse> => {
+    const p = payload as Partial<AgentChatRequest> | null
+    return await runBackendAgent({
+        prompt: String(p?.prompt ?? ''),
+        context: typeof p?.context === 'string' ? p.context : '',
+        sessionId: typeof p?.sessionId === 'string' ? p.sessionId : undefined,
+    })
+})
+
+// ---------------------------------------------------------------------------
+// IPC handlers — workspace selection (chat window)
+// ---------------------------------------------------------------------------
 ipcMain.handle('chat:getWorkspace', async (): Promise<any> => {
     const p = loadWorkspacePath()
     if (p) {
@@ -588,6 +400,9 @@ ipcMain.handle('chat:pickWorkspace', async (): Promise<any> => {
     }
 })
 
+// ---------------------------------------------------------------------------
+// IPC handlers — cursor detection
+// ---------------------------------------------------------------------------
 ipcMain.handle('window:isCursorOver', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed()) return false
@@ -597,7 +412,9 @@ ipcMain.handle('window:isCursorOver', (event) => {
     return x >= b.x && x < b.x + b.width && y >= b.y && y < b.y + b.height
 })
 
-// Chat session management via backend API
+// ---------------------------------------------------------------------------
+// IPC handlers — chat session management via backend API
+// ---------------------------------------------------------------------------
 ipcMain.handle('chat:listSessions', async (_event, payload: unknown): Promise<any> => {
     const baseUrl = resolveAgentBaseUrl()
     if (!baseUrl) return { ok: false, sessions: [] }
@@ -675,9 +492,11 @@ ipcMain.handle('chat:exportSession', async (_event, payload: unknown): Promise<a
     }
 })
 
-// CLI window -> main window command bridge
+// ---------------------------------------------------------------------------
+// IPC handlers — Live2D command bridge (CLI window -> main window renderer)
+// ---------------------------------------------------------------------------
 ipcMain.handle('live2d:command', async (_event, cmd: unknown): Promise<Live2DCommandResponse> => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
+    if (!windows.mainWindow || windows.mainWindow.isDestroyed()) {
         return { ok: false, output: '主窗口未就绪（mainWindow missing）' }
     }
 
@@ -688,7 +507,7 @@ ipcMain.handle('live2d:command', async (_event, cmd: unknown): Promise<Live2DCom
 
     const response = await new Promise<Live2DCommandResponse>((resolve) => {
         pendingCommandResponses.set(id, resolve)
-        mainWindow!.webContents.send('live2d:command', { id, cmd: commandText })
+        windows.mainWindow!.webContents.send('live2d:command', { id, cmd: commandText })
 
         setTimeout(() => {
             const pending = pendingCommandResponses.get(id)
@@ -713,391 +532,43 @@ ipcMain.on('live2d:commandResult', (_event, payload: any) => {
     resolve({ ok, output })
 })
 
-function getConfiguredAgentEndpoint(): string | null {
-    const endpoint = String(process.env.AI_AGENT_ENDPOINT ?? '').trim()
-    return endpoint || null
-}
-
-function normalizeBaseUrl(value: string): string {
-    return value.replace(/\/+$/, '')
-}
-
-function resolveAgentBaseUrl(): string | null {
-    const explicitBaseUrl = String(
-        process.env.AI_AGENT_BASE_URL
-        ?? process.env.BACKEND_BASE_URL
-        ?? '',
-    ).trim()
-    if (explicitBaseUrl) {
-        return normalizeBaseUrl(explicitBaseUrl)
-    }
-
-    const endpoint = getConfiguredAgentEndpoint()
-    if (!endpoint) return null
-
-    try {
-        const url = new URL(endpoint)
-        return normalizeBaseUrl(`${url.protocol}//${url.host}`)
-    } catch {
-        return null
-    }
-}
-
-function resolveAgentMessagesEndpoint(): string | null {
-    const explicitEndpoint = String(
-        process.env.AI_AGENT_MESSAGES_ENDPOINT
-        ?? process.env.BACKEND_MESSAGES_URL
-        ?? '',
-    ).trim()
-    if (explicitEndpoint) {
-        return explicitEndpoint
-    }
-
-    const baseUrl = resolveAgentBaseUrl()
-    if (!baseUrl) return null
-    return `${baseUrl}/messages`
-}
-
-async function fetchBackendWorkspace(): Promise<string | null> {
-    const baseUrl = resolveAgentBaseUrl()
-    if (!baseUrl) return null
-    try {
-        const response = await fetch(`${baseUrl}/workspace`, {
-            method: 'GET',
-            headers: { accept: 'application/json' },
-        })
-        if (!response.ok) return null
-        const payload = await response.json() as { path?: unknown }
-        const workspacePath = String(payload?.path ?? '').trim()
-        return workspacePath || null
-    } catch {
-        return null
-    }
-}
-
-async function syncBackendWorkspace(workspacePath: string): Promise<void> {
-    const baseUrl = resolveAgentBaseUrl()
-    if (!baseUrl) return
-    const normalizedPath = String(workspacePath ?? '').trim()
-    if (!normalizedPath) return
-    try {
-        const response = await fetch(`${baseUrl}/workspace`, {
-            method: 'PUT',
-            headers: {
-                accept: 'application/json',
-                'content-type': 'application/json',
-            },
-            body: JSON.stringify({ path: normalizedPath }),
-        })
-        if (!response.ok) {
-            const text = await response.text()
-            console.warn(`[workspace] backend sync failed: HTTP ${response.status}: ${text}`)
-        }
-    } catch (error) {
-        console.warn(`[workspace] backend sync failed: ${String(error)}`)
-    }
-}
-
-function parsePositiveIntegerEnv(name: string, fallback: number): number {
-    const raw = String(process.env[name] ?? '').trim()
-    if (!raw) return fallback
-    const parsed = Number.parseInt(raw, 10)
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function resolveAgentMessageChannel(message: AgentMessageEnvelope): string | null {
-    if (typeof message._channel === 'string' && message._channel.trim()) {
-        return message._channel
-    }
-    if (typeof message.type === 'string' && message.type.trim()) {
-        return `agent:${message.type}`
-    }
-    return null
-}
-
-function dispatchAgentMessage(message: AgentMessageEnvelope) {
-    const channel = resolveAgentMessageChannel(message)
-    if (!channel) return
-
-    switch (channel) {
-        case 'agent:quip':
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('agent:quip', message)
-            }
-            if (chatWindow && !chatWindow.isDestroyed()) {
-                chatWindow.webContents.send('agent:quip', message)
-            }
-            if (consoleWindow && !consoleWindow.isDestroyed()) {
-                consoleWindow.webContents.send('agent:quip', message)
-            }
-            break
-        case 'agent:expression':
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.webContents.send('agent:expression', message)
-            }
-            if (consoleWindow && !consoleWindow.isDestroyed()) {
-                consoleWindow.webContents.send('agent:expression', message)
-            }
-            break
-        case 'agent:chat':
-            if (chatWindow && !chatWindow.isDestroyed()) {
-                chatWindow.webContents.send('agent:chat', message)
-            }
-            break
-        case 'agent:error':
-            if (chatWindow && !chatWindow.isDestroyed()) {
-                chatWindow.webContents.send('agent:error', message)
-            }
-            break
-        case 'agent:status':
-            if (chatWindow && !chatWindow.isDestroyed()) {
-                chatWindow.webContents.send('agent:status', message)
-            }
-            break
-    }
-}
-
-function toAgentMessageEnvelope(value: unknown): AgentMessageEnvelope | null {
-    if (!value || typeof value !== 'object') return null
-    const candidate = value as Partial<AgentMessageEnvelope>
-    if (typeof candidate.type !== 'string' || !candidate.type.trim()) return null
-    return candidate as AgentMessageEnvelope
-}
-
-let backendBridgeTimer: NodeJS.Timeout | null = null
-let backendBridgeInFlight = false
-let backendBridgeSinceId: string | null = null
-let backendBridgeLastError: string | null = null
-let backendBridgeEndpoint: string | null = null
-
-// --- Workspace selection persistence (chat window) ---
-type WorkspaceState = { path: string }
-
-function resolveWorkspaceStatePath(): string {
-    return path.join(app.getPath('userData'), 'workspace.json')
-}
-
-function loadWorkspacePath(): string | null {
-    try {
-        const fp = resolveWorkspaceStatePath()
-        if (!fs.existsSync(fp)) return null
-        const raw = fs.readFileSync(fp, 'utf-8')
-        const parsed = JSON.parse(raw) as Partial<WorkspaceState>
-        const p = String(parsed?.path ?? '').trim()
-        return p || null
-    } catch {
-        return null
-    }
-}
-
-function saveWorkspacePath(p: string): void {
-    const normalized = String(p ?? '').trim()
-    if (!normalized) return
-    try {
-        const fp = resolveWorkspaceStatePath()
-        fs.mkdirSync(path.dirname(fp), { recursive: true })
-        fs.writeFileSync(fp, JSON.stringify({ path: normalized } satisfies WorkspaceState, null, 2), 'utf-8')
-    } catch {
-        // ignore
-    }
-}
-
-async function pollBackendMessagesOnce() {
-    if (!backendBridgeEndpoint || backendBridgeInFlight) return
-    backendBridgeInFlight = true
-
-    try {
-        const url = new URL(backendBridgeEndpoint)
-        if (backendBridgeSinceId) {
-            url.searchParams.set('since_id', backendBridgeSinceId)
-        }
-
-        const timeoutMs = parsePositiveIntegerEnv('AI_AGENT_MESSAGES_TIMEOUT_MS', 8000)
-        const controller = new AbortController()
-        const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs)
-
-        const response = await fetch(url.toString(), {
-            method: 'GET',
-            headers: {
-                accept: 'application/json',
-            },
-            signal: controller.signal,
-        }).finally(() => {
-            clearTimeout(timeoutHandle)
-        })
-        const rawText = await response.text()
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${rawText || '(empty response body)'}`)
-        }
-
-        let payload: BackendMessagesResponse = {}
-        if (rawText.trim()) {
-            try {
-                payload = JSON.parse(rawText) as BackendMessagesResponse
-            } catch (error) {
-                throw new Error(`invalid JSON from /messages: ${String(error)}`)
-            }
-        }
-
-        const messages = Array.isArray(payload.messages) ? payload.messages : []
-        for (const item of messages) {
-            const message = toAgentMessageEnvelope(item)
-            if (!message) continue
-            dispatchAgentMessage(message)
-            if (typeof message._id === 'string' && message._id.trim()) {
-                backendBridgeSinceId = message._id
-            }
-        }
-
-        if (backendBridgeLastError) {
-            console.log(`[backend-bridge] reconnected: ${backendBridgeEndpoint}`)
-            backendBridgeLastError = null
-        }
-    } catch (error) {
-        const message = String(error)
-        if (backendBridgeLastError !== message) {
-            console.warn(`[backend-bridge] poll failed: ${message}`)
-            backendBridgeLastError = message
-        }
-    } finally {
-        backendBridgeInFlight = false
-    }
-}
-function startBackendMessageBridge() {
-    if (backendBridgeTimer) return
-
-    backendBridgeEndpoint = resolveAgentMessagesEndpoint()
-    if (!backendBridgeEndpoint) {
-        console.log('[backend-bridge] AI_AGENT_ENDPOINT not configured; skip polling /messages')
-        return
-    }
-
-    const intervalMs = parsePositiveIntegerEnv('AI_AGENT_MESSAGES_POLL_MS', 1000)
-    console.log(`[backend-bridge] polling ${backendBridgeEndpoint} every ${intervalMs}ms`)
-
-    void pollBackendMessagesOnce()
-    backendBridgeTimer = setInterval(() => {
-        void pollBackendMessagesOnce()
-    }, intervalMs)
-}
-function stopBackendMessageBridge() {
-    if (backendBridgeTimer) {
-        clearInterval(backendBridgeTimer)
-        backendBridgeTimer = null
-    }
-    backendBridgeInFlight = false
-    backendBridgeLastError = null
-    backendBridgeSinceId = null
-    backendBridgeEndpoint = null
-}
-
+// ---------------------------------------------------------------------------
+// IPC handlers — backend message injection (renderer -> agent channels)
+// ---------------------------------------------------------------------------
 ipcMain.on('backend:quip', (_event, data: QuipMessage) => {
-    dispatchAgentMessage({
-        ...data,
-        _channel: 'agent:quip',
-    })
+    dispatchAgentMessage({ ...data, _channel: 'agent:quip' }, windows)
 })
 
 ipcMain.on('backend:expression', (_event, data: ExpressionMessage) => {
-    dispatchAgentMessage({
-        ...data,
-        _channel: 'agent:expression',
-    })
+    dispatchAgentMessage({ ...data, _channel: 'agent:expression' }, windows)
 })
 
 ipcMain.on('backend:chat', (_event, data: ChatMessage) => {
-    dispatchAgentMessage({
-        ...data,
-        _channel: 'agent:chat',
-    })
+    dispatchAgentMessage({ ...data, _channel: 'agent:chat' }, windows)
 })
 
 ipcMain.on('backend:error', (_event, data: ErrorMessage) => {
-    dispatchAgentMessage({
-        ...data,
-        _channel: 'agent:error',
-    })
+    dispatchAgentMessage({ ...data, _channel: 'agent:error' }, windows)
 })
 
 ipcMain.on('backend:status', (_event, data: StatusUpdate) => {
-    dispatchAgentMessage({
-        ...data,
-        _channel: 'agent:status',
-    })
+    dispatchAgentMessage({ ...data, _channel: 'agent:status' }, windows)
 })
 
-
 // ---------------------------------------------------------------------------
-// Vision screenshot: periodically captures screen and saves to disk
-// for the Python backend ONNX inference pipeline.
+// App lifecycle
 // ---------------------------------------------------------------------------
-const VISION_SCREENSHOT_INTERVAL_MS = parseInt(process.env.VISION_INTERVAL_MS ?? '30000', 10)
-const VISION_SCREENSHOT_PATH = path.join(process.cwd(), 'backend', '.tmp_cache', 'vision_screenshots', 'screenshot_latest.png')
-let _visionScreenshotTimer: ReturnType<typeof setInterval> | null = null
-
-function startVisionScreenshotLoop() {
-    if (_visionScreenshotTimer) return
-    const enabled = String(process.env.VISION_ENABLED ?? 'true').trim().toLowerCase()
-    if (enabled !== 'true' && enabled !== '1' && enabled !== 'yes') {
-        console.log('[vision] disabled (VISION_ENABLED != true)')
-        return
-    }
-    console.log(`[vision] screenshot loop started, interval=${VISION_SCREENSHOT_INTERVAL_MS}ms`)
-    _visionScreenshotTimer = setInterval(captureAndSaveScreenshot, VISION_SCREENSHOT_INTERVAL_MS)
-    // Also run once immediately
-    captureAndSaveScreenshot()
-}
-
-function stopVisionScreenshotLoop() {
-    if (_visionScreenshotTimer) {
-        clearInterval(_visionScreenshotTimer)
-        _visionScreenshotTimer = null
-        console.log('[vision] screenshot loop stopped')
-    }
-}
-
-async function captureAndSaveScreenshot() {
-    try {
-        const sources = await desktopCapturer.getSources({
-            types: ['screen'],
-            thumbnailSize: { width: 640, height: 640 },
-        })
-        if (!sources || sources.length === 0) {
-            console.warn('[vision] no screen sources found')
-            return
-        }
-        // Use primary screen
-        const primary = sources[0]
-        const pngBuffer = primary.thumbnail.toPNG()
-
-        // Ensure directory exists
-        const dir = path.dirname(VISION_SCREENSHOT_PATH)
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true })
-        }
-
-        // Atomic write: write to temp then rename
-        const tmpPath = VISION_SCREENSHOT_PATH + '.tmp'
-        fs.writeFileSync(tmpPath, pngBuffer)
-        fs.renameSync(tmpPath, VISION_SCREENSHOT_PATH)
-
-        console.log(`[vision] screenshot saved: ${VISION_SCREENSHOT_PATH} (${(pngBuffer.length / 1024).toFixed(1)} KB)`)
-    } catch (err) {
-        console.error('[vision] screenshot failed:', err)
-    }
-}
-
 app.whenReady().then(() => {
-    mouseTracking = installGlobalMouseTracking(() => mainWindow)
-    createWindow()
-    createConsoleWindow()
-    createChatWindow()
+    mouseTracking = installGlobalMouseTracking(() => windows.mainWindow)
+    createMainWindow(windows)
+    createConsoleWindow(windows)
+    createChatWindow(windows)
     startLive2DWebSocketServer()
-    startBackendMessageBridge()
+    startBackendMessageBridge(windows)
     startVisionScreenshotLoop()
 
     app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow()
+        if (BrowserWindow.getAllWindows().length === 0) createMainWindow(windows)
     })
 })
 
@@ -1115,13 +586,9 @@ app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
 })
 
-type SidecarFilesResponse = {
-    ok: boolean
-    expressions: string[]
-    motions: string[]
-    error?: string
-}
-
+// ---------------------------------------------------------------------------
+// IPC handlers — Live2D sidecar file listing
+// ---------------------------------------------------------------------------
 function getProjectRoot(): string {
     // In dev, vite-plugin-electron typically runs with cwd at project root.
     // Be defensive in case the workspace root is used.
@@ -1216,202 +683,10 @@ ipcMain.handle('live2d:listSidecarFiles', async (_event, settingsUrlOrRel: unkno
     }
 })
 
-type ManualResizeDir = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-const manualResizeDirs = new Set<ManualResizeDir>(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'])
-
-type ManualResizeState = {
-    dir: ManualResizeDir
-    startBounds: Electron.Rectangle
-    startCursor: { x: number; y: number }
-    minW: number
-    minH: number
-    timer: NodeJS.Timeout
-    lastBoundsKey: string
-}
-
-type ManualDragState = {
-    startBounds: Electron.Rectangle
-    startCursor: { x: number; y: number }
-    timer: NodeJS.Timeout
-    lastBoundsKey: string
-}
-
-const manualResizeStateByWinId = new Map<number, ManualResizeState>()
-const manualDragStateByWinId = new Map<number, ManualDragState>()
-
-function stopManualResizeByWinId(winId: number) {
-    const st = manualResizeStateByWinId.get(winId)
-    if (!st) return
-    clearInterval(st.timer)
-    manualResizeStateByWinId.delete(winId)
-}
-
-function stopManualDragByWinId(winId: number) {
-    const st = manualDragStateByWinId.get(winId)
-    if (!st) return
-    clearInterval(st.timer)
-    manualDragStateByWinId.delete(winId)
-}
-
-function computeResizedBounds(
-    start: Electron.Rectangle,
-    dir: ManualResizeDir,
-    dx: number,
-    dy: number,
-    minW: number,
-    minH: number,
-): Electron.Rectangle {
-    let x = start.x
-    let y = start.y
-    let w = start.width
-    let h = start.height
-
-    const hasN = dir.includes('n')
-    const hasS = dir.includes('s')
-    const hasW = dir.includes('w')
-    const hasE = dir.includes('e')
-
-    if (hasE) w = start.width + dx
-    if (hasS) h = start.height + dy
-
-    if (hasW) {
-        const nextW = start.width - dx
-        w = nextW
-        x = start.x + dx
-    }
-
-    if (hasN) {
-        const nextH = start.height - dy
-        h = nextH
-        y = start.y + dy
-    }
-
-    const clampedW = Math.max(minW, Math.round(w))
-    const clampedH = Math.max(minH, Math.round(h))
-
-    // When clamped, adjust origin so the opposite edge stays anchored.
-    if (hasW && clampedW !== Math.round(w)) {
-        x = start.x + (start.width - clampedW)
-    }
-    if (hasN && clampedH !== Math.round(h)) {
-        y = start.y + (start.height - clampedH)
-    }
-
-    return {
-        x: Math.round(x),
-        y: Math.round(y),
-        width: clampedW,
-        height: clampedH,
-    }
-}
-
-ipcMain.on('window:manualResizeStart', (event, payload: any) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-
-    const dir = String(payload?.dir ?? '') as ManualResizeDir
-    if (!manualResizeDirs.has(dir)) return
-
-    stopManualResizeByWinId(win.id)
-
-    const startBounds = win.getBounds()
-    const startCursor = screen.getCursorScreenPoint()
-    const [minWRaw, minHRaw] = win.getMinimumSize()
-    const minW = Number.isFinite(minWRaw) && minWRaw > 0 ? minWRaw : 1
-    const minH = Number.isFinite(minHRaw) && minHRaw > 0 ? minHRaw : 1
-
-    // Ensure resizing remains interactive even if renderer hover state flips.
-    try {
-        win.setIgnoreMouseEvents(false)
-    } catch {
-        // ignore
-    }
-
-    const timer = setInterval(() => {
-        if (win.isDestroyed()) {
-            stopManualResizeByWinId(win.id)
-            return
-        }
-        const p = screen.getCursorScreenPoint()
-        const dx = p.x - startCursor.x
-        const dy = p.y - startCursor.y
-        const next = computeResizedBounds(startBounds, dir, dx, dy, minW, minH)
-        const key = `${next.x},${next.y},${next.width},${next.height}`
-        const st = manualResizeStateByWinId.get(win.id)
-        if (st && st.lastBoundsKey === key) return
-        if (st) st.lastBoundsKey = key
-        win.setBounds(next)
-    }, 16)
-
-    manualResizeStateByWinId.set(win.id, {
-        dir,
-        startBounds,
-        startCursor,
-        minW,
-        minH,
-        timer,
-        lastBoundsKey: `${startBounds.x},${startBounds.y},${startBounds.width},${startBounds.height}`,
-    })
-})
-
-ipcMain.on('window:manualResizeEnd', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    stopManualResizeByWinId(win.id)
-})
-
-ipcMain.on('window:manualDragStart', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-
-    // Ensure only one manual operation runs at a time.
-    stopManualResizeByWinId(win.id)
-    stopManualDragByWinId(win.id)
-
-    const startBounds = win.getBounds()
-    const startCursor = screen.getCursorScreenPoint()
-
-    // Ensure dragging remains interactive even if renderer hover state flips.
-    try {
-        win.setIgnoreMouseEvents(false)
-    } catch {
-        // ignore
-    }
-
-    const timer = setInterval(() => {
-        if (win.isDestroyed()) {
-            stopManualDragByWinId(win.id)
-            return
-        }
-
-        const p = screen.getCursorScreenPoint()
-        const dx = p.x - startCursor.x
-        const dy = p.y - startCursor.y
-        const next = {
-            x: Math.round(startBounds.x + dx),
-            y: Math.round(startBounds.y + dy),
-            width: startBounds.width,
-            height: startBounds.height,
-        }
-
-        const key = `${next.x},${next.y},${next.width},${next.height}`
-        const st = manualDragStateByWinId.get(win.id)
-        if (st && st.lastBoundsKey === key) return
-        if (st) st.lastBoundsKey = key
-
-        win.setBounds(next)
-    }, 16)
-
-    manualDragStateByWinId.set(win.id, {
-        startBounds,
-        startCursor,
-        timer,
-        lastBoundsKey: `${startBounds.x},${startBounds.y},${startBounds.width},${startBounds.height}`,
-    })
-})
-
-ipcMain.on('window:manualDragEnd', (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    stopManualDragByWinId(win.id)
-})
+// ---------------------------------------------------------------------------
+// IPC handlers — manual window resize / drag (delegated to window-manipulation)
+// ---------------------------------------------------------------------------
+ipcMain.on('window:manualResizeStart', handleManualResizeStart)
+ipcMain.on('window:manualResizeEnd', handleManualResizeEnd)
+ipcMain.on('window:manualDragStart', handleManualDragStart)
+ipcMain.on('window:manualDragEnd', handleManualDragEnd)
