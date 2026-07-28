@@ -41,3 +41,23 @@ _patch_*.py
 temp_*.py
 .vite/
 *.tsbuildinfo
+
+# LaTeX build artifacts (paper/)
+paper/**/*.aux
+paper/**/*.bbl
+paper/**/*.blg
+paper/**/*.log
+paper/**/*.out
+paper/**/*.toc
+paper/**/*.lof
+paper/**/*.lot
+paper/**/*.fls
+paper/**/*.fdb_latexmk
+paper/**/*.synctex.gz
+paper/main.pdf
+
+# Presentation build outputs
+paper/output/*.pptx
+
+# PowerShell artifacts
+$null
