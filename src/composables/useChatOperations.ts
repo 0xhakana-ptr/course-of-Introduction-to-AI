@@ -1,5 +1,6 @@
 import { computed, nextTick, ref, type Ref } from 'vue'
 import type { ChatLine, AgentChatResponse } from './useAgentMessages'
+import type { IpcRendererLike } from '../platform/electronIpc'
 
 // ---- Desktop export patterns ----
 const DESKTOP_EXPORT_TARGET_PATTERN = /(桌面|desktop)/i
@@ -17,7 +18,7 @@ type StatusTickerLike = {
 }
 
 interface UseChatOperationsOptions {
-  ipcRenderer: any
+  ipcRenderer: IpcRendererLike | null
   lines: Ref<ChatLine[]>
   push: (role: ChatLine['role'], text: string, extra?: Omit<ChatLine, 'role' | 'text'>) => void
   clearScreen: () => void

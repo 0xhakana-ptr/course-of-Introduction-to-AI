@@ -77,6 +77,10 @@ let layoutRaf: number | null = null
 let disposeMouseTracking: null | (() => void) = null
 
 onMounted(async () => {
+  // Main-window IPC listeners (live2d:command / agent:expression / live2d:apiRequest).
+  // Registered here so they can be removed in onBeforeUnmount (no leak on remount).
+  bindMainWindowIpcListeners()
+
   disposeMouseTracking = installLive2DFocusMouseTracking({
     ipcRenderer,
     getModel: () => model.currentModel(),
@@ -307,6 +311,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposed = true
+  unbindMainWindowIpcListeners()
   interaction.markDisposed()
   // Ensure any in-progress manual resize is stopped.
   try {
@@ -330,99 +335,121 @@ onBeforeUnmount(() => {
   model.pixiApp()?.destroy(true)
 })
 
-// Main window command executor (called by Electron main via IPC)
-if (ipcRenderer?.on && !isCliMode.value && !isChatMode.value) {
-  ipcRenderer.on('live2d:command', async (_evt: any, payload: any) => {
-    const id = payload?.id
-    const cmd = payload?.cmd
-    if (typeof id !== 'string' || typeof cmd !== 'string') return
+// ---- Main window command executor handlers (called by Electron main via IPC) ----
+// Registered in onMounted via bindMainWindowIpcListeners(), removed in onBeforeUnmount.
 
-    try {
-      const res = await commands.executeLive2DCommand(cmd)
-      ipcRenderer.send('live2d:commandResult', { id, ok: res.ok, output: res.output })
-    } catch (e) {
-      ipcRenderer.send('live2d:commandResult', { id, ok: false, output: String(e) })
+async function onLive2DCommand(_evt: any, payload: any) {
+  const id = payload?.id
+  const cmd = payload?.cmd
+  if (typeof id !== 'string' || typeof cmd !== 'string') return
+
+  try {
+    const res = await commands.executeLive2DCommand(cmd)
+    ipcRenderer?.send('live2d:commandResult', { id, ok: res.ok, output: res.output })
+  } catch (e) {
+    ipcRenderer?.send('live2d:commandResult', { id, ok: false, output: String(e) })
+  }
+}
+
+async function onAgentExpression(_evt: any, data: any) {
+  const expression = data?.expression
+  if (typeof expression !== 'string' || !expression.trim()) return
+
+  try {
+    const res = await model.playLive2DAction({ type: 'expression', id: `tag:${expression}`, mode: 'set' })
+    console.log('[agent:expression] 已切换表情:', expression, res.ok ? '成功' : '失败', res.output)
+  } catch (e) {
+    console.error('[agent:expression] 切换表情异常:', e)
+  }
+}
+
+async function onLive2DApiRequest(_evt: any, msg: any) {
+  const id = msg?.id
+  const payload = msg?.payload
+  if (typeof id !== 'string' || !payload || typeof payload?.op !== 'string') return
+
+  try {
+    const op = payload.op
+    if (op === 'status') {
+      ipcRenderer?.send('live2d:apiResponse', {
+        id,
+        ok: true,
+        data: {
+          loaded: Boolean(model.currentModel()),
+          modelUrl: model.currentModelSettingsUrl() ?? modelUrl.value ?? null,
+          type: isModel3.value ? 'model3' : 'model',
+        },
+      })
+      return
     }
-  })
-
-  ipcRenderer.on('agent:expression', async (_evt: any, data: any) => {
-    const expression = data?.expression
-    if (typeof expression !== 'string' || !expression.trim()) return
-
-    try {
-      const res = await model.playLive2DAction({ type: 'expression', id: `tag:${expression}`, mode: 'set' })
-      console.log('[agent:expression] 已切换表情:', expression, res.ok ? '成功' : '失败', res.output)
-    } catch (e) {
-      console.error('[agent:expression] 切换表情异常:', e)
-    }
-  })
-
-  ipcRenderer.on('live2d:apiRequest', async (_evt: any, msg: any) => {
-    const id = msg?.id
-    const payload = msg?.payload
-    if (typeof id !== 'string' || !payload || typeof payload?.op !== 'string') return
-
-    try {
-      const op = payload.op
-      if (op === 'status') {
-        ipcRenderer.send('live2d:apiResponse', {
+    if (op === 'list') {
+      // Ensure metadata is warmed up but don't fail listing just because meta missing.
+      void model.ensureMetaLoaded(false)
+      const cat = model.buildLive2DActionCatalog()
+      const only = payload?.type === 'expression' || payload?.type === 'motion' ? payload.type : null
+      if (only === 'expression') {
+        ipcRenderer?.send('live2d:apiResponse', {
           id,
-          ok: true,
-          data: {
-            loaded: Boolean(model.currentModel()),
-            modelUrl: model.currentModelSettingsUrl() ?? modelUrl.value ?? null,
-            type: isModel3.value ? 'model3' : 'model',
-          },
+          ok: cat.ok,
+          data: { ...cat, motions: [] },
+          error: cat.error,
         })
-        return
+      } else if (only === 'motion') {
+        ipcRenderer?.send('live2d:apiResponse', {
+          id,
+          ok: cat.ok,
+          data: { ...cat, expressions: [] },
+          error: cat.error,
+        })
+      } else {
+        ipcRenderer?.send('live2d:apiResponse', { id, ok: cat.ok, data: cat, error: cat.error })
       }
-      if (op === 'list') {
-        // Ensure metadata is warmed up but don't fail listing just because meta missing.
-        void model.ensureMetaLoaded(false)
-        const cat = model.buildLive2DActionCatalog()
-        const only = payload?.type === 'expression' || payload?.type === 'motion' ? payload.type : null
-        if (only === 'expression') {
-          ipcRenderer.send('live2d:apiResponse', {
-            id,
-            ok: cat.ok,
-            data: { ...cat, motions: [] },
-            error: cat.error,
-          })
-        } else if (only === 'motion') {
-          ipcRenderer.send('live2d:apiResponse', {
-            id,
-            ok: cat.ok,
-            data: { ...cat, expressions: [] },
-            error: cat.error,
-          })
-        } else {
-          ipcRenderer.send('live2d:apiResponse', { id, ok: cat.ok, data: cat, error: cat.error })
-        }
-        return
-      }
-      if (op === 'stop') {
-        const r = model.stopAllLive2D()
-        ipcRenderer.send('live2d:apiResponse', { id, ok: r.ok, data: r })
-        return
-      }
-      if (op === 'play') {
-        const type = payload?.type
-        const actionId = payload?.id
-        const mode = payload?.mode
-        if ((type !== 'expression' && type !== 'motion') || typeof actionId !== 'string') {
-          ipcRenderer.send('live2d:apiResponse', { id, ok: false, error: 'missing type-id' })
-          return
-        }
-        const res = await model.playLive2DAction({ type, id: actionId, mode })
-        ipcRenderer.send('live2d:apiResponse', { id, ok: res.ok, data: res })
-        return
-      }
-
-      ipcRenderer.send('live2d:apiResponse', { id, ok: false, error: `unknown op: ${op}` })
-    } catch (e) {
-      ipcRenderer.send('live2d:apiResponse', { id, ok: false, error: String(e) })
+      return
     }
-  })
+    if (op === 'stop') {
+      const r = model.stopAllLive2D()
+      ipcRenderer?.send('live2d:apiResponse', { id, ok: r.ok, data: r })
+      return
+    }
+    if (op === 'play') {
+      const type = payload?.type
+      const actionId = payload?.id
+      const mode = payload?.mode
+      if ((type !== 'expression' && type !== 'motion') || typeof actionId !== 'string') {
+        ipcRenderer?.send('live2d:apiResponse', { id, ok: false, error: 'missing type-id' })
+        return
+      }
+      const res = await model.playLive2DAction({ type, id: actionId, mode })
+      ipcRenderer?.send('live2d:apiResponse', { id, ok: res.ok, data: res })
+      return
+    }
+
+    ipcRenderer?.send('live2d:apiResponse', { id, ok: false, error: `unknown op: ${op}` })
+  } catch (e) {
+    ipcRenderer?.send('live2d:apiResponse', { id, ok: false, error: String(e) })
+  }
+}
+
+// ---- Main window IPC listener registration / cleanup ----
+
+let mainWindowIpcBound = false
+
+function bindMainWindowIpcListeners() {
+  // Same guard as before: only when ipcRenderer.on exists and not CLI/chat mode.
+  if (!ipcRenderer?.on || isCliMode.value || isChatMode.value) return
+  if (mainWindowIpcBound) return
+  mainWindowIpcBound = true
+  ipcRenderer.on('live2d:command', onLive2DCommand)
+  ipcRenderer.on('agent:expression', onAgentExpression)
+  ipcRenderer.on('live2d:apiRequest', onLive2DApiRequest)
+}
+
+function unbindMainWindowIpcListeners() {
+  if (!mainWindowIpcBound) return
+  mainWindowIpcBound = false
+  ipcRenderer?.removeListener?.('live2d:command', onLive2DCommand)
+  ipcRenderer?.removeListener?.('agent:expression', onAgentExpression)
+  ipcRenderer?.removeListener?.('live2d:apiRequest', onLive2DApiRequest)
 }
 </script>
 

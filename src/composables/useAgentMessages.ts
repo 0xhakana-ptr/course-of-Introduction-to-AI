@@ -1,4 +1,5 @@
 import { ref, type Ref } from 'vue'
+import type { IpcRendererLike } from '../platform/electronIpc'
 
 // ---- Type definitions ----
 
@@ -411,7 +412,7 @@ export function useAgentMessages(options: UseAgentMessagesOptions) {
 
   // ---- IPC listener management ----
 
-  function registerIpcListeners(ipcRenderer: any) {
+  function registerIpcListeners(ipcRenderer: IpcRendererLike | null) {
     if (ipcRenderer?.on) {
       ipcRenderer.on('agent:quip', handleQuip)
       ipcRenderer.on('agent:chat', handleChat)
@@ -421,7 +422,7 @@ export function useAgentMessages(options: UseAgentMessagesOptions) {
     }
   }
 
-  function unregisterIpcListeners(ipcRenderer: any) {
+  function unregisterIpcListeners(ipcRenderer: IpcRendererLike | null) {
     if (ipcRenderer?.removeListener) {
       ipcRenderer.removeListener('agent:quip', handleQuip)
       ipcRenderer.removeListener('agent:chat', handleChat)
