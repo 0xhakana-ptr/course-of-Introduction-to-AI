@@ -17,88 +17,20 @@ export type Live2DApiResponse = { ok: boolean; data?: any; error?: string }
 
 // ---------------------------------------------------------------------------
 // AI Agent message types
+// Canonical definitions live in src/types/messages.ts. They are re-exported
+// here as type-only exports (fully erased at build time), so main-process
+// code can keep importing from './types' with no runtime dependency on src/.
 // ---------------------------------------------------------------------------
 
-export type QuipMessage = {
-    type: 'quip'
-    content: string
-    node_name: string
-    timestamp: string
-    event_type?: string
-    event_source?: string
-    event_stage?: string
-    metadata?: {
-        priority: 'low' | 'medium' | 'high'
-        duration?: number
-        node_label?: string
-        phase?: string
-        runtime_event?: string
-    }
-}
-
-export type ExpressionMessage = {
-    type: 'expression'
-    expression: string
-    intensity?: number
-    node_name: string
-    timestamp: string
-    metadata?: {
-        duration?: number
-        transition?: 'smooth' | 'instant'
-    }
-}
-
-export type ChatMessage = {
-    type: 'chat'
-    role: 'user' | 'assistant' | 'system'
-    content: string
-    timestamp: string
-    metadata?: {
-        is_partial: boolean
-        sequence_id?: number
-        total_parts?: number
-        node_name?: string
-    }
-}
-
-export type ErrorMessage = {
-    type: 'error'
-    code: string
-    message: string
-    details?: any
-    timestamp: string
-    node_name?: string
-}
-
-export type StatusUpdate = {
-    type: 'status'
-    status: 'idle' | 'running' | 'paused' | 'done' | 'error' | 'cancelled'
-    progress?: number
-    node_name?: string
-    timestamp: string
-    event_type?: string
-    event_source?: string
-    event_stage?: string
-    metadata?: {
-        node_label?: string
-        phase?: string
-        runtime_event?: string
-        action_name?: string
-        action_label?: string
-        action_status?: 'started' | 'completed' | 'failed'
-        action_category?: string
-        safety_level?: string
-        requires_confirmation?: boolean
-    }
-}
-
-export type AgentMessage = QuipMessage | ExpressionMessage | ChatMessage | ErrorMessage | StatusUpdate
-
-export type AgentMessageEnvelope = AgentMessage & {
-    _id?: string
-    _channel?: string
-    _timestamp?: string
-}
+export type {
+    AgentMessage,
+    AgentMessageEnvelope,
+    ChatMessage,
+    ErrorMessage,
+    ExpressionMessage,
+    QuipMessage,
+    StatusUpdate,
+} from '../src/types/messages'
 
 export type BackendMessagesResponse = {
     ok?: boolean

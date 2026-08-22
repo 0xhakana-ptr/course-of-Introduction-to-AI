@@ -1,33 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { getIpcRenderer } from '../platform/electronIpc'
+import type { ExpressionMessage, QuipMessage } from '../types/messages'
 
 type ConsoleLine = { kind: 'in' | 'out' | 'err'; text: string }
 type CommandResponse = { ok: boolean; output: string }
-
-// AI Agent 消息类型定义
-type QuipMessage = {
-  type: 'quip'
-  content: string
-  node_name: string
-  timestamp: string
-  metadata?: {
-    priority: 'low' | 'medium' | 'high'
-    duration?: number
-  }
-}
-
-type ExpressionMessage = {
-  type: 'expression'
-  expression: string
-  intensity?: number
-  node_name: string
-  timestamp: string
-  metadata?: {
-    duration?: number
-    transition?: 'smooth' | 'instant'
-  }
-}
 
 const ipcRenderer = getIpcRenderer()
 
