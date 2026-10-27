@@ -24,7 +24,7 @@
     "loop": "off",
     "find-skills": "off",
     "keybindings-help": "off",
-    "pptx": "off",
+    "pptx": "on",
     "superpowers:using-superpowers": "off",
     "superpowers:dispatching-parallel-agents": "off",
     "superpowers:subagent-driven-development": "off",

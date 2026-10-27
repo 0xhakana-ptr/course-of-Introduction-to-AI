@@ -61,3 +61,6 @@ paper/output/*.pptx
 
 # PowerShell artifacts
 $null
+
+# Video agent plugin runtime data
+.video_agent/
