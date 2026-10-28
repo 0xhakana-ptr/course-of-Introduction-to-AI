@@ -423,3 +423,4 @@ def build_cancelled_output(
         f"最后返回码：{returncode}\n"
         f"产物：\n{format_artifacts(artifacts)}"
     )
+    return output

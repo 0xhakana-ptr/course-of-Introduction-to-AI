@@ -151,6 +151,7 @@ def _loop_planned_nodes(action_name: str | None) -> list[str]:
     terminal_node = "failure_node" if not action_name else "finalize_node"
     return [
         "plan_node",
+        "plan_node",
         "act_node",
         "observe_node",
         "decide_continue_node",

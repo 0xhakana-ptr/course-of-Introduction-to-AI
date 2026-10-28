@@ -168,22 +168,10 @@ class RuntimeTracker:
             event_stage="coding",
         )
 
-        # Auto-reset to idle after 0.5s so frontend hides the progress bar
-        def _reset_to_idle() -> None:
-            time.sleep(0.5)
-            message_sender.send_status(
-                "idle", progress=0,
-                node_name="",
-                metadata={"phase": "idle", "ui_status": "待命"},
-                event_type="status.updated",
-                event_source="workflow",
-                event_stage="system",
-            )
-            self._task_running = False
-            self._last_phase = ""
-
-        import threading
-        threading.Thread(target=_reset_to_idle, daemon=True).start()
+        # The frontend hides the progress bar on the terminal status event;
+        # no delayed queue writes here (they violate the message contract).
+        self._task_running = False
+        self._last_phase = ""
 
 
 # Singleton instance for import convenience

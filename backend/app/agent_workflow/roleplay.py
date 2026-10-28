@@ -37,6 +37,10 @@ from ..messaging.message_sender import message_sender
 from ..llm.client import call_llm_sync, llm_is_configured
 logger = logging.getLogger(__name__)
 
+# Persona-context truncation targets (keep prompts and failure notes compact).
+ROLEPLAY_OUTPUT_SUMMARY_MAX = 400
+ROLEPLAY_ERROR_SUMMARY_MAX = 200
+
 # ===== Inlined from output/roleplay_agent.py =====
 
 # ---------------------------------------------------------------------------
@@ -288,8 +292,8 @@ class RoleplayAgentContext:
             ui_status=_norm(state.get("ui_status")),
             action_name=_norm(state.get("action_name")),
             action_ok=action_ok,
-            output_summary=_norm(state.get("output"))[:SUMMARY_RUN_MAX],
-            error_summary=(_norm(state.get("error_summary") or state.get("error"))[:SUMMARY_PREVIEW_MAX] if not action_ok else ""),
+            output_summary=_norm(state.get("output"))[:ROLEPLAY_OUTPUT_SUMMARY_MAX],
+            error_summary=(_norm(state.get("error_summary") or state.get("error"))[:ROLEPLAY_ERROR_SUMMARY_MAX] if not action_ok else ""),
             terminal_status=_norm(state.get("stop_reason") or state.get("terminal_status")),
             step_count=_int(state.get("step_count")),
             node_name=_norm(state.get("node_name"), default="agent_loop_roleplay"),
@@ -389,7 +393,7 @@ def _parse_llm_json(raw):
     if not isinstance(data, dict):
         return {}
     return {
-        "chat_line": str(data.get("chat_line", "")).strip()[:FRONTEND_TEXT_MAX],
+        "chat_line": str(data.get("chat_line", "")).strip()[:ROLEPLAY_OUTPUT_SUMMARY_MAX],
         "expression": str(data.get("expression", "neutral")).strip(),
         "quip": str(data.get("quip", "")).strip()[:80],
         "motion": str(data.get("motion", "")).strip(),
@@ -610,11 +614,13 @@ class RoleplayAgent:
         runtime_tracker.phase_enter("L1_routing")
 
         if decision.intent == INTENT_CHAT:
-            result = self._handle_chat(decision, emit_chat_message=emit_chat_message)
-            chat_ok = True
-            if isinstance(result.work_metadata, dict):
-                chat_ok = bool(result.work_metadata.get("chat_ok", True))
-            runtime_tracker.task_done(ok=chat_ok)
+            result = self._handle_chat(
+                decision,
+                session_id=session_id,
+                turn_id=turn_id,
+                memory_context=memory_context,
+                emit_chat_message=emit_chat_message,
+            )
             return result
 
         # Call Layer 3 for actual work (coding/file/etc.)
@@ -645,44 +651,54 @@ class RoleplayAgent:
             emit_chat_message=emit_chat_message,
         )
 
-        work_metadata = work_result.get("metadata", {}) if isinstance(work_result, dict) else {}
+        raw_metadata = work_result.get("metadata", {}) if isinstance(work_result, dict) else {}
+        work_metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        # Surface work success/failure so the chat layer can set result.ok.
+        work_metadata["chat_ok"] = bool(work_result.get("ok", True)) if isinstance(work_result, dict) else True
         return ProcessResult(response=response, work_metadata=work_metadata)
 
-    def _handle_chat(self, decision, *, emit_chat_message=True):
-        """Handle chat-only intent - calls LLM with chat persona."""
-        prompt = str(decision.action_input.get("prompt", ""))
-        context = decision.action_input.get("context")
-
-        result = call_llm_sync(
-            prompt, context,
-            system_prompt=CHAT_SYSTEM_PROMPT,
-            temperature=ROLEPLAY_LLM_TEMPERATURE,
+    def _handle_chat(
+        self,
+        decision,
+        *,
+        session_id: str | None = None,
+        turn_id: str | None = None,
+        memory_context: str | None = None,
+        emit_chat_message: bool = True,
+    ):
+        """Handle chat intent through the Turn Controller ``chat.reply`` action."""
+        work_result = self.work_agent.execute(
+            decision,
+            session_id=session_id,
+            turn_id=turn_id,
+            memory_context=memory_context,
         )
+        chat_ok = bool(work_result.get("ok"))
+        chat_line = str(work_result.get("output") or "")
+        if not chat_ok and not chat_line:
+            # No friendly output was produced; fall back to the error text
+            # (e.g. the unconfigured-LLM setup guidance).
+            chat_line = str(work_result.get("error") or "")
 
         mood = get_session_mood()
-        chat_ok = bool(result.ok and result.output)
+        mood.record_neutral()
         if chat_ok:
-            mood.record_neutral()
-            chat_line = result.output[:FRONTEND_TEXT_MAX]
-        else:
-            mood.record_neutral()
-            chat_line = "嗯...让我想想...~ 好像出了点问题，稍等一下哦~"
+            chat_line = chat_line[:FRONTEND_TEXT_MAX]
 
         response = RoleplayResponse(
             chat_line=chat_line,
-            expression="neutral",
-            quip="思考中~ 稍等一下",
-            scenario="chat",
+            expression="neutral" if chat_ok else "sad",
+            quip="思考中~ 稍等一下" if chat_ok else "唔... 出了点问题",
+            scenario="chat" if chat_ok else "failure",
             llm_used=chat_ok,
         )
         self._emit_chat_to_frontend(response, emit_chat_message=emit_chat_message)
-        work_metadata: dict[str, Any] = {
-            "chat_ok": chat_ok,
-        }
+        raw_metadata = work_result.get("metadata")
+        work_metadata: dict[str, Any] = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        work_metadata["chat_ok"] = chat_ok
         if not chat_ok:
-            # Preserve the underlying error for UI/logging even though we return a
-            # user-friendly fallback line.
-            work_metadata["chat_error"] = getattr(result, "error", None)
+            # Preserve the underlying error so the API response can surface it.
+            work_metadata["chat_error"] = str(work_result.get("error") or "") or None
         return ProcessResult(response=response, work_metadata=work_metadata)
 
     def _generate_persona_response(self, decision, work_result):
@@ -740,7 +756,16 @@ class RoleplayAgent:
 
         # Fallback
         fallback = _scenario_fallback(ctx)
-        if ctx.output_summary and scenario in {"success", "coding"}:
+        work_output = (
+            str(work_result.get("output") or "").strip()
+            if isinstance(work_result, dict)
+            else ""
+        )
+        if work_output and scenario in {"success", "coding"}:
+            # Run/workflow actions already produce user-visible output (e.g.
+            # run snapshot builders); prefer it over the raw action summary.
+            fallback["chat_line"] = work_output[:FRONTEND_TEXT_MAX]
+        elif ctx.output_summary and scenario in {"success", "coding"}:
             fallback["chat_line"] = ctx.output_summary[:FRONTEND_TEXT_MAX]
         elif ctx.error_summary and scenario == "failure":
             fallback["chat_line"] = ctx.error_summary[:FRONTEND_TEXT_MAX]

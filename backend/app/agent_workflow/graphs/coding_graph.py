@@ -45,7 +45,12 @@ CODING_FAILURE_NODE = "coding_failure_node"
 # Simple workspace actions (write/read/list) now bypass the coding workflow.
 # They go directly through the action registry in agent_loop_graph.
 RUN_ACTIONS_FOR_CODING_WORKFLOW = frozenset({"run.create"})
-EXECUTOR_ACTIONS_FOR_CODING_WORKFLOW = RUN_ACTIONS_FOR_CODING_WORKFLOW
+EXECUTOR_ACTIONS_FOR_CODING_WORKFLOW = frozenset({
+    "run.create",
+    "workspace.write",
+    "workspace.read",
+    "workspace.list",
+})
 DEBUGGER_FALLBACK_LIST_KEYWORDS = (
     "列出",
     "目录",

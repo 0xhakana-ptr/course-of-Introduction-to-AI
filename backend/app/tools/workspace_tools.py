@@ -621,6 +621,12 @@ def _workspace_tool_failure_summary(
             "该路径不允许访问。请确认目标仍在项目 workspace 内，"
             "不要使用绝对路径或 `..` 跳出工作区。"
         )
+    if "file already exists" in str(exc):
+        rel_path = _normalize_optional_text(tool_input.get("rel_path")) or "目标文件"
+        return (
+            f"`{rel_path}` 已经存在，我没有覆盖写入。\n\n"
+            "如需覆盖，请在请求中明确写“覆盖”或“替换”；或者换一个文件名。"
+        )
     return f"Workspace tool `{tool_name}` failed: {exc}"
 
 
@@ -761,6 +767,9 @@ def _execute_write_tool(tool_input: Mapping[str, object]) -> tuple[dict[str, obj
             max_chars=max_chars,
         )
         data["target_location"] = "workspace"
+    if data.get("file_existed") and not data.get("overwritten"):
+        # A refused overwrite must not surface as a successful write.
+        raise ValueError(f"workspace file already exists: {data.get('path')}")
     return data, _format_workspace_write_summary(data)
 
 
@@ -1019,6 +1028,15 @@ def plan_workspace_tool(prompt: str) -> dict[str, object] | None:
     if _looks_like_text_file_write_request(normalized_prompt):
         rel_path = _first_text_file_candidate(normalized_prompt)
         content = _extract_requested_text_content(normalized_prompt, rel_path=rel_path)
+        if (
+            not rel_path
+            and not content
+            and not any(verb in normalized_prompt for verb in ("创建", "新建", "创建文件", "create"))
+        ):
+            # Pathless prompts without explicit content or an explicit
+            # file-creation verb are codegen-style requests; leave them to the
+            # run.create workflow.
+            return None
         # If no explicit file path and no content, try to infer from code language context
         if not rel_path:
             inferred_path = _infer_code_file_path(normalized_prompt)

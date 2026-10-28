@@ -103,13 +103,25 @@ def build_attempt_summary(record: AttemptRecord) -> str:
         )
         return f"{prefix}：执行已取消{suffix}。说明：{preview_single_line(cancel_text)}"
 
-    failure_text = (
+    failure_text = _compact_failure_text(
         str(record.get("error") or "").strip()
         or str(record.get("stderr") or "").strip()
         or str(record.get("stdout") or "").strip()
         or "未提供更多错误信息"
     )
     return f"{prefix}：执行失败{suffix}。错误摘要：{preview_single_line(failure_text)}"
+
+
+def _compact_failure_text(text: str) -> str:
+    """Keep failure previews short: collapse tracebacks to the exception line."""
+    raw = str(text or "").strip()
+    if not raw:
+        return raw
+    if "Traceback" in raw:
+        lines = [line.strip() for line in raw.splitlines() if line.strip()]
+        if lines:
+            return lines[-1]
+    return raw
 
 def build_attempt_record_snapshot(
     *,

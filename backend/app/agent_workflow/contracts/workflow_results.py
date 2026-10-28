@@ -69,7 +69,7 @@ def invoke_graph_with_result(
     normalized_state = dict(initial_state)
 
     try:
-        result = graph.invoke(normalized_state, config={"recursion_limit": 200})
+        result = graph.invoke(normalized_state)
     except Exception as exc:
         return on_error(exc, normalized_state)
 

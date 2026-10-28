@@ -38,7 +38,7 @@ _SEARCH_KEYWORDS = ("搜索", "查找", "search", "find", "grep", "包含")
 _DELETE_KEYWORDS = ("删除", "delete", "remove", "rm")
 _TEST_KEYWORDS = ("测试", "运行测试", "test", "pytest")
 _COPY_KEYWORDS = ("复制", "copy", "拷贝")
-_MOVE_KEYWORDS = ("移动", "move", "重命名", "rename")
+_MOVE_KEYWORDS = ("移动", "move", "重命名", "rename", "改名")
 
 # Comma-separated list of common file extensions for path detection
 _PATH_EXTENSIONS = (
@@ -211,7 +211,57 @@ def _extract_workspace_params_via_llm(
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning("LLM workspace param extraction failed: %s", exc)
 
-    # Fallback: try heuristic path extraction; if found, use workspace.write
+    # Fallback 1: workspace heuristic planner (no LLM) — extracts path,
+    # content, and move/copy/delete/search parameters from the prompt.
+    plan_model = None
+    try:
+        from ..tools.workspace_tools import (
+            WORKSPACE_TOOL_NAME_COPY,
+            WORKSPACE_TOOL_NAME_DELETE,
+            WORKSPACE_TOOL_NAME_LIST,
+            WORKSPACE_TOOL_NAME_MOVE,
+            WORKSPACE_TOOL_NAME_OVERVIEW,
+            WORKSPACE_TOOL_NAME_READ,
+            WORKSPACE_TOOL_NAME_SEARCH,
+            WORKSPACE_TOOL_NAME_TEST,
+            WORKSPACE_TOOL_NAME_WRITE,
+            normalize_workspace_tool_plan,
+            plan_workspace_tool,
+        )
+
+        plan_model = normalize_workspace_tool_plan(plan_workspace_tool(prompt))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Workspace heuristic planner failed: %s", exc)
+
+    if plan_model is not None:
+        tool_to_action = {
+            WORKSPACE_TOOL_NAME_OVERVIEW: "workspace.overview",
+            WORKSPACE_TOOL_NAME_READ: "workspace.read",
+            WORKSPACE_TOOL_NAME_WRITE: "workspace.write",
+            WORKSPACE_TOOL_NAME_LIST: "workspace.list",
+            WORKSPACE_TOOL_NAME_TEST: "workspace.test",
+            WORKSPACE_TOOL_NAME_MOVE: "workspace.move",
+            WORKSPACE_TOOL_NAME_COPY: "workspace.copy",
+            WORKSPACE_TOOL_NAME_DELETE: "workspace.delete",
+            WORKSPACE_TOOL_NAME_SEARCH: "workspace.search",
+        }
+        plan_action = tool_to_action.get(str(plan_model.tool_name))
+        if plan_action == "workspace.write" and str(
+            plan_model.tool_input.get("target_location") or ""
+        ).strip().lower() == "desktop":
+            plan_action = "workspace.export_desktop"
+        if plan_action is not None:
+            tool_input = dict(plan_model.tool_input)
+            tool_input.setdefault("prompt", prompt)
+            if context:
+                tool_input.setdefault("context", context)
+            logger.info(
+                "LLM extraction failed; using workspace heuristic plan: %s",
+                plan_action,
+            )
+            return plan_action, tool_input, "Heuristic workspace plan fallback."
+
+    # Fallback 2: bare path extraction only.
     heuristic_path = _extract_path_from_prompt(prompt)
     if heuristic_path and detected_action.startswith("workspace."):
         logger.info("LLM extraction failed, but heuristic path found: %s", heuristic_path)
@@ -255,9 +305,9 @@ def _classify_coding_action(prompt: str, context: str | None) -> "tuple[str, dic
             return "workspace.read", {"rel_path": path, **raw_input}, f"Heuristic read: {path}"
         return _extract_workspace_params_via_llm(prompt, context, "workspace.read")
 
-    # ---- Tier 4: List (direct, lowest priority to avoid false matches) ----
+    # ---- Tier 4: List (LLM extraction with heuristic planner fallback) ----
     if any(kw.lower() in text for kw in _LIST_KEYWORDS):
-        return "workspace.list", raw_input, "List intent via keywords."
+        return _extract_workspace_params_via_llm(prompt, context, "workspace.list")
 
     # Default: run.create with raw prompt
     return "run.create", raw_input, "Defaulting to run.create for coding intent."
@@ -275,6 +325,7 @@ class RoutingDecision:
     action_input: dict[str, Any]
     reason: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    prompt: str = ""
 
     @classmethod
     def for_chat(cls, prompt: str, context: str | None = None) -> "RoutingDecision":
@@ -282,6 +333,7 @@ class RoutingDecision:
             intent=INTENT_CHAT,
             action_name="chat.reply",
             action_input={"prompt": prompt, "context": context},
+            prompt=prompt,
             reason="Chat intent detected.",
             metadata={"intent": INTENT_CHAT},
         )
@@ -293,6 +345,7 @@ class RoutingDecision:
             intent=INTENT_CODING,
             action_name=action_name,
             action_input=action_input,
+            prompt=prompt,
             reason=reason or "Coding intent detected.",
             metadata=metadata or {},
         )
@@ -303,6 +356,7 @@ class RoutingDecision:
             intent=INTENT_UNKNOWN,
             action_name="final.answer",
             action_input={"content": "本机不太确定你想做什么呢...能再说清楚一点吗？"},
+            prompt=prompt,
             reason="Unknown intent, falling back.",
             metadata={"intent": INTENT_UNKNOWN},
         )

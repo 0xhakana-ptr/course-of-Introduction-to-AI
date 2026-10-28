@@ -82,10 +82,9 @@ class WorkAgent:
         Returns:
             Dictionary with structured work results for Layer 2.
         """
-        if decision.intent == INTENT_CHAT:
-            return self._chat_result(decision)
-
-        if decision.intent == INTENT_CODING:
+        # All intents (chat included) flow through the Turn Controller so the
+        # frontend sees the same plan/act/observe/finalize protocol.
+        if decision.intent in (INTENT_CHAT, INTENT_CODING):
             return self._execute_loop(decision, session_id=session_id,
                                       turn_id=turn_id, memory_context=memory_context)
 
@@ -94,15 +93,6 @@ class WorkAgent:
             "intent": decision.intent,
             "summary": "未知意图",
             "error": "Unknown intent",
-        }
-
-    def _chat_result(self, decision: RoutingDecision) -> dict[str, Any]:
-        """Chat intent doesn't need agent loop - handled by Layer 2 directly."""
-        return {
-            "ok": True,
-            "intent": INTENT_CHAT,
-            "action_name": "chat.reply",
-            "summary": "",
         }
 
     def _execute_loop(self, decision: RoutingDecision, *,
@@ -115,9 +105,9 @@ class WorkAgent:
 
             from .graphs.loop_agent_loop_graph import run_agent_loop
 
-            prompt = str(decision.action_input.get("prompt", ""))
+            prompt = str(decision.action_input.get("prompt") or getattr(decision, "prompt", "") or "")
             if not prompt:
-                prompt = f"浠诲姟: {decision.action_name}"
+                prompt = f"任务: {decision.action_name}"
 
             # Incorporate memory context into the prompt context
             context = decision.action_input.get("context")

@@ -32,7 +32,7 @@ WORKER_TEXT_MAX: int = 3000
 LLM_PREVIEW_MAX: int = 1200
 LLM_PLANNER_OUTPUT_PREVIEW_MAX: int = 1500
 LLM_PLANNER_TARGET_FILES_MAX: int = 600
-LLM_PLANNER_MAX_TOKENS: int = 3000
+LLM_PLANNER_MAX_TOKENS: int = 700
 LLM_REPAIR_COMMAND_PREVIEW_MAX: int = 600
 
 # Summary previews: inline previews in chat messages and status cards.
