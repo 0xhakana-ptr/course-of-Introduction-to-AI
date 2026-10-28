@@ -38,9 +38,9 @@ function handleQuip(_event: any, data: QuipMessage) {
 function handleExpression(_event: any, data: ExpressionMessage) {
   currentExpression.value = data.expression
   push('out', `[Expression] ${data.expression} (intensity: ${data.intensity})`)  
-  // 实际切换 Live2D 表情
+  // 实际切换 Live2D 表情（走 tag 映射，后端发的是通用表情名）
   if (ipcRenderer?.invoke) {
-    ipcRenderer.invoke('live2d:command', `expr ${data.expression}`).then((res: unknown) => {
+    ipcRenderer.invoke('live2d:command', `expr tag:${data.expression}`).then((res: unknown) => {
       const commandResult = res as CommandResponse | null
       if (commandResult?.ok) {
         push('out', `已切换到表情: ${data.expression}`)

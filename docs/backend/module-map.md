@@ -121,8 +121,8 @@ P4 评估结论：
 
 - `backend.app.main:app`：后端应用启动入口。
 - `api/*_routes.py`：HTTP / WebSocket 接口入口。
-- `services/*_interface.py`：业务层给 API 调用的稳定门面。
-- `agent_workflow/loop/__init__.py` 与 `loop/agent_loop_graph.py`：当前 `/chat` Agent Loop 主入口。
+- `services/*_interface.py`：业务层给 API 调用的稳定门面（chat/run 域为真实实现所在；`services/chat.py`、`services/run.py` 保留为兼容 re-export）。
+- `agent_workflow/graphs/loop_agent_loop_graph.py`：当前 `/chat` Agent Loop 主入口（Turn Controller；loop 图与 coding/file/repair/summary 子图实际位于 `agent_workflow/graphs/`，`loop/`、`runtime/graph_nodes.py` 等保留兼容 re-export）。
 - `tools/workspace_tools.py`：当前 workspace 工具对外 facade，后续拆分也应保持 public 函数稳定。
 - `llm/client.py`：模型调用统一入口。
 - `messaging/message_sender.py` 与 `messaging/runtime_events.py`：前端消息与 Bridge JSON 统一出口。
@@ -189,7 +189,7 @@ backend/app/services/
 - `*_interface.py` 作为稳定入口
 - `*_action/` 负责该领域内部的细分逻辑
 
-### 5.1 `chat_interface.py`
+### 5.1 `chat_interface.py`（真实实现；chat.py 为兼容 re-export）
 
 职责：
 

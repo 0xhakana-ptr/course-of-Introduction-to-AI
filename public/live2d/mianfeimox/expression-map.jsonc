@@ -86,7 +86,13 @@
         // 难过状态
         "sad": [
             "expr/expressions/哭.exp3.json"
-        ]
+        ],
+
+        // 平静状态（不叠加表情，保持当前样子）
+        "neutral": null,
+
+        // 脸红状态
+        "blush": "expr/expressions/脸红.exp3.json"
         
         // 你也可以添加自定义 tag：
         // "打招呼": "expr/hello.exp3.json"
