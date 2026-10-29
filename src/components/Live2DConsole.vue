@@ -25,7 +25,11 @@ function push(kind: ConsoleLine['kind'], text: string) {
 // 处理 Quip 消息
 function handleQuip(_event: any, data: QuipMessage) {
   currentQuip.value = data.content
-  push('out', `[Quip] ${data.content} (from node: ${data.node_name})`)
+  // Idle chatter repeats every few seconds and would flood the CLI log;
+  // keep the banner but leave it out of the scrollback.
+  if (data.node_name !== 'idle') {
+    push('out', `[Quip] ${data.content} (from node: ${data.node_name})`)
+  }
   
   // 根据元数据设置显示时长
   const duration = data.metadata?.duration || 3000

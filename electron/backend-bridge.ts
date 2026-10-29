@@ -164,6 +164,115 @@ let backendBridgeSinceId: string | null = null
 let backendBridgeLastError: string | null = null
 let backendBridgeEndpoint: string | null = null
 
+// --- WebSocket bridge (preferred transport; polling stays as fallback) ---
+let backendBridgeWs: WebSocket | null = null
+let backendBridgeWsConnected = false
+let backendBridgeWsReconnectTimer: NodeJS.Timeout | null = null
+let backendBridgeWsBackoffMs = 1000
+let backendBridgeWsLastError: string | null = null
+
+const WS_FALLBACK_POLL_MS = 5000
+
+function resolveMessagesWsEndpoint(endpoint: string | null): string | null {
+    if (!endpoint) return null
+    try {
+        const url = new URL(endpoint)
+        url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+        url.pathname = `${url.pathname.replace(/\/+$/, '')}/ws`
+        url.search = ''
+        return url.toString()
+    } catch {
+        return null
+    }
+}
+
+function dispatchWsPayload(rawText: string, windows: WindowSet) {
+    let payload: BackendMessagesResponse = {}
+    if (rawText.trim()) {
+        try {
+            payload = JSON.parse(rawText) as BackendMessagesResponse
+        } catch (error) {
+            console.warn(`[backend-bridge] invalid JSON from /messages/ws: ${String(error)}`)
+            return
+        }
+    }
+    const messages = Array.isArray(payload.messages) ? payload.messages : []
+    for (const item of messages) {
+        const message = toAgentMessageEnvelope(item)
+        if (!message) continue
+        dispatchAgentMessage(message, windows)
+        if (typeof message._id === 'string' && message._id.trim()) {
+            backendBridgeSinceId = message._id
+        }
+    }
+}
+
+function scheduleWsReconnect(windows: WindowSet) {
+    if (backendBridgeWsReconnectTimer) return
+    backendBridgeWsReconnectTimer = setTimeout(() => {
+        backendBridgeWsReconnectTimer = null
+        connectBackendMessageWs(windows)
+    }, backendBridgeWsBackoffMs)
+    backendBridgeWsBackoffMs = Math.min(backendBridgeWsBackoffMs * 2, 15000)
+}
+
+function connectBackendMessageWs(windows: WindowSet) {
+    if (!backendBridgeEndpoint || backendBridgeWs) return
+    const wsEndpoint = resolveMessagesWsEndpoint(backendBridgeEndpoint)
+    if (!wsEndpoint || typeof WebSocket !== 'function') {
+        console.log('[backend-bridge] WebSocket unavailable; staying on polling')
+        return
+    }
+
+    const wsUrl = new URL(wsEndpoint)
+    if (backendBridgeSinceId) {
+        wsUrl.searchParams.set('since_id', backendBridgeSinceId)
+    }
+
+    let ws: WebSocket
+    try {
+        ws = new WebSocket(wsUrl.toString())
+    } catch (error) {
+        console.warn(`[backend-bridge] ws connect failed: ${String(error)}`)
+        scheduleWsReconnect(windows)
+        return
+    }
+    backendBridgeWs = ws
+
+    ws.onopen = () => {
+        backendBridgeWsConnected = true
+        backendBridgeWsBackoffMs = 1000
+        if (backendBridgeWsLastError) {
+            console.log(`[backend-bridge] ws reconnected: ${wsUrl.toString()}`)
+            backendBridgeWsLastError = null
+        } else {
+            console.log(`[backend-bridge] websocket connected: ${wsUrl.toString()}`)
+        }
+    }
+    ws.onmessage = (event: WebSocketMessageEvent) => {
+        const raw = typeof event.data === 'string' ? event.data : ''
+        dispatchWsPayload(raw, windows)
+    }
+    const handleClose = (why: string) => {
+        const wasConnected = backendBridgeWsConnected
+        backendBridgeWsConnected = false
+        if (backendBridgeWs === ws) backendBridgeWs = null
+        if (backendBridgeWsLastError !== why) {
+            console.warn(`[backend-bridge] websocket ${why}; falling back to polling`)
+            backendBridgeWsLastError = why
+        }
+        if (wasConnected || backendBridgeEndpoint) {
+            scheduleWsReconnect(windows)
+        }
+    }
+    ws.onclose = (event: WebSocketCloseEvent) => {
+        handleClose(`closed (code=${event?.code ?? '?'})`)
+    }
+    ws.onerror = () => {
+        handleClose('error')
+    }
+}
+
 // --- Workspace selection persistence (chat window) ---
 type WorkspaceState = { path: string }
 
@@ -198,6 +307,7 @@ export function saveWorkspacePath(p: string): void {
 
 async function pollBackendMessagesOnce(windows: WindowSet) {
     if (!backendBridgeEndpoint || backendBridgeInFlight) return
+    if (backendBridgeWsConnected) return
     backendBridgeInFlight = true
 
     try {
@@ -267,13 +377,19 @@ export function startBackendMessageBridge(windows: WindowSet) {
         return
     }
 
-    const intervalMs = parsePositiveIntegerEnv('AI_AGENT_MESSAGES_POLL_MS', 1000)
-    console.log(`[backend-bridge] polling ${backendBridgeEndpoint} every ${intervalMs}ms`)
+    const intervalMs = parsePositiveIntegerEnv(
+        'AI_AGENT_MESSAGES_POLL_MS',
+        WS_FALLBACK_POLL_MS,
+    )
+    console.log(`[backend-bridge] messages endpoint: ${backendBridgeEndpoint}`)
 
+    // Baseline poll establishes since_id, then the websocket takes over and
+    // the poller only runs while the socket is down.
     void pollBackendMessagesOnce(windows)
     backendBridgeTimer = setInterval(() => {
         void pollBackendMessagesOnce(windows)
     }, intervalMs)
+    connectBackendMessageWs(windows)
 }
 
 export function stopBackendMessageBridge() {
@@ -281,6 +397,20 @@ export function stopBackendMessageBridge() {
         clearInterval(backendBridgeTimer)
         backendBridgeTimer = null
     }
+    if (backendBridgeWsReconnectTimer) {
+        clearTimeout(backendBridgeWsReconnectTimer)
+        backendBridgeWsReconnectTimer = null
+    }
+    if (backendBridgeWs) {
+        try {
+            backendBridgeWs.close()
+        } catch {
+            // ignore
+        }
+        backendBridgeWs = null
+    }
+    backendBridgeWsConnected = false
+    backendBridgeWsBackoffMs = 1000
     backendBridgeInFlight = false
     backendBridgeLastError = null
     backendBridgeSinceId = null

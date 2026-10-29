@@ -21,6 +21,14 @@ class VisionTestResponse(BaseModel):
 @router.post("/test")
 async def vision_test():
     """Manually trigger one vision tick and return full diagnostic."""
+    # Screenshot + ONNX inference + LLM call are all blocking; keep them off
+    # the event loop so the rest of the service stays responsive.
+    import anyio
+
+    return await anyio.to_thread.run_sync(_run_vision_test_steps)
+
+
+def _run_vision_test_steps():
     steps = []
 
     try:

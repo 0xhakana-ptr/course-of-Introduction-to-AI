@@ -459,6 +459,10 @@ def build_combined_provider_failure_message(results: list[LLMCallResult]) -> str
 def should_attempt_next_provider(result: LLMCallResult) -> bool:
     if result.error_kind == "request":
         return True
+    # A 200 response with an unusable body is still a provider failure worth
+    # retrying against the fallback model.
+    if result.error_kind in {"invalid_json", "empty_response"}:
+        return True
     if result.error_kind == "http_status" and result.status_code is not None:
         return result.status_code in {408, 429} or result.status_code >= 500
     return False

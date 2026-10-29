@@ -50,10 +50,26 @@ async function captureAndSaveScreenshot() {
             fs.mkdirSync(dir, { recursive: true })
         }
 
-        // Atomic write: write to temp then rename
+        // Atomic write: write to temp then rename. The backend may hold the
+        // target open for a brief read, so retry before falling back to an
+        // in-place copy (readers then see a torn frame instead of losing one).
         const tmpPath = VISION_SCREENSHOT_PATH + '.tmp'
         fs.writeFileSync(tmpPath, pngBuffer)
-        fs.renameSync(tmpPath, VISION_SCREENSHOT_PATH)
+        let renamed = false
+        for (let attempt = 0; attempt < 3 && !renamed; attempt++) {
+            try {
+                fs.renameSync(tmpPath, VISION_SCREENSHOT_PATH)
+                renamed = true
+            } catch (renameErr: unknown) {
+                if (attempt === 2) {
+                    fs.copyFileSync(tmpPath, VISION_SCREENSHOT_PATH)
+                    fs.rmSync(tmpPath, { force: true })
+                } else {
+                    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150)
+                    void renameErr
+                }
+            }
+        }
 
         console.log(`[vision] screenshot saved: ${VISION_SCREENSHOT_PATH} (${(pngBuffer.length / 1024).toFixed(1)} KB)`)
     } catch (err) {

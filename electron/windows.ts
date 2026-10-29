@@ -74,12 +74,18 @@ export function createMainWindow(set: WindowSet) {
     }
 
     if (!app.isPackaged) {
-        const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
+        const devServerUrl = getDevServerUrl()
         void set.mainWindow.loadURL(devServerUrl)
         return
     }
 
     void set.mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+}
+
+function getDevServerUrl(): string {
+    // VITE_DEV_SERVER_URL usually ends with a slash; strip it so appended
+    // paths do not produce 'host//?mode=...' URLs.
+    return (process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173').replace(/\/+$/, '')
 }
 
 export function createConsoleWindow(set: WindowSet) {
@@ -103,6 +109,9 @@ export function createConsoleWindow(set: WindowSet) {
         webPreferences: {
             nodeIntegration: true,
             contextIsolation: false,
+            // The console window usually sits unfocused; without this Chromium
+            // throttles painting and the page can appear blank until clicked.
+            backgroundThrottling: false,
         },
     })
 
@@ -111,8 +120,7 @@ export function createConsoleWindow(set: WindowSet) {
     })
 
     if (!app.isPackaged) {
-        const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
-        void set.consoleWindow.loadURL(`${devServerUrl}/?mode=cli`)
+        void set.consoleWindow.loadURL(`${getDevServerUrl()}/?mode=cli`)
         return
     }
 
@@ -150,8 +158,7 @@ export function createChatWindow(set: WindowSet) {
     })
 
     if (!app.isPackaged) {
-        const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://localhost:5173'
-        void set.chatWindow.loadURL(`${devServerUrl}/?mode=chat`)
+        void set.chatWindow.loadURL(`${getDevServerUrl()}/?mode=chat`)
         return
     }
 
